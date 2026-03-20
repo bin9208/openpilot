@@ -250,6 +250,19 @@ class Controls:
     hudControl.leadRadar = 1 if leadOne.radar else 0
     hudControl.leadDPath = leadOne.dPath
 
+    hudControl.leftLeadDist = radarState.leadLeft.dRel if radarState.leadLeft.status else 0
+    hudControl.rightLeadDist = radarState.leadRight.dRel if radarState.leadRight.status else 0
+    
+    if len(radarState.leadsLeft2) > 1:
+      hudControl.leftLeadDist2 = radarState.leadsLeft2[1].dRel if radarState.leadsLeft2[1].status else 0
+    else:
+      hudControl.leftLeadDist2 = 0
+
+    if len(radarState.leadsRight2) > 1:
+      hudControl.rightLeadDist2 = radarState.leadsRight2[1].dRel if radarState.leadsRight2[1].status else 0
+    else:
+      hudControl.rightLeadDist2 = 0
+
     meta = self.sm['modelV2'].meta
     if False: # command
       desire_map = {

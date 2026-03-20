@@ -669,6 +669,24 @@ def _make_ccnc_values(values, CS, lat_active, frame, hud_control,
       if values[det_key] >= 4 and values[dist_key] != 0:
         values[det_key] = 1
 
+    left_lead_dist = getattr(hud_control, 'leftLeadDist', 0)
+    if left_lead_dist > 0:
+      values['LR_DETECT'] = 1
+      values['LR_DETECT_DISTANCE'] = min(255, max(0, int(left_lead_dist)))
+    left_lead_dist2 = getattr(hud_control, 'leftLeadDist2', 0)
+    if left_lead_dist2 > 0:
+      values['LF_DETECT'] = 1
+      values['LF_DETECT_DISTANCE'] = min(255, max(0, int(left_lead_dist2)))
+
+    right_lead_dist = getattr(hud_control, 'rightLeadDist', 0)
+    if right_lead_dist > 0:
+      values['RR_DETECT'] = 1
+      values['RR_DETECT_DISTANCE'] = min(255, max(0, int(right_lead_dist)))
+    right_lead_dist2 = getattr(hud_control, 'rightLeadDist2', 0)
+    if right_lead_dist2 > 0:
+      values['RF_DETECT'] = 1
+      values['RF_DETECT_DISTANCE'] = min(255, max(0, int(right_lead_dist2)))
+
     if blink_pairs:
       _apply_radar_blink(values, blink_pairs, frame, t=blink_t)
 
