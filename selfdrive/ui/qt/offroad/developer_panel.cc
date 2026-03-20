@@ -56,7 +56,9 @@ void DeveloperPanel::updateToggles(bool _offroad) {
      * - visible, and
      * - during onroad & offroad states
      */
-    if (btn != experimentalLongitudinalToggle) {
+    if (btn == joystickToggle) {
+      btn->setEnabled(true);  // joystick toggle is always enabled (onroad + offroad)
+    } else if (btn != experimentalLongitudinalToggle) {
       btn->setEnabled(_offroad);
     }
   }

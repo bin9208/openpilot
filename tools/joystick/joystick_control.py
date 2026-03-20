@@ -11,7 +11,8 @@ from openpilot.common.realtime import Ratekeeper
 from openpilot.system.hardware import HARDWARE
 from openpilot.tools.lib.kbhit import KBHit
 
-EXPO = 0.4
+EXPO_STEER = 0.4   # steering: keep cubic curve for fine control near center
+EXPO_ACCEL = 0.05  # accel/brake: nearly linear for responsive throttle/brake
 
 
 class Keyboard:
@@ -85,7 +86,8 @@ class Joystick:
 
       norm = -float(np.interp(event[1], [self.min_axis_value[event[0]], self.max_axis_value[event[0]]], [-1., 1.]))
       norm = norm if abs(norm) > 0.03 else 0.  # center can be noisy, deadzone of 3%
-      self.axes_values[event[0]] = EXPO * norm ** 3 + (1 - EXPO) * norm  # less action near center for fine control
+      expo = EXPO_ACCEL if event[0] == self.axes_order[0] else EXPO_STEER
+      self.axes_values[event[0]] = expo * norm ** 3 + (1 - expo) * norm  # less action near center for fine control
     else:
       return False
     return True
