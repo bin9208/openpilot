@@ -196,7 +196,12 @@ class LongitudinalPlanner:
       clipped_accel_coast_interp = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [accel_limits_turns[1], clipped_accel_coast])
       accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast_interp)
 
-    if force_slow_decel:
+    yolo_data = sm.get('yoloObjectData', None)
+    yolo_stop = False
+    if yolo_data is not None and getattr(yolo_data, 'hasRedLight', False):
+      yolo_stop = True
+
+    if force_slow_decel or yolo_stop:
       v_cruise = 0.0
     # clip limits, cannot init MPC outside of bounds
     accel_limits_turns[0] = min(accel_limits_turns[0], self.a_desired + 0.05)

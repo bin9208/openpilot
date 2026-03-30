@@ -43,7 +43,15 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	leftSec @28 : Int32;
 }
 
-struct CustomReserved1 @0xaedffd8f31e7b55d {
+struct YoloObjectData @0xaedffd8f31e7b55d {
+  hasRedLight @0 :Bool;
+  hasGreenLight @1 :Bool;
+  distanceEstimate @2 :Float32;
+  yoloClass @3 :Text;
+  x @4 :Float32;
+  y @5 :Float32;
+  w @6 :Float32;
+  h @7 :Float32;
 }
 
 struct CustomReserved2 @0xf35cc4560bbf6ec2 {
