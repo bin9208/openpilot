@@ -768,11 +768,12 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         values["DISTANCE_CAR"] = 3 if hdp_active else 2 if cruise_enabled else 1 if main_enabled else 0
         values["DISTANCE_SPACING"] = 5 if hdp_active else 1 if cruise_enabled else 0
 
-        values["TARGET"] = 1 if main_enabled else 0
-        values["TARGET_DISTANCE"] = int(hud_control.leadDistance)
+        values["TARGET"] = 1 if hud_control.leadVisible else 0
+        values["TARGET_DISTANCE"] = hud_control.leadDistance
+        values["HBA_ICON"] = 2 if cruise_enabled else 0  # 2: Green AUTO HBA Icon
 
         values["BACKGROUND"] = 6 if CS.paddle_button_prev > 0 else 1 if cruise_enabled else 3 if lat_active else 7
-        values["CENTERLINE"] = 1 if HDA_CntrlModSta > 0 else 0
+        values["CENTERLINE"] = 1 if lat_active else 0
         values["CAR_CIRCLE"] = 2 if hdp_active else 1 if cruise_enabled else 0
 
         values["NAV_ICON"] = 2 if nav_active else 0
