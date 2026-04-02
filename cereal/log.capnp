@@ -2562,6 +2562,14 @@ struct Touch {
   value @4 :Int32;
 }
 
+struct YoloObjectData {
+  hasRedLight @0 :Bool;
+  distanceEstimate @1 :Float32;
+  yoloClass @2 :Text;
+  x @3 :Float32;
+  y @4 :Float32;
+}
+
 struct Event {
   logMonoTime @0 :UInt64;  # nanoseconds
   valid @67 :Bool = true;
@@ -2614,6 +2622,7 @@ struct Event {
     driverMonitoringState @71: DriverMonitoringState;
     livePose @129 :LivePose;
     modelV2 @75 :ModelDataV2;
+    yoloObjectData @148 :YoloObjectData;
     drivingModelData @128 :DrivingModelData;
     driverStateV2 @92 :DriverStateV2;
 
