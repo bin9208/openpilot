@@ -851,6 +851,11 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         values['LEFT_BLINK_HOLD'] = 1 if lane_changing == 3 else 0
         values['RIGHT_BLINK_HOLD'] = 1 if lane_changing == 4 else 0
 
+        # Experimental: Blinker Initiation (NEW_SIGNAL_1=Left, NEW_SIGNAL_5=Right)
+        values['NEW_SIGNAL_1'] = 1 if lane_changing == 1 else 0
+        values['NEW_SIGNAL_5'] = 1 if lane_changing == 2 else 0
+
+
         _make_ccnc_values(
           values, CS, lat_active, frame, hud_control,
           lane_line=True,
