@@ -1978,7 +1978,6 @@ public:
     QPointF nav_path_vertex_xy[150];
     int     nav_path_vertex_count = 0;
     bool    nav_path_display = false;
-    bool    yolo_alive = false;
 
     //std::vector<lead_vertex_data> lead_vertices_side;
 
@@ -1989,7 +1988,6 @@ public:
         const bool car_control_alive = sm.alive("carControl");
         const bool carrot_man_alive = sm.alive("carrotMan");
         const bool lp_alive = sm.alive("longitudinalPlan");
-        yolo_alive = sm.alive("yoloObjectData");
         //const auto cs = sm["controlsState"].getControlsState();
         const auto car_state = sm["carState"].getCarState();
         const auto car_control = sm["carControl"].getCarControl();
@@ -2704,8 +2702,8 @@ public:
 
         nvgTextAlign(s->vg, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP);
         QString str = "";
-        str.sprintf("MEM:%d%% DISK:%.0f%% CPU:%.0f%%,%.0f\u00B0C YOLO:%s", memoryUsage, freeSpace, cpuUsage, cpuTemp, yolo_alive ? "ON" : "OFF");
-        NVGcolor top_right_color = (cpuTemp > 85.0 || memoryUsage > 85.0 || !yolo_alive) ? COLOR_ORANGE : COLOR_WHITE;
+        str.sprintf("MEM:%d%% DISK:%.0f%% CPU:%.0f%%,%.0f\u00B0C", memoryUsage, freeSpace, cpuUsage, cpuTemp);
+        NVGcolor top_right_color = (cpuTemp > 85.0 || memoryUsage > 85.0) ? COLOR_ORANGE : COLOR_WHITE;
 		ui_draw_text(s, s->fb_w - 10, 2, str.toStdString().c_str(), 30, top_right_color, BOLD, 3.0f, 1.0f);
     }
 

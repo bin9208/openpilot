@@ -289,7 +289,6 @@ def create_lfahda_cluster(packer, CS, CAN, long_active, lat_active):
     values = copy.copy(CS.lfahda_cluster)
     rx_counter = values.pop("COUNTER", None)
   else:
-    return []
     values = {}
     rx_counter = None
     values["LFA_OptUsmSta"] = 2
@@ -404,7 +403,7 @@ def create_acc_control_scc2(packer, CAN, enabled, accel_last, accel, stopping, g
 
   values["ZEROS_7"] = 1
 
-  return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values)
+  return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values, rx_counter = rx_counter)
 
 def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control, jerk_u, jerk_l, CS):
 
@@ -669,30 +668,12 @@ def _make_ccnc_values(values, CS, lat_active, frame, hud_control,
       if values[det_key] >= 4 and values[dist_key] != 0:
         values[det_key] = 1
 
-    left_lead_dist = getattr(hud_control, 'leftLeadDist', 0)
-    if left_lead_dist > 0:
-      values['LR_DETECT'] = 1
-      values['LR_DETECT_DISTANCE'] = min(255, max(0, int(left_lead_dist)))
-    left_lead_dist2 = getattr(hud_control, 'leftLeadDist2', 0)
-    if left_lead_dist2 > 0:
-      values['LF_DETECT'] = 1
-      values['LF_DETECT_DISTANCE'] = min(255, max(0, int(left_lead_dist2)))
-
-    right_lead_dist = getattr(hud_control, 'rightLeadDist', 0)
-    if right_lead_dist > 0:
-      values['RR_DETECT'] = 1
-      values['RR_DETECT_DISTANCE'] = min(255, max(0, int(right_lead_dist)))
-    right_lead_dist2 = getattr(hud_control, 'rightLeadDist2', 0)
-    if right_lead_dist2 > 0:
-      values['RF_DETECT'] = 1
-      values['RF_DETECT_DISTANCE'] = min(255, max(0, int(right_lead_dist2)))
-
     if blink_pairs:
       _apply_radar_blink(values, blink_pairs, frame, t=blink_t)
 
 def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
                          disp_angle, left_lane_warning, right_lane_warning,
-                         enable_corner_radar, stopping):
+                         enable_corner_radar):
   ret = []
 
   md = CS.MD
@@ -719,20 +700,12 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         if  HDA_LFA_SymSta == 0 and 0 < frame % 200 < 12:
           values["LFA_BTN"] = 1
 
-        if CC.enabled:          
+        if CC.enabled and 10 < frame % 200 <= 16 and CS.out.vEgo > 3.:
           if not CS.MainMode_ACC:
-            if 10 < frame % 200 <= 16 and CS.out.vEgo > 3.:
-              values["ADAPTIVE_CRUISE_MAIN_BTN"] = 1
-          elif CS.ACCMode in [0, 4]:
-            if 10 < frame % 200 <= 16 and CS.out.vEgo > 3.:
-              values["CRUISE_BUTTONS"] = 2
-          elif CS.scc_control is not None and CS.scc_control["InfoDisplay"] == 4:
-            if 10 < frame % 30 <= 16 and not stopping:
-              values["CRUISE_BUTTONS"] = 2
+            values["ADAPTIVE_CRUISE_MAIN_BTN"] = 1
           else:
-            if CS.adrv_0x1ea is not None and CS.adrv_0x1ea["HDA_MODE2"] == 0: # if corner radar is disabled, send main btn
-              if 10 < frame % 1000 <= 16 and CS.out.vEgo > 3:
-                values["ADAPTIVE_CRUISE_MAIN_BTN"] = 1
+            if CS.ACCMode in [0, 4]:
+              values["CRUISE_BUTTONS"] = 2
 
         ret.append(packer.make_can_msg(CS.cruise_btns_msg_canfd, CAN.CAM, values))
 
@@ -768,12 +741,11 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         values["DISTANCE_CAR"] = 3 if hdp_active else 2 if cruise_enabled else 1 if main_enabled else 0
         values["DISTANCE_SPACING"] = 5 if hdp_active else 1 if cruise_enabled else 0
 
-        values["TARGET"] = 1 if hud_control.leadVisible else 0
-        values["TARGET_DISTANCE"] = hud_control.leadDistance
-        values["HBA_ICON"] = 2 if cruise_enabled else 0  # 2: Green AUTO HBA Icon
+        values["TARGET"] = 1 if main_enabled else 0
+        values["TARGET_DISTANCE"] = int(hud_control.leadDistance)
 
-        values["BACKGROUND"] = 6 if CS.paddle_button_prev > 0 else 1 if cruise_enabled else 3 if lat_active else 7
-        values["CENTERLINE"] = 1 if lat_active else 0
+        values["BACKGROUND"] = 6 if CS.paddle_button_prev > 0 else 1 if cruise_enabled else 3 if main_enabled else 7
+        values["CENTERLINE"] = 1 if HDA_CntrlModSta > 0 else 0
         values["CAR_CIRCLE"] = 2 if hdp_active else 1 if cruise_enabled else 0
 
         values["NAV_ICON"] = 2 if nav_active else 0
@@ -851,11 +823,6 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         # blinker hold
         values['LEFT_BLINK_HOLD'] = 1 if lane_changing == 3 else 0
         values['RIGHT_BLINK_HOLD'] = 1 if lane_changing == 4 else 0
-
-        # Experimental: Blinker Initiation (NEW_SIGNAL_1=Left, NEW_SIGNAL_5=Right)
-        values['NEW_SIGNAL_1'] = 1 if lane_changing == 1 else 0
-        values['NEW_SIGNAL_5'] = 1 if lane_changing == 2 else 0
-
 
         _make_ccnc_values(
           values, CS, lat_active, frame, hud_control,

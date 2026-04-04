@@ -41,7 +41,6 @@ void ModelRenderer::draw(QPainter &painter, const QRect &surface_rect) {
 
   if (longitudinal_control && sm.alive("radarState")) {
     update_leads(radar_state, model.getPosition());
-    const auto &lead_one = radar_state.getLeadOne();
     const auto &lead_two = radar_state.getLeadTwo();
     if (lead_one.getStatus()) {
       drawLead(painter, lead_one, lead_vertices[0], surface_rect);
@@ -49,29 +48,19 @@ void ModelRenderer::draw(QPainter &painter, const QRect &surface_rect) {
     if (lead_two.getStatus() && (std::abs(lead_one.getDRel() - lead_two.getDRel()) > 3.0)) {
       drawLead(painter, lead_two, lead_vertices[1], surface_rect);
     }
-    if (radar_state.hasLeadLeft() && radar_state.getLeadLeft().getStatus()) drawLead(painter, radar_state.getLeadLeft(), lead_vertices[2], surface_rect);
-    if (radar_state.hasLeadRight() && radar_state.getLeadRight().getStatus()) drawLead(painter, radar_state.getLeadRight(), lead_vertices[3], surface_rect);
-    if (radar_state.getLeadsLeft2().size() > 1 && radar_state.getLeadsLeft2()[1].getStatus()) drawLead(painter, radar_state.getLeadsLeft2()[1], lead_vertices[4], surface_rect);
-    if (radar_state.getLeadsRight2().size() > 1 && radar_state.getLeadsRight2()[1].getStatus()) drawLead(painter, radar_state.getLeadsRight2()[1], lead_vertices[5], surface_rect);
   }
 
   painter.restore();
 }
 
 void ModelRenderer::update_leads(const cereal::RadarState::Reader &radar_state, const cereal::XYZTData::Reader &line) {
-  auto process_lead = [&](const cereal::RadarState::LeadData::Reader &lead_data, int i) {
+  for (int i = 0; i < 2; ++i) {
+    const auto &lead_data = (i == 0) ? radar_state.getLeadOne() : radar_state.getLeadTwo();
     if (lead_data.getStatus()) {
       float z = line.getZ()[get_path_length_idx(line, lead_data.getDRel())];
       mapToScreen(lead_data.getDRel(), -lead_data.getYRel(), z + path_offset_z, &lead_vertices[i]);
     }
-  };
-
-  process_lead(radar_state.getLeadOne(), 0);
-  process_lead(radar_state.getLeadTwo(), 1);
-  if (radar_state.hasLeadLeft()) process_lead(radar_state.getLeadLeft(), 2);
-  if (radar_state.hasLeadRight()) process_lead(radar_state.getLeadRight(), 3);
-  if (radar_state.getLeadsLeft2().size() > 1) process_lead(radar_state.getLeadsLeft2()[1], 4);
-  if (radar_state.getLeadsRight2().size() > 1) process_lead(radar_state.getLeadsRight2()[1], 5);
+  }
 }
 
 void ModelRenderer::update_model(const cereal::ModelDataV2::Reader &model, const cereal::RadarState::LeadData::Reader &lead) {

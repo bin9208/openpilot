@@ -34,7 +34,7 @@ public:
   QPolygonF track_vertices;
   QPolygonF lane_line_vertices[4] = {};
   QPolygonF road_edge_vertices[2] = {};
-  QPointF lead_vertices[6] = {};
+  QPointF lead_vertices[2] = {};
   Eigen::Matrix3f car_space_transform = Eigen::Matrix3f::Zero();
   QRectF clip_region;
 };
