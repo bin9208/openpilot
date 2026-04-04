@@ -15,6 +15,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_speed_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
+from openpilot.selfdrive.yolo_integration.yolo_control import YoloControlProcessor
 
 
 LON_MPC_STEP = 0.2  # first step is 0.2s
@@ -96,6 +97,7 @@ class LongitudinalPlanner:
 
     self.a_desired = init_a
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
+    self.yolo_processor = YoloControlProcessor()
     self.prev_accel_clip = [ACCEL_MIN, ACCEL_MAX]
     self.output_a_target = 0.0
     self.output_v_target_now = 0.0
@@ -197,9 +199,8 @@ class LongitudinalPlanner:
       accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast_interp)
 
     yolo_data = sm.get('yoloObjectData', None)
-    yolo_stop = False
-    if yolo_data is not None and getattr(yolo_data, 'hasRedLight', False):
-      yolo_stop = True
+    yolo_v_cruise, yolo_stop = self.yolo_processor.process(yolo_data, v_ego, v_cruise)
+    v_cruise = min(v_cruise, yolo_v_cruise)
 
     if force_slow_decel or yolo_stop:
       v_cruise = 0.0

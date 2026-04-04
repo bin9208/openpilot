@@ -43,6 +43,17 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	leftSec @28 : Int32;
 }
 
+struct YoloDetection @0xf35cc4560bbf6ec2 {
+  classId @0 :UInt16;
+  className @1 :Text;
+  confidence @2 :Float32;
+  x @3 :Float32;
+  y @4 :Float32;
+  w @5 :Float32;
+  h @6 :Float32;
+  distanceEstimate @7 :Float32;
+}
+
 struct YoloObjectData @0xaedffd8f31e7b55d {
   hasRedLight @0 :Bool;
   hasGreenLight @1 :Bool;
@@ -52,9 +63,10 @@ struct YoloObjectData @0xaedffd8f31e7b55d {
   y @5 :Float32;
   w @6 :Float32;
   h @7 :Float32;
-}
-
-struct CustomReserved2 @0xf35cc4560bbf6ec2 {
+  detections @8 :List(YoloDetection);
+  frameId @9 :UInt64;
+  inferenceTimeMs @10 :UInt32;
+  numDetections @11 :UInt16;
 }
 
 struct CustomReserved3 @0xda96579883444c35 {
