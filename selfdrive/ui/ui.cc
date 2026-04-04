@@ -104,7 +104,6 @@ UIState::UIState(QObject *parent) : QObject(parent) {
     "modelV2", "controlsState", "liveCalibration", "radarState", "deviceState",
     "pandaStates", "carParams", "driverMonitoringState", "carState", "driverStateV2",
     "wideRoadCameraState", "managerState", "selfdriveState", "longitudinalPlan",
-    "longitudinalPlan",
     "carControl", "carrotMan", "liveTorqueParameters", "lateralPlan", "liveParameters",
     "navRoute", "navInstruction", "navInstructionCarrot", gps_service, "liveDelay",
     "peripheralState", "yoloObjectData",

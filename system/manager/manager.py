@@ -216,35 +216,7 @@ def manager_thread() -> None:
       break
 
 def main() -> None:
-  # fake-hwclock
-  import threading, time, os
-  time_file = "/data/saved_time"
-  if os.path.exists(time_file):
-    try:
-      with open(time_file, "r") as f:
-        saved_time = float(f.read())
-      if time.time() < saved_time:
-        os.system(f"date -u -s @{int(saved_time)}")
-    except Exception: pass
-  def save_time():
-    while True:
-      try:
-        with open(time_file, "w") as f: f.write(str(time.time()))
-      except: pass
-      time.sleep(60)
-  threading.Thread(target=save_time, daemon=True).start()
-
   manager_init()
-  print(f"python ../../opendbc/car/hyundai/values.py > {Params().get_param_path()}/SupportedCars")
-  os.system(f"python ../../opendbc/car/hyundai/values.py > {Params().get_param_path()}/SupportedCars")
-  os.system(f"python ../../opendbc/car/gm/values.py > {Params().get_param_path()}/SupportedCars_gm")
-  os.system(f"python ../../opendbc/car/toyota/values.py > {Params().get_param_path()}/SupportedCars_toyota")
-  os.system(f"python ../../opendbc/car/mazda/values.py > {Params().get_param_path()}/SupportedCars_mazda")
-  os.system(f"python ../../opendbc/car/honda/values.py > {Params().get_param_path()}/SupportedCars_honda")
-  os.system(f"python ../../opendbc/car/ford/values.py > {Params().get_param_path()}/SupportedCars_ford")
-  os.system(f"python ../../opendbc/car/tesla/values.py > {Params().get_param_path()}/SupportedCars_tesla")
-  os.system(f"python ../../opendbc/car/volkswagen/values.py > {Params().get_param_path()}/SupportedCars_volkswagen")
-
   if os.getenv("PREPAREONLY") is not None:
     return
 
