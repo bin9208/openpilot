@@ -289,6 +289,7 @@ def create_lfahda_cluster(packer, CS, CAN, long_active, lat_active):
     values = copy.copy(CS.lfahda_cluster)
     rx_counter = values.pop("COUNTER", None)
   else:
+    return []
     values = {}
     rx_counter = None
     values["LFA_OptUsmSta"] = 2
@@ -673,7 +674,7 @@ def _make_ccnc_values(values, CS, lat_active, frame, hud_control,
 
 def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
                          disp_angle, left_lane_warning, right_lane_warning,
-                         enable_corner_radar):
+                         enable_corner_radar, stopping=False):
   ret = []
 
   md = CS.MD
