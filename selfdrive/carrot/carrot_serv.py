@@ -822,8 +822,16 @@ class CarrotServ:
 
   def update_noo_lane_change(self, v_ego_kph):
     """NOO: Navigate on Openpilot — auto lane change for forks/off-ramps
-    Tmap typically provides TBT info starting at ~500m.
-    Uses both current (xTurnInfo) and next (xTurnInfoNext) for early detection.
+
+    Key insight: Tmap TBT distance is INACCURATE. Changing lanes close to
+    the fork point is dangerous because road geometry changes (curbs,
+    barriers, deceleration lanes). Must change lanes EARLY while road
+    is still normal multi-lane straight.
+
+    Strategy:
+    - Use xTurnInfoNext for earliest possible detection (1km+)
+    - Trigger as early as possible — far from fork where road is safe
+    - HIGH min_dist — never attempt close to fork (curb danger zone)
     """
     if self.autoNaviLaneChange == 0:
       return
@@ -845,8 +853,12 @@ class CarrotServ:
         self.noo_last_turn_info = -1
       return
 
-    # Pick the relevant fork info
-    if cur_fork:
+    # Pick the EARLIEST available fork info (prefer "next" for early action)
+    if next_fork and not cur_fork:
+      fork_info = self.xTurnInfoNext
+      fork_dist = self.xDistToTurnNext
+      source = "next"
+    elif cur_fork:
       fork_info = self.xTurnInfo
       fork_dist = self.xDistToTurn
       source = "cur"
@@ -857,8 +869,8 @@ class CarrotServ:
 
     # Already triggered for this maneuver
     if self.noo_triggered:
-      # Reset if distance jumps up (new maneuver appeared)
-      if fork_dist > self.noo_last_dist + 200:
+      # Reset if distance jumps up significantly (completely new maneuver)
+      if fork_dist > self.noo_last_dist + 300:
         self.noo_triggered = False
         self.noo_retry_count = 0
       return
@@ -877,25 +889,32 @@ class CarrotServ:
     if self.noo_retry_count >= 3:
       return
 
-    # Distance-based trigger
-    # Tmap reports at ~500m, so trigger window must fit within that
-    # Use generous upper bound since Tmap distance may be inaccurate
-    trigger_dist = np.interp(v_ego_kph, [20, 40, 60, 80, 110], [100, 250, 400, 550, 800])
-    min_dist = np.interp(v_ego_kph, [20, 60, 110], [30, 60, 120])
-
     direction = "LEFT" if fork_info == 3 else "RIGHT"
     self.noo_last_turn_info = fork_info
 
     if fork_dist <= 0:
       return
 
-    # Immediate trigger: first time Tmap reports this fork and we're already close
-    # (Tmap gave us ~500m, we're already within range)
-    if min_dist < fork_dist < trigger_dist:
-      self._noo_trigger(direction, fork_dist, v_ego_kph, source)
-    # Early trigger via "next" TBT: fork is far but we can start preparing
-    elif source == "next" and fork_dist < trigger_dist * 1.2:
-      self._noo_trigger(direction, fork_dist, v_ego_kph, "next_early")
+    # === DISTANCE LOGIC (curb-safe) ===
+    # min_dist: DANGER ZONE — near fork, road geometry changes (curbs, barriers)
+    # Tmap distance is inaccurate, so keep generous safety margin
+    # Never attempt lane change closer than this to the fork point
+    min_dist = np.interp(v_ego_kph, [20, 60, 80, 110], [100, 200, 250, 300])
+
+    # max_dist: upper bound — don't trigger too far (might be wrong info)
+    max_dist = np.interp(v_ego_kph, [20, 60, 80, 110], [300, 800, 1000, 1500])
+
+    if fork_dist < min_dist:
+      # Too close to fork — DANGER ZONE, don't attempt
+      return
+
+    if fork_dist > max_dist:
+      # Too far — wait until closer (info might change)
+      return
+
+    # In the safe window: trigger immediately
+    # The sooner the better — road is still normal straight lanes
+    self._noo_trigger(direction, fork_dist, v_ego_kph, source)
 
   def update_nav_instruction(self, sm):
     if sm.alive['navInstruction'] and sm.valid['navInstruction']:
