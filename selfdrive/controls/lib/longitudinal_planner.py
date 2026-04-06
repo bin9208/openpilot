@@ -198,7 +198,7 @@ class LongitudinalPlanner:
       clipped_accel_coast_interp = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [accel_limits_turns[1], clipped_accel_coast])
       accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast_interp)
 
-    yolo_data = sm.get('yoloObjectData', None)
+    yolo_data = sm['yoloObjectData'] if sm.alive('yoloObjectData') else None
     yolo_v_cruise, yolo_stop = self.yolo_processor.process(yolo_data, v_ego, v_cruise)
     v_cruise = min(v_cruise, yolo_v_cruise)
 
