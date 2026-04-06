@@ -2868,31 +2868,17 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
   // YOLO status indicator
   {
     SubMaster &sm = *(s->sm);
-    bool yolo_alive = sm.alive("yoloObjectData");
-    bool yolo_valid = sm.valid("yoloObjectData");
-    bool yolo_on = yolo_alive && yolo_valid;
+    bool yolo_on = sm.alive("yoloObjectData") && sm.valid("yoloObjectData");
 
     int yolo_x = s->fb_w - 200;
     int yolo_y = 35;
 
-    // Background pill
     NVGcolor bg_color = yolo_on ? nvgRGBA(0, 150, 0, 180) : nvgRGBA(100, 100, 100, 150);
     ui_fill_rect(s->vg, {yolo_x - 10, yolo_y - 5, 190, 40}, bg_color, 15);
 
     nvgTextAlign(s->vg, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP);
     NVGcolor text_color = yolo_on ? COLOR_WHITE : nvgRGBA(180, 180, 180, 200);
     ui_draw_text(s, s->fb_w - 20, yolo_y, yolo_on ? "YOLO: ON" : "YOLO: OFF", 30, text_color, BOLD, 2.0f, 1.0f);
-
-    // Show detection count if active
-    if (yolo_on) {
-      auto yolo = sm["yoloObjectData"].getYoloObjectData();
-      int n = yolo.getNumDetections();
-      if (n > 0) {
-        char det_str[32];
-        snprintf(det_str, sizeof(det_str), "%d obj", n);
-        ui_draw_text(s, s->fb_w - 20, yolo_y + 32, det_str, 25, COLOR_GREEN, BOLD, 1.5f, 1.0f);
-      }
-    }
   }
 
   int show_tpms = params.getInt("ShowTpms");

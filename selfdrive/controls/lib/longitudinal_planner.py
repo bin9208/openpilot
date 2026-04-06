@@ -15,7 +15,10 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_speed_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
-from openpilot.selfdrive.yolo_integration.yolo_control import YoloControlProcessor
+try:
+  from openpilot.selfdrive.yolo_integration.yolo_control import YoloControlProcessor
+except Exception:
+  YoloControlProcessor = None
 
 
 LON_MPC_STEP = 0.2  # first step is 0.2s
@@ -97,7 +100,7 @@ class LongitudinalPlanner:
 
     self.a_desired = init_a
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
-    self.yolo_processor = YoloControlProcessor()
+    self.yolo_processor = YoloControlProcessor() if YoloControlProcessor else None
     self.prev_accel_clip = [ACCEL_MIN, ACCEL_MAX]
     self.output_a_target = 0.0
     self.output_v_target_now = 0.0
@@ -198,9 +201,14 @@ class LongitudinalPlanner:
       clipped_accel_coast_interp = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [accel_limits_turns[1], clipped_accel_coast])
       accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast_interp)
 
-    yolo_data = sm['yoloObjectData'] if sm.alive('yoloObjectData') else None
-    yolo_v_cruise, yolo_stop = self.yolo_processor.process(yolo_data, v_ego, v_cruise)
-    v_cruise = min(v_cruise, yolo_v_cruise)
+    yolo_stop = False
+    if self.yolo_processor is not None:
+      try:
+        yolo_data = sm['yoloObjectData']
+        yolo_v_cruise, yolo_stop = self.yolo_processor.process(yolo_data, v_ego, v_cruise)
+        v_cruise = min(v_cruise, yolo_v_cruise)
+      except Exception:
+        pass
 
     if force_slow_decel or yolo_stop:
       v_cruise = 0.0
