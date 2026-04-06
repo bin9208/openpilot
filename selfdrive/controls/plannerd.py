@@ -23,8 +23,8 @@ def main():
   lateral_planner = LateralPlanner(CP, debug=False)
 
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance', 'lateralPlan'])
-  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'liveParameters', 'radarState', 'modelV2', 'selfdriveState', 'carrotMan', 'yoloObjectData'],
-                           poll='modelV2', ignore_avg_freq=['radarState', 'yoloObjectData'])
+  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'liveParameters', 'radarState', 'modelV2', 'selfdriveState', 'carrotMan'],
+                           poll='modelV2', ignore_avg_freq=['radarState'])
   carrot = CarrotPlanner()
 
   while True:

@@ -15,10 +15,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_speed_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
-try:
-  from openpilot.selfdrive.yolo_integration.yolo_control import YoloControlProcessor
-except Exception:
-  YoloControlProcessor = None
+YoloControlProcessor = None
 
 
 LON_MPC_STEP = 0.2  # first step is 0.2s
