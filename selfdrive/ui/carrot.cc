@@ -2866,15 +2866,12 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
   //drawCarrot.drawConnInfo(s);
   drawCarrot.drawDeviceInfo(s);
 
-  // YOLO status indicator with detail
+  // YOLO status indicator - left side to avoid carrot logo overlap
   {
     SubMaster &sm = *(s->sm);
     bool yolo_alive = sm.alive("yoloObjectData");
     bool yolo_valid = sm.valid("yoloObjectData");
     bool yolo_on = yolo_alive && yolo_valid;
-
-    int yolo_x = s->fb_w - 280;
-    int yolo_y = 80;
 
     char yolo_text[64];
     NVGcolor bg_color;
@@ -2884,8 +2881,7 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       auto yolo = sm["yoloObjectData"].getYoloObjectData();
       int n_det = yolo.getNumDetections();
       int ms = yolo.getInferenceTimeMs();
-      auto yoloClass = yolo.getYoloClass();
-      std::string cls(yoloClass.begin(), yoloClass.end());
+      std::string cls(yolo.getYoloClass().cStr());
       bool phone_connected = cls.find("connected") != std::string::npos;
 
       if (n_det > 0) {
@@ -2904,10 +2900,12 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       text_color = nvgRGBA(180, 180, 180, 200);
     }
 
+    int yolo_x = 20;
+    int yolo_y = s->fb_h - 60;
     int text_w = 260;
-    ui_fill_rect(s->vg, {yolo_x, yolo_y - 5, text_w, 40}, bg_color, 15);
-    nvgTextAlign(s->vg, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP);
-    ui_draw_text(s, s->fb_w - 20, yolo_y, yolo_text, 28, text_color, BOLD, 2.0f, 1.0f);
+    ui_fill_rect(s->vg, {yolo_x, yolo_y, text_w, 40}, bg_color, 15);
+    nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+    ui_draw_text(s, yolo_x + 15, yolo_y + 20, yolo_text, 28, text_color, BOLD, 2.0f, 1.0f);
   }
 
   int show_tpms = params.getInt("ShowTpms");
