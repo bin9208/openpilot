@@ -22,7 +22,7 @@ import numpy as np
 import cereal.messaging as messaging
 from openpilot.common.swaglog import cloudlog
 
-VERSION = "v5"
+VERSION = "v6"
 
 def ylog(msg):
   """Log to both cloudlog AND stdout (tmux visible)."""
@@ -33,6 +33,7 @@ RESULT_PORT = 8081
 JPEG_QUALITY = 50
 FPS = 10.0
 CONNECTION_TIMEOUT = 15.0
+YOLO_INPUT_SIZE = 640      # YOLO model input resolution (square)
 
 # Shared state (protected by lock)
 TARGET_IP = None
@@ -49,47 +50,42 @@ pub_lock = threading.Lock()  # protects pm.send() across threads
 
 # ── NV12 conversion ─────────────────────────────────────────────────
 
-def _nv12_to_rgb_strided(yuv_flat, height, width, stride, uv_offset):
-  """Convert NV12 with stride/uv_offset to RGB.
-  Handles height-padded planes (e.g. 1216 Y rows for height=1208)."""
-  y_rows = uv_offset // stride
-  y_plane = yuv_flat[:y_rows * stride].reshape(y_rows, stride)[:height, :width].astype(np.float32)
+def _resize_nv12(yuv_flat, src_h, src_w, src_stride, uv_offset, dst_size):
+  """Resize NV12 Y+UV planes to dst_size×dst_size BEFORE RGB conversion.
+  Handles strided/height-padded source (stride=2048, y_rows=1216 for height=1208).
+  Returns (y_small, uv_small) as uint8 arrays ready for _nv12_small_to_rgb()."""
+  # Y plane: crop out stride padding and height padding
+  y_rows = uv_offset // src_stride
+  y_plane = yuv_flat[:uv_offset].reshape(y_rows, src_stride)[:src_h, :src_w]
 
+  # UV plane: interleaved U/V, half height
   uv_data = yuv_flat[uv_offset:]
-  uv_rows = len(uv_data) // stride
-  uv_plane = uv_data[:uv_rows * stride].reshape(uv_rows, stride)[:height // 2, :width]
+  uv_rows = len(uv_data) // src_stride
+  uv_plane = uv_data[:uv_rows * src_stride].reshape(uv_rows, src_stride)[:src_h // 2, :src_w]
+
+  # Nearest-neighbor resize (same column indices for Y and UV)
+  r_y  = (np.arange(dst_size)       * src_h        / dst_size).astype(np.int32)
+  c    = (np.arange(dst_size)       * src_w        / dst_size).astype(np.int32)
+  r_uv = (np.arange(dst_size // 2) * (src_h // 2) / (dst_size // 2)).astype(np.int32)
+
+  y_small  = y_plane[np.ix_(r_y,  c)]
+  uv_small = uv_plane[np.ix_(r_uv, c)]
+
+  return y_small, uv_small
+
+
+def _nv12_small_to_rgb(y_plane, uv_plane):
+  """Convert pre-resized NV12 Y+UV planes to RGB uint8 (no stride complications)."""
+  h, w = y_plane.shape
+  Y = y_plane.astype(np.float32)
   U = uv_plane[:, 0::2].astype(np.float32)
   V = uv_plane[:, 1::2].astype(np.float32)
-
-  U_full = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)[:height, :width]
-  V_full = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)[:height, :width]
-
-  R = np.clip(y_plane + 1.402 * (V_full - 128), 0, 255)
-  G = np.clip(y_plane - 0.344136 * (U_full - 128) - 0.714136 * (V_full - 128), 0, 255)
-  B = np.clip(y_plane + 1.772 * (U_full - 128), 0, 255)
-  return np.stack([R, G, B], axis=2).astype(np.uint8)
-
-
-def _nv12_to_rgb_simple(yuv_flat, height, width):
-  """Convert NV12 without stride (stride == width) to RGB."""
-  y_size = width * height
-  Y = yuv_flat[:y_size].reshape(height, width).astype(np.float32)
-  uv = yuv_flat[y_size:y_size + width * (height // 2)].reshape(height // 2, width)
-  U = uv[:, 0::2].astype(np.float32)
-  V = uv[:, 1::2].astype(np.float32)
-  U_full = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)[:height, :width]
-  V_full = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)[:height, :width]
-  R = np.clip(Y + 1.402 * (V_full - 128), 0, 255)
-  G = np.clip(Y - 0.344136 * (U_full - 128) - 0.714136 * (V_full - 128), 0, 255)
-  B = np.clip(Y + 1.772 * (U_full - 128), 0, 255)
-  return np.stack([R, G, B], axis=2).astype(np.uint8)
-
-
-def _numpy_resize(img, target_h, target_w):
-  h, w = img.shape[:2]
-  y_idx = (np.arange(target_h) * h / target_h).astype(int)
-  x_idx = (np.arange(target_w) * w / target_w).astype(int)
-  return img[np.ix_(y_idx, x_idx)]
+  U_f = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)[:h, :w]
+  V_f = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)[:h, :w]
+  R = np.clip(Y + 1.402  * (V_f - 128),                                   0, 255).astype(np.uint8)
+  G = np.clip(Y - 0.344136 * (U_f - 128) - 0.714136 * (V_f - 128),       0, 255).astype(np.uint8)
+  B = np.clip(Y + 1.772  * (U_f - 128),                                   0, 255).astype(np.uint8)
+  return np.stack([R, G, B], axis=2)
 
 
 # ── Image backend setup ─────────────────────────────────────────────
@@ -98,6 +94,20 @@ _img_backend = None
 
 def _setup_backend():
   global _img_backend, backend_name
+
+  # libjpeg-turbo: ~3ms vs PIL's ~15ms for 640×640
+  # Install: pip install PyTurboJPEG  (libturbojpeg already on AGNOS)
+  try:
+    from turbojpeg import TurboJPEG, TJPF_RGB
+    _tj = TurboJPEG()
+    def _encode_turbo(rgb):
+      return _tj.encode(rgb, quality=JPEG_QUALITY, pixel_format=TJPF_RGB)
+    _img_backend = _encode_turbo
+    backend_name = "turbo"
+    ylog("[YOLO] Image backend: libjpeg-turbo")
+    return
+  except Exception as e:
+    cloudlog.info(f"[YOLO] turbo not available: {e}")
 
   try:
     from PIL import Image as _Image
@@ -427,12 +437,9 @@ def yolo_streamer():
         ylog(f"[YOLO] VisionBuf: {width}x{height}, stride={stride}, "
              f"uv_offset={uv_offset}, data={len(yuv_flat)}B")
 
-      if stride > width:
-        rgb = _nv12_to_rgb_strided(yuv_flat, height, width, stride, uv_offset)
-      else:
-        rgb = _nv12_to_rgb_simple(yuv_flat, height, width)
-
-      rgb_small = _numpy_resize(rgb, 640, 640)
+      # Resize NV12 first (cheap), THEN convert small image to RGB
+      y_small, uv_small = _resize_nv12(yuv_flat, height, width, stride, uv_offset, YOLO_INPUT_SIZE)
+      rgb_small = _nv12_small_to_rgb(y_small, uv_small)
       jpeg_bytes = _img_backend(rgb_small)
 
       if jpeg_bytes and len(jpeg_bytes) < 65000:
