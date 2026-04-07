@@ -22,7 +22,7 @@ import numpy as np
 import cereal.messaging as messaging
 from openpilot.common.swaglog import cloudlog
 
-VERSION = "v4"
+VERSION = "v5"
 
 def ylog(msg):
   """Log to both cloudlog AND stdout (tmux visible)."""
@@ -32,11 +32,13 @@ FRAME_PORT = 8080
 RESULT_PORT = 8081
 JPEG_QUALITY = 50
 FPS = 10.0
-CONNECTION_TIMEOUT = 5.0
+CONNECTION_TIMEOUT = 15.0
 
 # Shared state (protected by lock)
 TARGET_IP = None
-last_result_time = 0.0
+last_hello_time = 0.0      # last hello from phone (keeps TARGET_IP alive)
+last_result_time = 0.0     # last actual detection result
+last_detect_pub_time = 0.0 # last time _publish_detections was called
 frames_sent = 0
 results_received = 0
 backend_name = "none"
@@ -162,6 +164,7 @@ def _safe_publish(pm, dat):
 
 def _publish_detections(pm, frame_id, inference_ms, objects):
   """Build and publish a yoloObjectData cereal message with detection results."""
+  global last_detect_pub_time
   try:
     dat = messaging.new_message('yoloObjectData')
     yolo = dat.yoloObjectData
@@ -220,6 +223,8 @@ def _publish_detections(pm, frame_id, inference_ms, objects):
       dets[i].distanceEstimate = float(obj.get('dist', 0))
 
     _safe_publish(pm, dat)
+    with lock:
+      last_detect_pub_time = time.monotonic()
   except Exception as e:
     cloudlog.error(f"[YOLO] Publish error: {e}")
 
@@ -227,7 +232,7 @@ def _publish_detections(pm, frame_id, inference_ms, objects):
 # ── Receiver thread ──────────────────────────────────────────────────
 
 def yolo_receiver(pm):
-  global TARGET_IP, last_result_time, results_received
+  global TARGET_IP, last_hello_time, last_result_time, results_received
   sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
   sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   sock.bind(('0.0.0.0', RESULT_PORT))
@@ -240,17 +245,24 @@ def yolo_receiver(pm):
     try:
       data, addr = sock.recvfrom(65535)
       timeout_count = 0
+      now = time.monotonic()
+
+      msg = json.loads(data.decode('utf-8'))
+
       with lock:
         if TARGET_IP is None or TARGET_IP != addr[0]:
           ylog(f"[YOLO] Phone discovered: {addr[0]}:{addr[1]} ({len(data)}B)")
           TARGET_IP = addr[0]
-        last_result_time = time.monotonic()
-
-      msg = json.loads(data.decode('utf-8'))
 
       if msg.get("cmd") == "hello":
-        cloudlog.info(f"[YOLO] Hello from phone {addr[0]}")
+        with lock:
+          last_hello_time = now
         continue
+
+      # Actual detection result
+      with lock:
+        last_result_time = now
+        last_hello_time = now  # results also keep connection alive
 
       objects = msg.get('objects', [])
       frame_id = msg.get('frame_id', 0)
@@ -260,8 +272,8 @@ def yolo_receiver(pm):
         results_received += 1
 
       if results_received <= 5 or results_received % 50 == 0:
-        cloudlog.info(f"[YOLO] Result #{results_received}: frame={frame_id}, "
-                      f"{inference_ms}ms, {len(objects)} obj from {addr[0]}")
+        ylog(f"[YOLO] Result #{results_received}: frame={frame_id}, "
+             f"{inference_ms}ms, {len(objects)} obj from {addr[0]}")
 
       _publish_detections(pm, frame_id, inference_ms, objects)
 
@@ -272,9 +284,11 @@ def yolo_receiver(pm):
           cloudlog.info(f"[YOLO] Receiver: no data {timeout_count}s "
                         f"(target={TARGET_IP}, rx={results_received})")
       with lock:
-        if TARGET_IP and last_result_time > 0 and \
-           (time.monotonic() - last_result_time) > CONNECTION_TIMEOUT:
-          cloudlog.info("[YOLO] Connection timeout, resetting TARGET_IP")
+        # Only timeout if no hello AND no results for CONNECTION_TIMEOUT
+        last_any = max(last_hello_time, last_result_time)
+        if TARGET_IP and last_any > 0 and \
+           (time.monotonic() - last_any) > CONNECTION_TIMEOUT:
+          ylog("[YOLO] Connection timeout, resetting TARGET_IP")
           TARGET_IP = None
           results_received = 0
     except Exception as e:
@@ -284,7 +298,9 @@ def yolo_receiver(pm):
 # ── Heartbeat thread ─────────────────────────────────────────────────
 
 def yolo_heartbeat(pm):
-  """Always publish yoloObjectData every 1s so C++ SubMaster valid() is true."""
+  """Always publish yoloObjectData every 1s so C++ SubMaster valid() is true.
+  Skips publish when detection results were recently published (within 2s)
+  to avoid overwriting actual detection info with numDetections=0."""
   ylog("[YOLO] Heartbeat started")
   hb_count = 0
   while True:
@@ -294,6 +310,13 @@ def yolo_heartbeat(pm):
         target = TARGET_IP
         tx = frames_sent
         rx = results_received
+        detect_age = time.monotonic() - last_detect_pub_time
+
+      # Skip heartbeat if receiver is actively publishing detections
+      if detect_age < 2.0:
+        hb_count += 1
+        time.sleep(1.0)
+        continue
 
       dat = messaging.new_message('yoloObjectData')
       yolo = dat.yoloObjectData

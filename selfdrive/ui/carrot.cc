@@ -2887,7 +2887,8 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       if (n_det > 0) {
         snprintf(yolo_text, sizeof(yolo_text), "YOLO %d obj %dms", n_det, ms);
         bg_color = nvgRGBA(0, 150, 0, 200);
-      } else if (phone_connected) {
+      } else if (phone_connected || ms > 0) {
+        // ms > 0 means phone is running inference (even with 0 detections)
         snprintf(yolo_text, sizeof(yolo_text), "YOLO: READY");
         bg_color = nvgRGBA(0, 100, 150, 180);
       } else {
