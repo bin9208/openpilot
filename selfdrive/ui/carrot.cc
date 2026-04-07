@@ -2865,20 +2865,41 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
   //drawCarrot.drawConnInfo(s);
   drawCarrot.drawDeviceInfo(s);
 
-  // YOLO status indicator
+  // YOLO status indicator with detail
   {
     SubMaster &sm = *(s->sm);
-    bool yolo_on = sm.alive("yoloObjectData") && sm.valid("yoloObjectData");
+    bool yolo_alive = sm.alive("yoloObjectData");
+    bool yolo_valid = sm.valid("yoloObjectData");
+    bool yolo_on = yolo_alive && yolo_valid;
 
-    int yolo_x = s->fb_w - 200;
+    int yolo_x = s->fb_w - 280;
     int yolo_y = 35;
 
-    NVGcolor bg_color = yolo_on ? nvgRGBA(0, 150, 0, 180) : nvgRGBA(100, 100, 100, 150);
-    ui_fill_rect(s->vg, {yolo_x - 10, yolo_y - 5, 190, 40}, bg_color, 15);
+    char yolo_text[64];
+    NVGcolor bg_color;
+    NVGcolor text_color = COLOR_WHITE;
 
+    if (yolo_on) {
+      auto yolo = sm["yoloObjectData"].getYoloObjectData();
+      int n_det = yolo.getNumDetections();
+      int ms = yolo.getInferenceTimeMs();
+      if (n_det > 0) {
+        snprintf(yolo_text, sizeof(yolo_text), "YOLO %d obj %dms", n_det, ms);
+        bg_color = nvgRGBA(0, 150, 0, 200);
+      } else {
+        snprintf(yolo_text, sizeof(yolo_text), "YOLO: READY");
+        bg_color = nvgRGBA(0, 100, 150, 180);
+      }
+    } else {
+      snprintf(yolo_text, sizeof(yolo_text), "YOLO: OFF");
+      bg_color = nvgRGBA(100, 100, 100, 150);
+      text_color = nvgRGBA(180, 180, 180, 200);
+    }
+
+    int text_w = 260;
+    ui_fill_rect(s->vg, {yolo_x, yolo_y - 5, text_w, 40}, bg_color, 15);
     nvgTextAlign(s->vg, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP);
-    NVGcolor text_color = yolo_on ? COLOR_WHITE : nvgRGBA(180, 180, 180, 200);
-    ui_draw_text(s, s->fb_w - 20, yolo_y, yolo_on ? "YOLO: ON" : "YOLO: OFF", 30, text_color, BOLD, 2.0f, 1.0f);
+    ui_draw_text(s, s->fb_w - 20, yolo_y, yolo_text, 28, text_color, BOLD, 2.0f, 1.0f);
   }
 
   int show_tpms = params.getInt("ShowTpms");

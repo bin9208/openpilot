@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+yolod: streams camera frames to Galaxy Fold 7 via UDP,
+receives YOLO detection results, publishes as cereal yoloObjectData.
+
+Connection flow:
+  1. Discovery: yolod broadcasts hello → phone:8080
+  2. Phone replies hello → yolod:8081 → TARGET_IP learned
+  3. Streamer: yolod sends JPEG frames → phone:8080
+  4. Phone runs YOLO → sends JSON results → yolod:8081
+  5. Receiver publishes cereal yoloObjectData
+  6. Heartbeat: publishes empty yoloObjectData every 1s to keep UI alive
+"""
 import json
 import socket
 import struct
@@ -8,23 +20,26 @@ import time
 import numpy as np
 
 import cereal.messaging as messaging
-from msgq.visionipc import VisionIpcClient, VisionStreamType
-from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 
 FRAME_PORT = 8080
 RESULT_PORT = 8081
 JPEG_QUALITY = 50
-FPS = 20.0
-CONNECTION_TIMEOUT = 3.0
+FPS = 10.0  # reduced from 20 to lower CPU load
+CONNECTION_TIMEOUT = 5.0
 
+# Shared state
 TARGET_IP = None
 last_result_time = 0.0
 frame_counter = 0
+frames_sent = 0
+results_received = 0
+backend_name = "none"
+streamer_status = "init"
+lock = threading.Lock()
 
-# Image encoding backend
-_img_backend = None
 
+# ── Image backends ────────────────────────────────────────────────────
 
 def _nv12_to_rgb(yuv_flat, height, width):
   Y = yuv_flat[:height * width].reshape(height, width).astype(np.float32)
@@ -46,8 +61,10 @@ def _numpy_resize(img, target_h, target_w):
   return img[np.ix_(y_idx, x_idx)]
 
 
+_img_backend = None
+
 def _setup_backend():
-  global _img_backend
+  global _img_backend, backend_name
 
   # Try cv2
   try:
@@ -59,10 +76,11 @@ def _setup_backend():
       _, buf = _cv2.imencode('.jpg', resized, [_cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
       return buf.tobytes()
     _img_backend = _encode_cv2
+    backend_name = "cv2"
     cloudlog.info("[YOLO] Image backend: cv2")
     return
-  except Exception:
-    pass
+  except Exception as e:
+    cloudlog.info(f"[YOLO] cv2 not available: {e}")
 
   # Try PIL/Pillow
   try:
@@ -76,12 +94,13 @@ def _setup_backend():
       img.save(buf, format='JPEG', quality=JPEG_QUALITY)
       return buf.getvalue()
     _img_backend = _encode_pil
+    backend_name = "PIL"
     cloudlog.info("[YOLO] Image backend: PIL")
     return
-  except Exception:
-    pass
+  except Exception as e:
+    cloudlog.info(f"[YOLO] PIL not available: {e}")
 
-  # Try ffmpeg subprocess (available on most Linux)
+  # Try ffmpeg subprocess
   try:
     r = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=3)
     if r.returncode == 0:
@@ -99,196 +118,278 @@ def _setup_backend():
           return proc.stdout
         return None
       _img_backend = _encode_ffmpeg
+      backend_name = "ffmpeg"
       cloudlog.info("[YOLO] Image backend: ffmpeg")
       return
-  except Exception:
-    pass
+  except Exception as e:
+    cloudlog.info(f"[YOLO] ffmpeg not available: {e}")
 
-  cloudlog.error("[YOLO] No image backend found (need cv2, Pillow, or ffmpeg). Streamer disabled.")
+  backend_name = "NONE"
+  cloudlog.error("[YOLO] NO IMAGE BACKEND FOUND. Need cv2, Pillow, or ffmpeg. Frame streaming DISABLED.")
 
 
-def yolo_receiver():
-  global TARGET_IP, last_result_time
+# ── Receiver thread ───────────────────────────────────────────────────
+
+def yolo_receiver(pm):
+  global TARGET_IP, last_result_time, results_received
   sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
   sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   sock.bind(('0.0.0.0', RESULT_PORT))
   sock.settimeout(1.0)
-
-  pm = messaging.PubMaster(['yoloObjectData'])
 
   cloudlog.info(f"[YOLO] Receiver listening on UDP port {RESULT_PORT}")
 
   while True:
     try:
       data, addr = sock.recvfrom(65535)
-      if TARGET_IP is None or TARGET_IP != addr[0]:
-        cloudlog.info(f"[YOLO] Client connected from {addr[0]}")
-        TARGET_IP = addr[0]
+      with lock:
+        if TARGET_IP is None or TARGET_IP != addr[0]:
+          cloudlog.info(f"[YOLO] Phone discovered: {addr[0]}")
+          TARGET_IP = addr[0]
+        last_result_time = time.monotonic()
 
-      last_result_time = time.monotonic()
       msg = json.loads(data.decode('utf-8'))
 
       if msg.get("cmd") == "hello":
+        cloudlog.info(f"[YOLO] Hello from phone {addr[0]}")
         continue
 
       objects = msg.get('objects', [])
       frame_id = msg.get('frame_id', 0)
       inference_ms = msg.get('inference_ms', 0)
 
+      with lock:
+        results_received += 1
+
+      if results_received <= 3 or results_received % 50 == 0:
+        cloudlog.info(f"[YOLO] Result #{results_received}: frame={frame_id}, {inference_ms}ms, {len(objects)} objects")
+
       # Build cereal message
-      dat = messaging.new_message('yoloObjectData')
-      yolo = dat.yoloObjectData
-      yolo.frameId = frame_id
-      yolo.inferenceTimeMs = inference_ms
-      yolo.numDetections = len(objects)
-
-      # Backward-compatible fields
-      has_red = False
-      has_green = False
-      primary_dist = 0.0
-      primary_class = ""
-      primary_x = primary_y = primary_w = primary_h = 0.0
-
-      if objects:
-        for obj in objects:
-          name = obj.get('name', '')
-          if name == 'red_light' or (obj.get('cls', -1) == 9 and 'green' not in name):
-            has_red = True
-            primary_dist = float(obj.get('dist', 10.0))
-            primary_class = name
-            primary_x = float(obj.get('x', 0))
-            primary_y = float(obj.get('y', 0))
-            primary_w = float(obj.get('w', 0))
-            primary_h = float(obj.get('h', 0))
-            break
-          elif name == 'green_light':
-            has_green = True
-
-        if not has_red and not has_green and not primary_class:
-          obj = objects[0]
-          primary_class = obj.get('name', '')
-          primary_dist = float(obj.get('dist', 0))
-          primary_x = float(obj.get('x', 0))
-          primary_y = float(obj.get('y', 0))
-          primary_w = float(obj.get('w', 0))
-          primary_h = float(obj.get('h', 0))
-
-      yolo.hasRedLight = has_red
-      yolo.hasGreenLight = has_green
-      yolo.distanceEstimate = primary_dist
-      yolo.yoloClass = primary_class
-      yolo.x = primary_x
-      yolo.y = primary_y
-      yolo.w = primary_w
-      yolo.h = primary_h
-
-      # Multi-object detections list
-      detections = yolo.init('detections', len(objects))
-      for i, obj in enumerate(objects):
-        detections[i].classId = int(obj.get('cls', 0))
-        detections[i].className = obj.get('name', '')
-        detections[i].confidence = float(obj.get('conf', 0))
-        detections[i].x = float(obj.get('x', 0))
-        detections[i].y = float(obj.get('y', 0))
-        detections[i].w = float(obj.get('w', 0))
-        detections[i].h = float(obj.get('h', 0))
-        detections[i].distanceEstimate = float(obj.get('dist', 0))
-
-      pm.send('yoloObjectData', dat)
+      _publish_detections(pm, frame_id, inference_ms, objects)
 
     except socket.timeout:
-      if TARGET_IP and (time.monotonic() - last_result_time) > CONNECTION_TIMEOUT:
-        cloudlog.info("[YOLO] Connection timeout, waiting for reconnect...")
-        TARGET_IP = None
+      with lock:
+        if TARGET_IP and last_result_time > 0 and (time.monotonic() - last_result_time) > CONNECTION_TIMEOUT:
+          cloudlog.info("[YOLO] Connection timeout, resetting...")
+          TARGET_IP = None
+          results_received = 0
     except Exception as e:
       cloudlog.error(f"[YOLO] Receiver error: {e}")
 
 
+def _publish_detections(pm, frame_id, inference_ms, objects):
+  """Build and publish a yoloObjectData cereal message."""
+  try:
+    dat = messaging.new_message('yoloObjectData')
+    yolo = dat.yoloObjectData
+    yolo.frameId = frame_id
+    yolo.inferenceTimeMs = inference_ms
+    yolo.numDetections = len(objects)
+
+    has_red = False
+    has_green = False
+    primary_dist = 0.0
+    primary_class = ""
+    primary_x = primary_y = primary_w = primary_h = 0.0
+
+    if objects:
+      for obj in objects:
+        name = obj.get('name', '')
+        if name == 'red_light' or (obj.get('cls', -1) == 9 and 'green' not in name):
+          has_red = True
+          primary_dist = float(obj.get('dist', 10.0))
+          primary_class = name
+          primary_x = float(obj.get('x', 0))
+          primary_y = float(obj.get('y', 0))
+          primary_w = float(obj.get('w', 0))
+          primary_h = float(obj.get('h', 0))
+          break
+        elif name == 'green_light':
+          has_green = True
+
+      if not has_red and not has_green and not primary_class:
+        obj = objects[0]
+        primary_class = obj.get('name', '')
+        primary_dist = float(obj.get('dist', 0))
+        primary_x = float(obj.get('x', 0))
+        primary_y = float(obj.get('y', 0))
+        primary_w = float(obj.get('w', 0))
+        primary_h = float(obj.get('h', 0))
+
+    yolo.hasRedLight = has_red
+    yolo.hasGreenLight = has_green
+    yolo.distanceEstimate = primary_dist
+    yolo.yoloClass = primary_class
+    yolo.x = primary_x
+    yolo.y = primary_y
+    yolo.w = primary_w
+    yolo.h = primary_h
+
+    dets = yolo.init('detections', len(objects))
+    for i, obj in enumerate(objects):
+      dets[i].classId = int(obj.get('cls', 0))
+      dets[i].className = obj.get('name', '')
+      dets[i].confidence = float(obj.get('conf', 0))
+      dets[i].x = float(obj.get('x', 0))
+      dets[i].y = float(obj.get('y', 0))
+      dets[i].w = float(obj.get('w', 0))
+      dets[i].h = float(obj.get('h', 0))
+      dets[i].distanceEstimate = float(obj.get('dist', 0))
+
+    pm.send('yoloObjectData', dat)
+  except Exception as e:
+    cloudlog.error(f"[YOLO] Publish error: {e}")
+
+
+# ── Heartbeat thread ─────────────────────────────────────────────────
+
+def yolo_heartbeat(pm):
+  """Publish empty yoloObjectData every second when phone is connected.
+     This keeps sm.alive('yoloObjectData') true for the UI indicator."""
+  cloudlog.info("[YOLO] Heartbeat thread started")
+  while True:
+    with lock:
+      connected = TARGET_IP is not None
+    if connected:
+      try:
+        dat = messaging.new_message('yoloObjectData')
+        yolo = dat.yoloObjectData
+        yolo.numDetections = 0
+        yolo.yoloClass = f"hb|{backend_name}|tx={frames_sent}|rx={results_received}"
+        pm.send('yoloObjectData', dat)
+      except Exception as e:
+        cloudlog.error(f"[YOLO] Heartbeat error: {e}")
+    time.sleep(1.0)
+
+
+# ── Discovery thread ─────────────────────────────────────────────────
+
 def yolo_discovery():
   """Broadcast hello on FRAME_PORT so the phone discovers comma's IP."""
-  global TARGET_IP
   sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
   sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
   hello = b'{"cmd":"hello"}'
 
-  cloudlog.info("[YOLO] Discovery broadcaster started on port %d", FRAME_PORT)
+  cloudlog.info(f"[YOLO] Discovery broadcaster started (port {FRAME_PORT})")
 
   while True:
-    if TARGET_IP is None:
+    with lock:
+      connected = TARGET_IP is not None
+
+    if not connected:
       try:
-        # Broadcast to all subnets
         sock.sendto(hello, ('255.255.255.255', FRAME_PORT))
-        # Also try common hotspot subnets
         for subnet in ['192.168.43.255', '192.168.49.255', '192.168.0.255', '192.168.1.255']:
           try:
             sock.sendto(hello, (subnet, FRAME_PORT))
           except Exception:
             pass
       except Exception as e:
-        cloudlog.warning(f"[YOLO] Discovery broadcast error: {e}")
+        cloudlog.warning(f"[YOLO] Discovery error: {e}")
       time.sleep(2.0)
     else:
       time.sleep(5.0)
 
 
+# ── Streamer thread ──────────────────────────────────────────────────
+
 def yolo_streamer():
-  global TARGET_IP, frame_counter
+  global frames_sent, streamer_status
 
   if _img_backend is None:
-    cloudlog.error("[YOLO] Streamer not started: no image backend")
+    streamer_status = "no_backend"
+    cloudlog.error("[YOLO] Streamer DISABLED: no image backend available")
+    return
+
+  try:
+    from msgq.visionipc import VisionIpcClient, VisionStreamType
+  except ImportError as e:
+    streamer_status = "no_vipc"
+    cloudlog.error(f"[YOLO] Streamer DISABLED: VisionIPC not available: {e}")
     return
 
   vipc_client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
   sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-  rk = Ratekeeper(FPS)
 
-  cloudlog.info("[YOLO] Streamer started")
+  streamer_status = "waiting"
+  cloudlog.info("[YOLO] Streamer initialized, waiting for connection...")
 
   while True:
-    if not TARGET_IP:
+    with lock:
+      target = TARGET_IP
+
+    if not target:
       time.sleep(1.0)
       continue
 
     if not vipc_client.is_connected():
+      streamer_status = "vipc_connecting"
+      cloudlog.info("[YOLO] Connecting to camerad VisionIPC...")
       vipc_client.connect(True)
       time.sleep(0.1)
       continue
 
+    streamer_status = "streaming"
+
     img_data = vipc_client.recv()
-    if img_data is None or not img_data.data.any():
+    if img_data is None:
       continue
 
     try:
-      yuv_flat = np.frombuffer(img_data.data, dtype=np.uint8)
+      data_bytes = img_data.data
+      if data_bytes is None or len(data_bytes) == 0:
+        continue
+
+      yuv_flat = np.frombuffer(data_bytes, dtype=np.uint8)
       jpeg_bytes = _img_backend(yuv_flat, img_data.height, img_data.width)
 
       if jpeg_bytes and len(jpeg_bytes) < 65000:
-        frame_counter += 1
+        frames_sent += 1
         timestamp_ns = int(time.monotonic() * 1e9)
-        header = struct.pack('<QQ', frame_counter, timestamp_ns)
-        sock.sendto(header + jpeg_bytes, (TARGET_IP, FRAME_PORT))
+        header = struct.pack('<QQ', frames_sent, timestamp_ns)
+        sock.sendto(header + jpeg_bytes, (target, FRAME_PORT))
+
+        if frames_sent <= 3 or frames_sent % 100 == 0:
+          cloudlog.info(f"[YOLO] Frame #{frames_sent} sent ({len(jpeg_bytes)} bytes) to {target}")
+      elif jpeg_bytes:
+        cloudlog.warning(f"[YOLO] Frame too large: {len(jpeg_bytes)} bytes, skipped")
     except Exception as e:
       cloudlog.error(f"[YOLO] Streamer error: {e}")
 
-    rk.keep_time()
+    time.sleep(1.0 / FPS)
 
+
+# ── Main ─────────────────────────────────────────────────────────────
 
 def main():
-  cloudlog.info("[YOLO] yolod starting...")
+  cloudlog.info("[YOLO] ========== yolod starting ==========")
   _setup_backend()
+  cloudlog.info(f"[YOLO] Backend: {backend_name}")
 
-  t_recv = threading.Thread(target=yolo_receiver, daemon=True)
-  t_stream = threading.Thread(target=yolo_streamer, daemon=True)
-  t_disc = threading.Thread(target=yolo_discovery, daemon=True)
+  pm = messaging.PubMaster(['yoloObjectData'])
 
-  t_recv.start()
-  t_stream.start()
-  t_disc.start()
+  threads = [
+    ("receiver", lambda: yolo_receiver(pm)),
+    ("heartbeat", lambda: yolo_heartbeat(pm)),
+    ("discovery", yolo_discovery),
+    ("streamer", yolo_streamer),
+  ]
 
-  cloudlog.info("[YOLO] All threads started (receiver, streamer, discovery)")
+  started = []
+  for name, func in threads:
+    t = threading.Thread(target=func, daemon=True, name=f"yolo_{name}")
+    t.start()
+    started.append(t)
+    cloudlog.info(f"[YOLO] Thread '{name}' started")
 
-  # Keep main thread alive
-  t_recv.join()
+  cloudlog.info(f"[YOLO] All {len(started)} threads running")
+
+  # Keep main alive
+  while True:
+    time.sleep(10.0)
+    with lock:
+      cloudlog.info(f"[YOLO] Status: target={TARGET_IP}, backend={backend_name}, "
+                     f"streamer={streamer_status}, tx={frames_sent}, rx={results_received}")
 
 
 if __name__ == "__main__":
