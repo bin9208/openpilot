@@ -204,6 +204,33 @@ def yolo_receiver():
       cloudlog.error(f"[YOLO] Receiver error: {e}")
 
 
+def yolo_discovery():
+  """Broadcast hello on FRAME_PORT so the phone discovers comma's IP."""
+  global TARGET_IP
+  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+  sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+  hello = b'{"cmd":"hello"}'
+
+  cloudlog.info("[YOLO] Discovery broadcaster started on port %d", FRAME_PORT)
+
+  while True:
+    if TARGET_IP is None:
+      try:
+        # Broadcast to all subnets
+        sock.sendto(hello, ('255.255.255.255', FRAME_PORT))
+        # Also try common hotspot subnets
+        for subnet in ['192.168.43.255', '192.168.49.255', '192.168.0.255', '192.168.1.255']:
+          try:
+            sock.sendto(hello, (subnet, FRAME_PORT))
+          except Exception:
+            pass
+      except Exception as e:
+        cloudlog.warning(f"[YOLO] Discovery broadcast error: {e}")
+      time.sleep(2.0)
+    else:
+      time.sleep(5.0)
+
+
 def yolo_streamer():
   global TARGET_IP, frame_counter
 
@@ -247,13 +274,18 @@ def yolo_streamer():
 
 
 def main():
+  cloudlog.info("[YOLO] yolod starting...")
   _setup_backend()
 
   t_recv = threading.Thread(target=yolo_receiver, daemon=True)
   t_stream = threading.Thread(target=yolo_streamer, daemon=True)
+  t_disc = threading.Thread(target=yolo_discovery, daemon=True)
 
   t_recv.start()
   t_stream.start()
+  t_disc.start()
+
+  cloudlog.info("[YOLO] All threads started (receiver, streamer, discovery)")
 
   # Keep main thread alive
   t_recv.join()
