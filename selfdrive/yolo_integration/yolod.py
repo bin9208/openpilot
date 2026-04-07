@@ -42,13 +42,16 @@ lock = threading.Lock()
 # ── Image backends ────────────────────────────────────────────────────
 
 def _nv12_to_rgb_strided(yuv_flat, height, width, stride, uv_offset):
-  """Convert NV12 with stride/uv_offset to RGB."""
-  # Y plane (with stride padding)
-  y_plane = yuv_flat[:uv_offset].reshape(height, stride)[:, :width].astype(np.float32)
+  """Convert NV12 with stride/uv_offset to RGB.
+  Y plane may have padding rows (e.g. 1216 rows for height=1208)."""
+  # Y plane: use uv_offset // stride to get actual row count (includes padding rows)
+  y_rows = uv_offset // stride
+  y_plane = yuv_flat[:y_rows * stride].reshape(y_rows, stride)[:height, :width].astype(np.float32)
 
-  # UV plane (with stride padding)
-  uv_size = stride * (height // 2)
-  uv_plane = yuv_flat[uv_offset:uv_offset + uv_size].reshape(height // 2, stride)[:, :width]
+  # UV plane: similarly handle padding
+  uv_data = yuv_flat[uv_offset:]
+  uv_rows = len(uv_data) // stride
+  uv_plane = uv_data[:uv_rows * stride].reshape(uv_rows, stride)[:height // 2, :width]
   U = uv_plane[:, 0::2].astype(np.float32)
   V = uv_plane[:, 1::2].astype(np.float32)
 
