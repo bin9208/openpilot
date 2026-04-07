@@ -41,9 +41,31 @@ lock = threading.Lock()
 
 # ── Image backends ────────────────────────────────────────────────────
 
-def _nv12_to_rgb(yuv_flat, height, width):
-  Y = yuv_flat[:height * width].reshape(height, width).astype(np.float32)
-  uv = yuv_flat[height * width:].reshape(height // 2, width)
+def _nv12_to_rgb_strided(yuv_flat, height, width, stride, uv_offset):
+  """Convert NV12 with stride/uv_offset to RGB."""
+  # Y plane (with stride padding)
+  y_plane = yuv_flat[:uv_offset].reshape(height, stride)[:, :width].astype(np.float32)
+
+  # UV plane (with stride padding)
+  uv_size = stride * (height // 2)
+  uv_plane = yuv_flat[uv_offset:uv_offset + uv_size].reshape(height // 2, stride)[:, :width]
+  U = uv_plane[:, 0::2].astype(np.float32)
+  V = uv_plane[:, 1::2].astype(np.float32)
+
+  U_full = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)[:height, :width]
+  V_full = np.repeat(np.repeat(V, 2, axis=0), 2, axis=1)[:height, :width]
+
+  R = np.clip(y_plane + 1.402 * (V_full - 128), 0, 255)
+  G = np.clip(y_plane - 0.344136 * (U_full - 128) - 0.714136 * (V_full - 128), 0, 255)
+  B = np.clip(y_plane + 1.772 * (U_full - 128), 0, 255)
+  return np.stack([R, G, B], axis=2).astype(np.uint8)
+
+
+def _nv12_to_rgb_simple(yuv_flat, height, width):
+  """Convert NV12 without stride (stride == width) to RGB."""
+  y_size = width * height
+  Y = yuv_flat[:y_size].reshape(height, width).astype(np.float32)
+  uv = yuv_flat[y_size:y_size + width * (height // 2)].reshape(height // 2, width)
   U = uv[:, 0::2].astype(np.float32)
   V = uv[:, 1::2].astype(np.float32)
   U_full = np.repeat(np.repeat(U, 2, axis=0), 2, axis=1)[:height, :width]
@@ -66,29 +88,11 @@ _img_backend = None
 def _setup_backend():
   global _img_backend, backend_name
 
-  # Try cv2
-  try:
-    import cv2 as _cv2
-    def _encode_cv2(yuv_flat, height, width):
-      yuv_mat = yuv_flat.reshape((height * 3 // 2, width))
-      rgb = _cv2.cvtColor(yuv_mat, _cv2.COLOR_YUV2BGR_NV12)
-      resized = _cv2.resize(rgb, (640, 640))
-      _, buf = _cv2.imencode('.jpg', resized, [_cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-      return buf.tobytes()
-    _img_backend = _encode_cv2
-    backend_name = "cv2"
-    cloudlog.info("[YOLO] Image backend: cv2")
-    return
-  except Exception as e:
-    cloudlog.info(f"[YOLO] cv2 not available: {e}")
-
-  # Try PIL/Pillow
+  # Try PIL/Pillow (preferred - lightweight, pure Python)
   try:
     from PIL import Image as _Image
     import io as _io
-    def _encode_pil(yuv_flat, height, width):
-      rgb = _nv12_to_rgb(yuv_flat, height, width)
-      rgb = _numpy_resize(rgb, 640, 640)
+    def _encode_pil(rgb):
       img = _Image.fromarray(rgb)
       buf = _io.BytesIO()
       img.save(buf, format='JPEG', quality=JPEG_QUALITY)
@@ -100,19 +104,33 @@ def _setup_backend():
   except Exception as e:
     cloudlog.info(f"[YOLO] PIL not available: {e}")
 
-  # Try ffmpeg subprocess
+  # Try cv2
+  try:
+    import cv2 as _cv2
+    def _encode_cv2(rgb):
+      bgr = _cv2.cvtColor(rgb, _cv2.COLOR_RGB2BGR)
+      _, buf = _cv2.imencode('.jpg', bgr, [_cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+      return buf.tobytes()
+    _img_backend = _encode_cv2
+    backend_name = "cv2"
+    cloudlog.info("[YOLO] Image backend: cv2")
+    return
+  except Exception as e:
+    cloudlog.info(f"[YOLO] cv2 not available: {e}")
+
+  # Fallback: raw numpy to JPEG via ffmpeg
   try:
     r = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=3)
     if r.returncode == 0:
-      def _encode_ffmpeg(yuv_flat, height, width):
+      def _encode_ffmpeg(rgb):
+        h, w = rgb.shape[:2]
         cmd = [
-          'ffmpeg', '-f', 'rawvideo', '-pix_fmt', 'nv12',
-          '-s', f'{width}x{height}', '-i', 'pipe:0',
-          '-vf', 'scale=640:640', '-q:v', '5',
-          '-f', 'image2', '-vcodec', 'mjpeg', '-frames:v', '1',
+          'ffmpeg', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
+          '-s', f'{w}x{h}', '-i', 'pipe:0',
+          '-q:v', '5', '-f', 'image2', '-vcodec', 'mjpeg', '-frames:v', '1',
           'pipe:1'
         ]
-        proc = subprocess.run(cmd, input=yuv_flat.tobytes(),
+        proc = subprocess.run(cmd, input=rgb.tobytes(),
                               capture_output=True, timeout=2)
         if proc.returncode == 0 and len(proc.stdout) > 0:
           return proc.stdout
@@ -336,12 +354,33 @@ def yolo_streamer():
       continue
 
     try:
+      width = img_data.width
+      height = img_data.height
+      stride = getattr(img_data, 'stride', width)
+      uv_offset = getattr(img_data, 'uv_offset', stride * height)
       data_bytes = img_data.data
+
       if data_bytes is None or len(data_bytes) == 0:
         continue
 
       yuv_flat = np.frombuffer(data_bytes, dtype=np.uint8)
-      jpeg_bytes = _img_backend(yuv_flat, img_data.height, img_data.width)
+
+      # Log buffer info on first frame
+      if frames_sent == 0:
+        cloudlog.info(f"[YOLO] VisionBuf: {width}x{height}, stride={stride}, "
+                       f"uv_offset={uv_offset}, data={len(yuv_flat)} bytes")
+
+      # Convert NV12 to RGB (with stride handling)
+      if stride > width:
+        rgb = _nv12_to_rgb_strided(yuv_flat, height, width, stride, uv_offset)
+      else:
+        rgb = _nv12_to_rgb_simple(yuv_flat, height, width)
+
+      # Resize to 640x640
+      rgb_small = _numpy_resize(rgb, 640, 640)
+
+      # Encode to JPEG
+      jpeg_bytes = _img_backend(rgb_small)
 
       if jpeg_bytes and len(jpeg_bytes) < 65000:
         frames_sent += 1

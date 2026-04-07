@@ -2873,7 +2873,7 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
     bool yolo_on = yolo_alive && yolo_valid;
 
     int yolo_x = s->fb_w - 280;
-    int yolo_y = 35;
+    int yolo_y = 80;
 
     char yolo_text[64];
     NVGcolor bg_color;
