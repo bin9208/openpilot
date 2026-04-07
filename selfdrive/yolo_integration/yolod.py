@@ -154,7 +154,8 @@ def _setup_backend():
 # ── Cereal publishing (thread-safe) ─────────────────────────────────
 
 def _safe_publish(pm, dat):
-  """Thread-safe wrapper for pm.send()."""
+  """Thread-safe wrapper for pm.send(). Sets valid=True for SubMaster."""
+  dat.valid = True
   with pub_lock:
     pm.send('yoloObjectData', dat)
 
@@ -443,6 +444,7 @@ def main():
   # Test publish immediately
   try:
     test_msg = messaging.new_message('yoloObjectData')
+    test_msg.valid = True
     test_msg.yoloObjectData.yoloClass = "test"
     pm.send('yoloObjectData', test_msg)
     ylog("[YOLO] Test publish OK")
