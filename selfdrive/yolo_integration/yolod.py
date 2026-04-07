@@ -22,7 +22,12 @@ import numpy as np
 import cereal.messaging as messaging
 from openpilot.common.swaglog import cloudlog
 
-VERSION = "v3"
+VERSION = "v4"
+
+def ylog(msg):
+  """Log to both cloudlog AND stdout (tmux visible)."""
+  cloudlog.info(msg)
+  print(msg, flush=True)
 FRAME_PORT = 8080
 RESULT_PORT = 8081
 JPEG_QUALITY = 50
@@ -227,7 +232,7 @@ def yolo_receiver(pm):
   sock.bind(('0.0.0.0', RESULT_PORT))
   sock.settimeout(1.0)
 
-  cloudlog.info(f"[YOLO] Receiver bound UDP 0.0.0.0:{RESULT_PORT}")
+  ylog(f"[YOLO] Receiver bound UDP 0.0.0.0:{RESULT_PORT}")
   timeout_count = 0
 
   while True:
@@ -236,7 +241,7 @@ def yolo_receiver(pm):
       timeout_count = 0
       with lock:
         if TARGET_IP is None or TARGET_IP != addr[0]:
-          cloudlog.info(f"[YOLO] Phone discovered: {addr[0]}:{addr[1]} ({len(data)}B)")
+          ylog(f"[YOLO] Phone discovered: {addr[0]}:{addr[1]} ({len(data)}B)")
           TARGET_IP = addr[0]
         last_result_time = time.monotonic()
 
@@ -279,7 +284,7 @@ def yolo_receiver(pm):
 
 def yolo_heartbeat(pm):
   """Always publish yoloObjectData every 1s so C++ SubMaster valid() is true."""
-  cloudlog.info("[YOLO] Heartbeat started")
+  ylog("[YOLO] Heartbeat started")
   hb_count = 0
   while True:
     try:
@@ -301,11 +306,11 @@ def yolo_heartbeat(pm):
       _safe_publish(pm, dat)
       hb_count += 1
 
-      if hb_count <= 3 or hb_count % 30 == 0:
+      if hb_count <= 5 or hb_count % 30 == 0:
         status = f"phone={target}" if connected else "phone=none"
-        cloudlog.info(f"[YOLO] HB#{hb_count}: {status}, tx={tx}, rx={rx}")
+        ylog(f"[YOLO] HB#{hb_count}: {status}, tx={tx}, rx={rx}")
     except Exception as e:
-      cloudlog.error(f"[YOLO] Heartbeat error: {e}")
+      ylog(f"[YOLO] Heartbeat ERROR: {e}")
     time.sleep(1.0)
 
 
@@ -395,8 +400,8 @@ def yolo_streamer():
       yuv_flat = np.frombuffer(data_bytes, dtype=np.uint8)
 
       if frames_sent == 0:
-        cloudlog.info(f"[YOLO] VisionBuf: {width}x{height}, stride={stride}, "
-                      f"uv_offset={uv_offset}, data={len(yuv_flat)}B")
+        ylog(f"[YOLO] VisionBuf: {width}x{height}, stride={stride}, "
+             f"uv_offset={uv_offset}, data={len(yuv_flat)}B")
 
       if stride > width:
         rgb = _nv12_to_rgb_strided(yuv_flat, height, width, stride, uv_offset)
@@ -413,11 +418,11 @@ def yolo_streamer():
         sock.sendto(header + jpeg_bytes, (target, FRAME_PORT))
 
         if frames_sent <= 3 or frames_sent % 100 == 0:
-          cloudlog.info(f"[YOLO] Frame #{frames_sent} ({len(jpeg_bytes)}B) → {target}")
+          ylog(f"[YOLO] Frame #{frames_sent} ({len(jpeg_bytes)}B) -> {target}")
       elif jpeg_bytes:
         cloudlog.warning(f"[YOLO] Frame too large: {len(jpeg_bytes)}B, skipped")
     except Exception as e:
-      cloudlog.error(f"[YOLO] Streamer error: {e}")
+      ylog(f"[YOLO] Streamer error: {e}")
 
     time.sleep(1.0 / FPS)
 
@@ -425,10 +430,24 @@ def yolo_streamer():
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
-  cloudlog.info(f"[YOLO] ========== yolod {VERSION} starting ==========")
+  ylog(f"[YOLO] ========== yolod {VERSION} starting ==========")
   _setup_backend()
 
-  pm = messaging.PubMaster(['yoloObjectData'])
+  try:
+    pm = messaging.PubMaster(['yoloObjectData'])
+    ylog("[YOLO] PubMaster created OK")
+  except Exception as e:
+    ylog(f"[YOLO] PubMaster FAILED: {e}")
+    return
+
+  # Test publish immediately
+  try:
+    test_msg = messaging.new_message('yoloObjectData')
+    test_msg.yoloObjectData.yoloClass = "test"
+    pm.send('yoloObjectData', test_msg)
+    ylog("[YOLO] Test publish OK")
+  except Exception as e:
+    ylog(f"[YOLO] Test publish FAILED: {e}")
 
   threads = [
     ("receiver", lambda: yolo_receiver(pm)),
@@ -440,15 +459,15 @@ def main():
   for name, func in threads:
     t = threading.Thread(target=func, daemon=True, name=f"yolo_{name}")
     t.start()
-    cloudlog.info(f"[YOLO] Thread '{name}' started")
+    ylog(f"[YOLO] Thread '{name}' started")
 
-  cloudlog.info(f"[YOLO] All {len(threads)} threads running")
+  ylog(f"[YOLO] All {len(threads)} threads running")
 
   while True:
     time.sleep(10.0)
     with lock:
-      cloudlog.info(f"[YOLO] Status: target={TARGET_IP}, backend={backend_name}, "
-                    f"streamer={streamer_status}, tx={frames_sent}, rx={results_received}")
+      ylog(f"[YOLO] Status: target={TARGET_IP}, backend={backend_name}, "
+           f"streamer={streamer_status}, tx={frames_sent}, rx={results_received}")
 
 
 if __name__ == "__main__":
