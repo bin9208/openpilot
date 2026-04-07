@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <limits>
+#include <string>
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -2883,12 +2884,19 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       auto yolo = sm["yoloObjectData"].getYoloObjectData();
       int n_det = yolo.getNumDetections();
       int ms = yolo.getInferenceTimeMs();
+      auto yoloClass = yolo.getYoloClass();
+      std::string cls(yoloClass.begin(), yoloClass.end());
+      bool phone_connected = cls.find("connected") != std::string::npos;
+
       if (n_det > 0) {
         snprintf(yolo_text, sizeof(yolo_text), "YOLO %d obj %dms", n_det, ms);
         bg_color = nvgRGBA(0, 150, 0, 200);
-      } else {
+      } else if (phone_connected) {
         snprintf(yolo_text, sizeof(yolo_text), "YOLO: READY");
         bg_color = nvgRGBA(0, 100, 150, 180);
+      } else {
+        snprintf(yolo_text, sizeof(yolo_text), "YOLO: WAIT");
+        bg_color = nvgRGBA(180, 120, 0, 180);
       }
     } else {
       snprintf(yolo_text, sizeof(yolo_text), "YOLO: OFF");

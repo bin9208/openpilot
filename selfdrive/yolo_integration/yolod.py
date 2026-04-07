@@ -158,14 +158,16 @@ def yolo_receiver(pm):
   sock.bind(('0.0.0.0', RESULT_PORT))
   sock.settimeout(1.0)
 
-  cloudlog.info(f"[YOLO] Receiver listening on UDP port {RESULT_PORT}")
+  cloudlog.info(f"[YOLO] Receiver bound to UDP 0.0.0.0:{RESULT_PORT}")
+  timeout_count = 0
 
   while True:
     try:
       data, addr = sock.recvfrom(65535)
+      timeout_count = 0
       with lock:
         if TARGET_IP is None or TARGET_IP != addr[0]:
-          cloudlog.info(f"[YOLO] Phone discovered: {addr[0]}")
+          cloudlog.info(f"[YOLO] Phone discovered: {addr[0]}:{addr[1]} ({len(data)} bytes)")
           TARGET_IP = addr[0]
         last_result_time = time.monotonic()
 
@@ -182,13 +184,17 @@ def yolo_receiver(pm):
       with lock:
         results_received += 1
 
-      if results_received <= 3 or results_received % 50 == 0:
-        cloudlog.info(f"[YOLO] Result #{results_received}: frame={frame_id}, {inference_ms}ms, {len(objects)} objects")
+      if results_received <= 5 or results_received % 50 == 0:
+        cloudlog.info(f"[YOLO] Result #{results_received}: frame={frame_id}, {inference_ms}ms, {len(objects)} objects from {addr[0]}")
 
       # Build cereal message
       _publish_detections(pm, frame_id, inference_ms, objects)
 
     except socket.timeout:
+      timeout_count += 1
+      if timeout_count % 10 == 0:
+        with lock:
+          cloudlog.info(f"[YOLO] Receiver: no data for {timeout_count}s (target={TARGET_IP}, rx={results_received})")
       with lock:
         if TARGET_IP and last_result_time > 0 and (time.monotonic() - last_result_time) > CONNECTION_TIMEOUT:
           cloudlog.info("[YOLO] Connection timeout, resetting...")
@@ -265,21 +271,34 @@ def _publish_detections(pm, frame_id, inference_ms, objects):
 # ── Heartbeat thread ─────────────────────────────────────────────────
 
 def yolo_heartbeat(pm):
-  """Publish empty yoloObjectData every second when phone is connected.
-     This keeps sm.alive('yoloObjectData') true for the UI indicator."""
+  """Always publish yoloObjectData every second to keep UI indicator alive.
+     C++ SubMaster valid() requires at least one message to be received."""
   cloudlog.info("[YOLO] Heartbeat thread started")
+  hb_count = 0
   while True:
-    with lock:
-      connected = TARGET_IP is not None
-    if connected:
-      try:
-        dat = messaging.new_message('yoloObjectData')
-        yolo = dat.yoloObjectData
-        yolo.numDetections = 0
-        yolo.yoloClass = f"hb|{backend_name}|tx={frames_sent}|rx={results_received}"
-        pm.send('yoloObjectData', dat)
-      except Exception as e:
-        cloudlog.error(f"[YOLO] Heartbeat error: {e}")
+    try:
+      with lock:
+        connected = TARGET_IP is not None
+        target = TARGET_IP
+        tx = frames_sent
+        rx = results_received
+
+      dat = messaging.new_message('yoloObjectData')
+      yolo = dat.yoloObjectData
+      yolo.numDetections = 0
+
+      if connected:
+        yolo.yoloClass = f"connected|{backend_name}|tx={tx}|rx={rx}"
+      else:
+        yolo.yoloClass = f"waiting|{backend_name}|{streamer_status}"
+
+      pm.send('yoloObjectData', dat)
+      hb_count += 1
+
+      if hb_count <= 3 or hb_count % 30 == 0:
+        cloudlog.info(f"[YOLO] Heartbeat #{hb_count}: phone={'yes:'+str(target) if connected else 'no'}, tx={tx}, rx={rx}")
+    except Exception as e:
+      cloudlog.error(f"[YOLO] Heartbeat error: {e}")
     time.sleep(1.0)
 
 
