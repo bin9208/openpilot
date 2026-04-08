@@ -2909,6 +2909,98 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
     ui_draw_text(s, yolo_x + 15, yolo_y + 20, yolo_text, 28, text_color, BOLD, 2.0f, 1.0f);
   }
 
+  // YOLO bounding box overlay
+  {
+    SubMaster &sm = *(s->sm);
+    if (sm.valid("yoloObjectData")) {
+      auto yolo = sm["yoloObjectData"].getYoloObjectData();
+      auto dets = yolo.getDetections();
+      int n_draw = std::min((int)dets.size(), 20);  // cap to avoid perf issues
+      float fw = (float)s->fb_w;
+      float fh = (float)s->fb_h;
+
+      for (int i = 0; i < n_draw; i++) {
+        auto det = dets[i];
+        float cx   = det.getX();
+        float cy   = det.getY();
+        float nw   = det.getW();
+        float nh   = det.getH();
+        float conf = det.getConfidence();
+        int   cls  = det.getClassId();
+        std::string name(det.getClassName().cStr());
+
+        // Normalized (cx,cy,w,h) → screen pixel coordinates
+        float x1    = (cx - nw * 0.5f) * fw;
+        float y1    = (cy - nh * 0.5f) * fh;
+        float box_w = nw * fw;
+        float box_h = nh * fh;
+
+        // Color per class: person=red  traffic_light=yellow  stop_sign=orange
+        //                  bicycle/motorcycle=amber  vehicles=cyan
+        NVGcolor box_col;
+        switch (cls) {
+          case 0:           box_col = nvgRGBA(255,  50,  50, 230); break; // person
+          case 9:           box_col = nvgRGBA(255, 220,   0, 230); break; // traffic light
+          case 11:          box_col = nvgRGBA(255, 100,   0, 230); break; // stop sign
+          case 1: case 3:   box_col = nvgRGBA(255, 160,   0, 230); break; // bicycle/motorcycle
+          default:          box_col = nvgRGBA(  0, 200, 255, 230); break; // car/bus/truck
+        }
+
+        // Box outline
+        nvgBeginPath(s->vg);
+        nvgRect(s->vg, x1, y1, box_w, box_h);
+        nvgStrokeColor(s->vg, box_col);
+        nvgStrokeWidth(s->vg, 3.5f);
+        nvgStroke(s->vg);
+
+        // Corner accent — top-left corner tick marks
+        float tick = std::min(box_w, box_h) * 0.18f;
+        tick = std::max(tick, 10.0f);
+        nvgStrokeWidth(s->vg, 5.0f);
+        nvgBeginPath(s->vg);
+        nvgMoveTo(s->vg, x1, y1 + tick); nvgLineTo(s->vg, x1, y1); nvgLineTo(s->vg, x1 + tick, y1);
+        nvgMoveTo(s->vg, x1 + box_w - tick, y1); nvgLineTo(s->vg, x1 + box_w, y1); nvgLineTo(s->vg, x1 + box_w, y1 + tick);
+        nvgMoveTo(s->vg, x1, y1 + box_h - tick); nvgLineTo(s->vg, x1, y1 + box_h); nvgLineTo(s->vg, x1 + tick, y1 + box_h);
+        nvgMoveTo(s->vg, x1 + box_w - tick, y1 + box_h); nvgLineTo(s->vg, x1 + box_w, y1 + box_h); nvgLineTo(s->vg, x1 + box_w, y1 + box_h - tick);
+        nvgStroke(s->vg);
+
+        // Label: "person 87%"
+        char label[64];
+        snprintf(label, sizeof(label), "%s %.0f%%", name.c_str(), conf * 100.0f);
+
+        // Measure text for background sizing
+        nvgFontSize(s->vg, 24.0f);
+        nvgFontFace(s->vg, "sans-bold");
+        float bounds[4];
+        nvgTextBounds(s->vg, 0, 0, label, nullptr, bounds);
+        float label_w = bounds[2] - bounds[0] + 14.0f;
+        float label_h = 28.0f;
+
+        // Place label above box, or below if no space
+        float lx = x1;
+        float ly = y1 - label_h - 2.0f;
+        if (ly < 4.0f) ly = y1 + box_h + 2.0f;
+
+        // Keep label within screen horizontally
+        if (lx + label_w > fw) lx = fw - label_w - 2.0f;
+        if (lx < 0) lx = 0;
+
+        // Label background — darkened tint of box color
+        NVGcolor label_bg = nvgRGBA(
+          (int)(box_col.r * 255 * 0.35f),
+          (int)(box_col.g * 255 * 0.35f),
+          (int)(box_col.b * 255 * 0.35f),
+          210);
+        ui_fill_rect(s->vg, {(int)lx, (int)ly, (int)label_w, (int)label_h}, label_bg, 5);
+
+        // Label text
+        nvgFillColor(s->vg, COLOR_WHITE);
+        nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgText(s->vg, lx + 7.0f, ly + label_h * 0.5f, label, nullptr);
+      }
+    }
+  }
+
   int show_tpms = params.getInt("ShowTpms");
   switch (show_tpms) {
   case 0: break;
