@@ -2892,8 +2892,10 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         for (int k = 0; k < show; k++) {
           if (k > 0) det_str += " ";
           det_str += std::string(dets[k].getClassName().cStr());
-          int pct = (int)(dets[k].getConfidence() * 100.f);
-          det_str += "(" + std::to_string(pct) + "%)";
+          // Show one decimal place so 61.3% vs 68.7% are distinguishable
+          char pct_buf[8];
+          snprintf(pct_buf, sizeof(pct_buf), "%.1f", dets[k].getConfidence() * 100.f);
+          det_str += "("; det_str += pct_buf; det_str += "%)";
         }
         if (n_det > 3) det_str += " +" + std::to_string(n_det - 3);
         snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %dms", det_str.c_str(), ms);
@@ -3018,7 +3020,7 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
 
         // Label: "person 87%"
         char label[64];
-        snprintf(label, sizeof(label), "%s %.0f%%", name.c_str(), conf * 100.0f);
+        snprintf(label, sizeof(label), "%s %.1f%%", name.c_str(), conf * 100.0f);
 
         // Measure text for background sizing
         nvgFontSize(s->vg, 40.0f);
