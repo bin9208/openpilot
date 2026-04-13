@@ -44,6 +44,8 @@ frames_sent = 0
 results_received = 0
 backend_name = "none"
 streamer_status = "init"
+frame_send_times = {}      # frame_id → monotonic_ns (for RTT measurement)
+MAX_RTT_TRACKED = 100      # keep at most N entries
 lock = threading.Lock()
 pub_lock = threading.Lock()  # protects pm.send() across threads
 
@@ -172,7 +174,7 @@ def _safe_publish(pm, dat):
     pm.send('yoloObjectData', dat)
 
 
-def _publish_detections(pm, frame_id, inference_ms, objects):
+def _publish_detections(pm, frame_id, inference_ms, objects, rtt_ms=0):
   """Build and publish a yoloObjectData cereal message with detection results."""
   global last_detect_pub_time
   try:
@@ -181,6 +183,7 @@ def _publish_detections(pm, frame_id, inference_ms, objects):
     yolo.frameId = frame_id
     yolo.inferenceTimeMs = inference_ms
     yolo.numDetections = len(objects)
+    yolo.roundTripMs = rtt_ms
 
     has_red = False
     has_green = False
@@ -278,14 +281,18 @@ def yolo_receiver(pm):
       frame_id = msg.get('frame_id', 0)
       inference_ms = msg.get('inference_ms', 0)
 
+      # Compute round-trip time (frame sent → result received)
       with lock:
         results_received += 1
+        send_ns = frame_send_times.pop(frame_id, None)
+      rtt_ms = int((time.monotonic() * 1e9 - send_ns) / 1e6) if send_ns else 0
 
       if results_received <= 5 or results_received % 50 == 0:
+        rtt_str = f" rtt={rtt_ms}ms" if rtt_ms else ""
         ylog(f"[YOLO] Result #{results_received}: frame={frame_id}, "
-             f"{inference_ms}ms, {len(objects)} obj from {addr[0]}")
+             f"{inference_ms}ms{rtt_str}, {len(objects)} obj from {addr[0]}")
 
-      _publish_detections(pm, frame_id, inference_ms, objects)
+      _publish_detections(pm, frame_id, inference_ms, objects, rtt_ms)
 
     except socket.timeout:
       timeout_count += 1
@@ -447,6 +454,13 @@ def yolo_streamer():
         timestamp_ns = int(time.monotonic() * 1e9)
         header = struct.pack('<QQ', frames_sent, timestamp_ns)
         sock.sendto(header + jpeg_bytes, (target, FRAME_PORT))
+
+        # Track send time for RTT measurement (receiver thread reads this)
+        with lock:
+          frame_send_times[frames_sent] = timestamp_ns
+          if len(frame_send_times) > MAX_RTT_TRACKED:
+            oldest = min(frame_send_times.keys())
+            del frame_send_times[oldest]
 
         if frames_sent <= 3 or frames_sent % 100 == 0:
           ylog(f"[YOLO] Frame #{frames_sent} ({len(jpeg_bytes)}B) -> {target}")

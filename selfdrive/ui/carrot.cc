@@ -2881,6 +2881,7 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       auto yolo = sm["yoloObjectData"].getYoloObjectData();
       int n_det = yolo.getNumDetections();
       int ms = yolo.getInferenceTimeMs();
+      int rtt = yolo.getRoundTripMs();   // full pipeline: frame→phone→result
       std::string cls(yolo.getYoloClass().cStr());
       bool phone_connected = cls.find("connected") != std::string::npos;
 
@@ -2898,10 +2899,17 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
           det_str += "("; det_str += pct_buf; det_str += "%)";
         }
         if (n_det > 3) det_str += " +" + std::to_string(n_det - 3);
-        snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %dms", det_str.c_str(), ms);
+        // Show inf/rtt ms: "YOLO: car(61.3%)  52/70ms" (inference/round-trip)
+        if (rtt > 0)
+          snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %d/%dms", det_str.c_str(), ms, rtt);
+        else
+          snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %dms", det_str.c_str(), ms);
         bg_color = nvgRGBA(0, 140, 0, 210);
       } else if (phone_connected || ms > 0) {
-        snprintf(yolo_text, sizeof(yolo_text), "YOLO: 감지없음  %dms", ms);
+        if (rtt > 0)
+          snprintf(yolo_text, sizeof(yolo_text), "YOLO: 감지없음  %d/%dms", ms, rtt);
+        else
+          snprintf(yolo_text, sizeof(yolo_text), "YOLO: 감지없음  %dms", ms);
         bg_color = nvgRGBA(0, 90, 140, 180);
       } else {
         snprintf(yolo_text, sizeof(yolo_text), "YOLO: 연결중...");
@@ -3039,15 +3047,16 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         if (lx + label_w > fw) lx = fw - label_w - 2.0f;
         if (lx < 0) lx = 0;
 
-        // Label background — darkened tint of box color
-        NVGcolor label_bg = nvgRGBA(
-          (int)(box_col.r * 255 * 0.25f),
-          (int)(box_col.g * 255 * 0.25f),
-          (int)(box_col.b * 255 * 0.25f),
-          230);
-        ui_fill_rect(s->vg, {(int)lx, (int)ly, (int)label_w, (int)label_h}, label_bg, 8);
+        // Label: solid dark bg (readable on any road surface) + class-colored border
+        ui_fill_rect(s->vg, {(int)lx, (int)ly, (int)label_w, (int)label_h},
+                     nvgRGBA(10, 10, 10, 220), 6);
+        nvgBeginPath(s->vg);
+        nvgRoundedRect(s->vg, lx - 1.f, ly - 1.f, label_w + 2.f, label_h + 2.f, 7);
+        nvgStrokeColor(s->vg, box_col);
+        nvgStrokeWidth(s->vg, 2.5f);
+        nvgStroke(s->vg);
 
-        // Label text
+        // Label text — white on dark bg, always readable
         nvgFillColor(s->vg, COLOR_WHITE);
         nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgText(s->vg, lx + 10.0f, ly + label_h * 0.5f, label, nullptr);

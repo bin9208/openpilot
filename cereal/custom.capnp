@@ -67,6 +67,7 @@ struct YoloObjectData @0xaedffd8f31e7b55d {
   frameId @9 :UInt64;
   inferenceTimeMs @10 :UInt32;
   numDetections @11 :UInt16;
+  roundTripMs @12 :UInt32;   # full pipeline: frame sent → result received on comma3
 }
 
 struct CustomReserved3 @0xda96579883444c35 {
