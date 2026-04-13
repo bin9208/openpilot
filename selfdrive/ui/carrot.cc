@@ -3040,8 +3040,19 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
 
         // Place label above box, or below if no space
         float lx = x1;
+        // Label placement priority:
+        //  1) Above the box
+        //  2) Below the box
+        //  3) Inside the box (top-left) — when object fills the screen
         float ly = y1 - label_h - 2.0f;
-        if (ly < 4.0f) ly = y1 + box_h + 2.0f;
+        if (ly < 4.0f) {
+          ly = y1 + box_h + 2.0f;
+          if (ly + label_h > fh - 4.0f) {
+            ly = y1 + 4.0f;   // inside box, near top edge
+          }
+        }
+        // Clamp vertically so label never goes off-screen
+        ly = std::clamp(ly, 2.0f, (float)fh - label_h - 2.0f);
 
         // Keep label within screen horizontally
         if (lx + label_w > fw) lx = fw - label_w - 2.0f;
