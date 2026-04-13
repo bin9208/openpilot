@@ -2915,9 +2915,42 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
     if (sm.valid("yoloObjectData")) {
       auto yolo = sm["yoloObjectData"].getYoloObjectData();
       auto dets = yolo.getDetections();
-      int n_draw = std::min((int)dets.size(), 20);  // cap to avoid perf issues
+      int n_draw = std::min((int)dets.size(), 20);
       float fw = (float)s->fb_w;
       float fh = (float)s->fb_h;
+
+      // YOLO uses VISION_STREAM_ROAD (narrow cam, 1928×1208).
+      // Must match annotated_camera.cc calcFrameMatrix() video_transform
+      // so boxes align with the rendered camera image.
+      const float cam_w = 1928.0f;
+      const float cam_h = 1208.0f;
+
+      float v_ego = 0.0f;
+      if (sm.alive("carState")) {
+        v_ego = sm["carState"].getCarState().getVEgo();
+      }
+      bool wide_cam = (v_ego < 10.0f) && s->scene.carrot_experimental_mode;
+
+      // When wide cam is displayed, YOLO (narrow cam) boxes don't match — skip
+      if (!wide_cam && n_draw > 0) {
+
+      // Replicate video_transform from annotated_camera.cc
+      const float zoom = 1.1f;
+      const float cx_cam = cam_w / 2.0f;  // 964
+      const float cy_cam = cam_h / 2.0f;  // 604
+
+      // Calibration-dependent offset: project forward direction to image
+      const auto &calib = s->scene.view_from_calib;
+      auto Kep = FCAM_INTRINSIC_MATRIX * calib * Eigen::Vector3f(1000.0f, 0.0f, 0.0f);
+
+      float max_x_off = cx_cam * zoom - fw / 2.0f - 5.0f;
+      float max_y_off = cy_cam * zoom - fh / 2.0f - 5.0f;
+      float x_offset = (max_x_off > 0) ? std::clamp((Kep.x() / Kep.z() - cx_cam) * zoom, -max_x_off, max_x_off) : 0.0f;
+      float y_offset = (max_y_off > 0) ? std::clamp((Kep.y() / Kep.z() - cy_cam) * zoom, -max_y_off, max_y_off) : 0.0f;
+
+      // video_transform: camera_pixel → screen_pixel
+      float tx = (fw / 2.0f - x_offset) - (cx_cam * zoom);
+      float ty = (fh / 2.0f - y_offset) - (cy_cam * zoom);
 
       for (int i = 0; i < n_draw; i++) {
         auto det = dets[i];
@@ -2929,11 +2962,15 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         int   cls  = det.getClassId();
         std::string name(det.getClassName().cStr());
 
-        // Normalized (cx,cy,w,h) → screen pixel coordinates
-        float x1    = (cx - nw * 0.5f) * fw;
-        float y1    = (cy - nh * 0.5f) * fh;
-        float box_w = nw * fw;
-        float box_h = nh * fh;
+        if (nw < 0.005f || nh < 0.005f || cx < 0.0f || cy < 0.0f) continue;
+
+        // YOLO normalized (0-1) → camera pixel → screen pixel
+        float sx    = zoom * (cx * cam_w) + tx;
+        float sy    = zoom * (cy * cam_h) + ty;
+        float box_w = zoom * nw * cam_w;
+        float box_h = zoom * nh * cam_h;
+        float x1    = sx - box_w * 0.5f;
+        float y1    = sy - box_h * 0.5f;
 
         // Color per class: person=red  traffic_light=yellow  stop_sign=orange
         //                  bicycle/motorcycle=amber  vehicles=cyan
@@ -2998,6 +3035,8 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgText(s->vg, lx + 7.0f, ly + label_h * 0.5f, label, nullptr);
       }
+
+      } // !wide_cam
     }
   }
 
