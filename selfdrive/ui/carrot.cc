@@ -2873,7 +2873,7 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
     bool yolo_valid = sm.valid("yoloObjectData");
     bool yolo_on = yolo_alive && yolo_valid;
 
-    char yolo_text[64];
+    char yolo_text[160];
     NVGcolor bg_color;
     NVGcolor text_color = COLOR_WHITE;
 
@@ -2885,28 +2885,43 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       bool phone_connected = cls.find("connected") != std::string::npos;
 
       if (n_det > 0) {
-        snprintf(yolo_text, sizeof(yolo_text), "YOLO %d obj %dms", n_det, ms);
-        bg_color = nvgRGBA(0, 150, 0, 200);
+        // Show detected class names (up to 3) + inference time
+        auto dets = yolo.getDetections();
+        std::string det_str;
+        int show = std::min(n_det, 3);
+        for (int k = 0; k < show; k++) {
+          if (k > 0) det_str += " ";
+          det_str += std::string(dets[k].getClassName().cStr());
+          int pct = (int)(dets[k].getConfidence() * 100.f);
+          det_str += "(" + std::to_string(pct) + "%)";
+        }
+        if (n_det > 3) det_str += " +" + std::to_string(n_det - 3);
+        snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %dms", det_str.c_str(), ms);
+        bg_color = nvgRGBA(0, 140, 0, 210);
       } else if (phone_connected || ms > 0) {
-        // ms > 0 means phone is running inference (even with 0 detections)
-        snprintf(yolo_text, sizeof(yolo_text), "YOLO: READY");
-        bg_color = nvgRGBA(0, 100, 150, 180);
+        snprintf(yolo_text, sizeof(yolo_text), "YOLO: 감지없음  %dms", ms);
+        bg_color = nvgRGBA(0, 90, 140, 180);
       } else {
-        snprintf(yolo_text, sizeof(yolo_text), "YOLO: WAIT");
-        bg_color = nvgRGBA(180, 120, 0, 180);
+        snprintf(yolo_text, sizeof(yolo_text), "YOLO: 연결중...");
+        bg_color = nvgRGBA(160, 110, 0, 180);
       }
     } else {
       snprintf(yolo_text, sizeof(yolo_text), "YOLO: OFF");
-      bg_color = nvgRGBA(100, 100, 100, 150);
-      text_color = nvgRGBA(180, 180, 180, 200);
+      bg_color = nvgRGBA(80, 80, 80, 150);
+      text_color = nvgRGBA(160, 160, 160, 200);
     }
 
+    // Dynamic width based on text
+    nvgFontSize(s->vg, 30.0f);
+    nvgFontFace(s->vg, "sans-bold");
+    float tbounds[4];
+    nvgTextBounds(s->vg, 0, 0, yolo_text, nullptr, tbounds);
+    int text_w = (int)(tbounds[2] - tbounds[0]) + 30;
     int yolo_x = 20;
-    int yolo_y = s->fb_h - 60;
-    int text_w = 260;
-    ui_fill_rect(s->vg, {yolo_x, yolo_y, text_w, 40}, bg_color, 15);
+    int yolo_y = s->fb_h - 65;
+    ui_fill_rect(s->vg, {yolo_x, yolo_y, text_w, 46}, bg_color, 15);
     nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-    ui_draw_text(s, yolo_x + 15, yolo_y + 20, yolo_text, 28, text_color, BOLD, 2.0f, 1.0f);
+    ui_draw_text(s, yolo_x + 15, yolo_y + 23, yolo_text, 30, text_color, BOLD, 2.0f, 1.0f);
   }
 
   // YOLO bounding box overlay
@@ -2987,13 +3002,13 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         nvgBeginPath(s->vg);
         nvgRect(s->vg, x1, y1, box_w, box_h);
         nvgStrokeColor(s->vg, box_col);
-        nvgStrokeWidth(s->vg, 3.5f);
+        nvgStrokeWidth(s->vg, 5.0f);
         nvgStroke(s->vg);
 
         // Corner accent — top-left corner tick marks
         float tick = std::min(box_w, box_h) * 0.18f;
-        tick = std::max(tick, 10.0f);
-        nvgStrokeWidth(s->vg, 5.0f);
+        tick = std::max(tick, 16.0f);
+        nvgStrokeWidth(s->vg, 7.0f);
         nvgBeginPath(s->vg);
         nvgMoveTo(s->vg, x1, y1 + tick); nvgLineTo(s->vg, x1, y1); nvgLineTo(s->vg, x1 + tick, y1);
         nvgMoveTo(s->vg, x1 + box_w - tick, y1); nvgLineTo(s->vg, x1 + box_w, y1); nvgLineTo(s->vg, x1 + box_w, y1 + tick);
@@ -3006,12 +3021,12 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         snprintf(label, sizeof(label), "%s %.0f%%", name.c_str(), conf * 100.0f);
 
         // Measure text for background sizing
-        nvgFontSize(s->vg, 24.0f);
+        nvgFontSize(s->vg, 40.0f);
         nvgFontFace(s->vg, "sans-bold");
         float bounds[4];
         nvgTextBounds(s->vg, 0, 0, label, nullptr, bounds);
-        float label_w = bounds[2] - bounds[0] + 14.0f;
-        float label_h = 28.0f;
+        float label_w = bounds[2] - bounds[0] + 20.0f;
+        float label_h = 52.0f;
 
         // Place label above box, or below if no space
         float lx = x1;
@@ -3024,16 +3039,16 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
 
         // Label background — darkened tint of box color
         NVGcolor label_bg = nvgRGBA(
-          (int)(box_col.r * 255 * 0.35f),
-          (int)(box_col.g * 255 * 0.35f),
-          (int)(box_col.b * 255 * 0.35f),
-          210);
-        ui_fill_rect(s->vg, {(int)lx, (int)ly, (int)label_w, (int)label_h}, label_bg, 5);
+          (int)(box_col.r * 255 * 0.25f),
+          (int)(box_col.g * 255 * 0.25f),
+          (int)(box_col.b * 255 * 0.25f),
+          230);
+        ui_fill_rect(s->vg, {(int)lx, (int)ly, (int)label_w, (int)label_h}, label_bg, 8);
 
         // Label text
         nvgFillColor(s->vg, COLOR_WHITE);
         nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgText(s->vg, lx + 7.0f, ly + label_h * 0.5f, label, nullptr);
+        nvgText(s->vg, lx + 10.0f, ly + label_h * 0.5f, label, nullptr);
       }
 
       } // !wide_cam
