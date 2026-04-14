@@ -219,20 +219,27 @@ def _publish_detections(pm, frame_id, inference_ms, objects, rtt_ms=0):
     yolo.hasGreenLight = has_green
     yolo.distanceEstimate = primary_dist
     yolo.yoloClass = primary_class
-    yolo.x = primary_x
-    yolo.y = primary_y
-    yolo.w = primary_w
-    yolo.h = primary_h
+    # Android currently sends raw arrays [x1, y1, x2, y2] in x, y, w, h
+    x1, y1 = primary_x, primary_y
+    x2, y2 = primary_w, primary_h
+    yolo.x = (x1 + x2) / 2.0
+    yolo.y = (y1 + y2) / 2.0
+    yolo.w = max(0.0, x2 - x1)
+    yolo.h = max(0.0, y2 - y1)
 
     dets = yolo.init('detections', len(objects))
     for i, obj in enumerate(objects):
       dets[i].classId = int(obj.get('cls', 0))
       dets[i].className = obj.get('name', '')
       dets[i].confidence = float(obj.get('conf', 0))
-      dets[i].x = float(obj.get('x', 0))
-      dets[i].y = float(obj.get('y', 0))
-      dets[i].w = float(obj.get('w', 0))
-      dets[i].h = float(obj.get('h', 0))
+      x1 = float(obj.get('x', 0))
+      y1 = float(obj.get('y', 0))
+      x2 = float(obj.get('w', 0))
+      y2 = float(obj.get('h', 0))
+      dets[i].x = (x1 + x2) / 2.0
+      dets[i].y = (y1 + y2) / 2.0
+      dets[i].w = max(0.0, x2 - x1)
+      dets[i].h = max(0.0, y2 - y1)
       dets[i].distanceEstimate = float(obj.get('dist', 0))
 
     _safe_publish(pm, dat)
