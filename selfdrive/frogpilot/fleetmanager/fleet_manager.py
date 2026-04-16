@@ -31,7 +31,7 @@ import openpilot.selfdrive.frogpilot.fleetmanager.helpers as fleet
 from openpilot.system.hardware.hw import Paths
 from openpilot.common.swaglog import cloudlog
 import traceback
-from ftplib import FTP
+import requests
 
 from openpilot.common.params import Params
 from cereal import log, messaging
@@ -100,49 +100,46 @@ def download_ecamera(route, segment):
   print("download_route=", route, file_name, segment)
   return send_from_directory(file_name, "ecamera.hevc", as_attachment=True)
         
-def upload_folder_to_ftp(local_folder, directory, remote_path):
-    from tqdm import tqdm
-    ftp_server = "shind0.synology.me"
-    ftp_port = 8021
-    ftp_username = "carrotpilot"
-    ftp_password = "Ekdrmsvkdlffjt7710"
-    ftp = FTP()
-    ftp.connect(ftp_server, ftp_port)
-    ftp.login(ftp_username, ftp_password)
+NAS_WEBDAV_URL  = os.getenv("NAS_UPLOAD_URL",  "")
+NAS_WEBDAV_USER = os.getenv("NAS_UPLOAD_USER", "")
+NAS_WEBDAV_PASS = os.getenv("NAS_UPLOAD_PASS", "")
 
-    ftp.cwd("routes")
+def _webdav_mkcol(url, auth):
+    try:
+        requests.request('MKCOL', url, auth=auth, timeout=5)
+    except Exception:
+        pass
+
+def upload_folder_to_ftp(local_folder, directory, remote_path):
+    auth = (NAS_WEBDAV_USER, NAS_WEBDAV_PASS)
+    base = NAS_WEBDAV_URL.rstrip('/')
+
+    # 디렉토리 생성: /openpilot/routes/{directory}/{remote_path}
+    _webdav_mkcol(f"{base}/routes", auth)
+    _webdav_mkcol(f"{base}/routes/{directory}", auth)
+    _webdav_mkcol(f"{base}/routes/{directory}/{remote_path}", auth)
 
     try:
-        def create_path(path):
-            try:
-                ftp.mkd(path)
-            except:
-                pass
-            ftp.cwd(path)
-
-        for part in [directory, remote_path]:
-            create_path(part)
-
         files = []
         for root, _, filenames in os.walk(local_folder):
             for filename in filenames:
                 if filename in ['rlog.zst', 'qcamera.ts']:
                     files.append(os.path.join(root, filename))
 
-        with tqdm(total=len(files), desc="Uploading Files", unit="file") as pbar:
-            for local_file in files:
-                filename = os.path.basename(local_file)
-                try:
-                    with open(local_file, 'rb') as f:
-                        ftp.storbinary(f'STOR {filename}', f)
-                    pbar.update(1)
-                except Exception as e:
-                    print(f"Failed to upload {local_file}: {e}")
+        for local_file in files:
+            filename = os.path.basename(local_file)
+            url = f"{base}/routes/{directory}/{remote_path}/{filename}"
+            try:
+                with open(local_file, 'rb') as f:
+                    resp = requests.put(url, data=f, auth=auth, timeout=120)
+                if resp.status_code not in (200, 201, 204):
+                    print(f"WebDAV upload failed [{resp.status_code}]: {url}")
+            except Exception as e:
+                print(f"Failed to upload {local_file}: {e}")
 
-        ftp.quit()
         return True
     except Exception as e:
-        print(f"FTP Upload Error: {e}")
+        print(f"WebDAV Upload Error: {e}")
         return False
         
 
