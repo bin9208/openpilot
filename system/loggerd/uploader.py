@@ -146,19 +146,24 @@ class Uploader:
 
   def do_upload(self, key: str, fn: str):
     if nas_upload_url:
-      url = nas_upload_url.rstrip('/') + '/' + key
+      nas_key = self.dongle_id + '/' + key
+      url = nas_upload_url.rstrip('/') + '/' + nas_key
       auth = (nas_upload_user, nas_upload_pass) if nas_upload_user else None
       cloudlog.debug("nas_upload %s", url)
 
       if fake_upload:
         return FakeResponse()
 
-      # 부모 디렉토리 생성 (WebDAV MKCOL)
-      parent_path = '/'.join(key.split('/')[:-1])
+      # 부모 디렉토리 생성 (WebDAV MKCOL): dongle_id/ → dongle_id/logdir/
+      base = nas_upload_url.rstrip('/')
+      try:
+        requests.request('MKCOL', f"{base}/{self.dongle_id}", auth=auth, timeout=5)
+      except Exception:
+        pass
+      parent_path = '/'.join(nas_key.split('/')[:-1])
       if parent_path:
-        parent_url = nas_upload_url.rstrip('/') + '/' + parent_path
         try:
-          requests.request('MKCOL', parent_url, auth=auth, timeout=5)
+          requests.request('MKCOL', f"{base}/{parent_path}", auth=auth, timeout=5)
         except Exception:
           pass
 
