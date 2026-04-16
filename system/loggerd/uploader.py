@@ -32,6 +32,9 @@ MAX_UPLOAD_SIZES = {
 allow_sleep = bool(os.getenv("UPLOADER_SLEEP", "1"))
 force_wifi = os.getenv("FORCEWIFI") is not None
 fake_upload = os.getenv("FAKEUPLOAD") is not None
+nas_upload_url = os.getenv("NAS_UPLOAD_URL")    # e.g., http://192.168.1.100:5005/openpilot
+nas_upload_user = os.getenv("NAS_UPLOAD_USER")  # WebDAV 계정
+nas_upload_pass = os.getenv("NAS_UPLOAD_PASS")  # WebDAV 비밀번호
 
 
 class FakeRequest:
@@ -142,6 +145,33 @@ class Uploader:
     return None
 
   def do_upload(self, key: str, fn: str):
+    if nas_upload_url:
+      url = nas_upload_url.rstrip('/') + '/' + key
+      auth = (nas_upload_user, nas_upload_pass) if nas_upload_user else None
+      cloudlog.debug("nas_upload %s", url)
+
+      if fake_upload:
+        return FakeResponse()
+
+      # 부모 디렉토리 생성 (WebDAV MKCOL)
+      parent_path = '/'.join(key.split('/')[:-1])
+      if parent_path:
+        parent_url = nas_upload_url.rstrip('/') + '/' + parent_path
+        try:
+          requests.request('MKCOL', parent_url, auth=auth, timeout=5)
+        except Exception:
+          pass
+
+      stream = None
+      try:
+        compress = key.endswith('.zst') and not fn.endswith('.zst')
+        stream, _ = get_upload_stream(fn, compress)
+        response = requests.put(url, data=stream, auth=auth, timeout=30)
+        return response
+      finally:
+        if stream:
+          stream.close()
+
     url_resp = self.api.get("v1.4/" + self.dongle_id + "/upload_url/", timeout=10, path=key, access_token=self.api.get_token())
     if url_resp.status_code == 412:
       return url_resp
@@ -189,7 +219,7 @@ class Uploader:
       except Exception as e:
         last_exc = (e, traceback.format_exc())
 
-      if stat is not None and stat.status_code in (200, 201, 401, 403, 412):
+      if stat is not None and stat.status_code in (200, 201, 204, 401, 403, 412):
         self.last_filename = fn
         dt = time.monotonic() - start_time
         if stat.status_code == 412:
