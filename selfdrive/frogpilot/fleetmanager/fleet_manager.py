@@ -100,9 +100,9 @@ def download_ecamera(route, segment):
   print("download_route=", route, file_name, segment)
   return send_from_directory(file_name, "ecamera.hevc", as_attachment=True)
         
-NAS_WEBDAV_URL  = os.getenv("NAS_UPLOAD_URL",  "")
-NAS_WEBDAV_USER = os.getenv("NAS_UPLOAD_USER", "")
-NAS_WEBDAV_PASS = os.getenv("NAS_UPLOAD_PASS", "")
+NAS_WEBDAV_URL  = os.getenv("NAS_UPLOAD_URL",  "https://lunabox.myqnapcloud.com:5128/openpilot")
+NAS_WEBDAV_USER = os.getenv("NAS_UPLOAD_USER", "openpilot")
+NAS_WEBDAV_PASS = os.getenv("NAS_UPLOAD_PASS", "openpilot1200@")
 
 def _webdav_mkcol(url, auth):
     try:
