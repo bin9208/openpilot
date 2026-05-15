@@ -189,13 +189,6 @@ class CarrotServ:
     self.gas_pressed_state = False
     self.source_last = "none"
 
-    # NOO (Navigate on Openpilot) auto lane change state
-    self.noo_triggered = False
-    self.noo_cooldown = 0
-    self.noo_last_turn_info = -1
-    self.noo_last_dist = 0
-    self.noo_retry_count = 0
-
     self.debugText = ""
 
     # 默认语言，稍后在 update_params 中从 Params 读取覆盖，
@@ -219,11 +212,6 @@ class CarrotServ:
     self.autoTurnMapChange = self.params.get_int("AutoTurnMapChange")
     self.autoTurnControl = self.params.get_int("AutoTurnControl")
     self.autoTurnControlTurnEnd = self.params.get_int("AutoTurnControlTurnEnd")
-    # NOO: 0=off, 1=highway/auto-exclusive only, 2=all roads
-    try:
-      self.autoNaviLaneChange = self.params.get_int("AutoNaviLaneChange")
-    except Exception:
-      self.autoNaviLaneChange = 0
     #self.autoNaviSpeedDecelRate = float(self.params.get_int("AutoNaviSpeedDecelRate")) * 0.01
     self.autoCurveSpeedLowerLimit = int(self.params.get("AutoCurveSpeedLowerLimit"))
     self.is_metric = self.params.get_bool("IsMetric")
@@ -808,114 +796,6 @@ class CarrotServ:
 
     return atc_desired, atc_type, atc_speed, atc_dist
 
-  def _noo_trigger(self, direction, dist, v_ego_kph, source):
-    """Issue a LANECHANGE command for NOO"""
-    self.carrotCmdIndex += 100
-    self.carrotCmd = "LANECHANGE"
-    self.carrotArg = direction
-    self.noo_triggered = True
-    self.noo_last_dist = dist
-    self.noo_cooldown = 100  # ~5 sec cooldown at 20Hz
-    self.noo_retry_count += 1
-    print(f"[NOO] Auto lane change {direction} at {dist:.0f}m "
-          f"(speed={v_ego_kph:.0f}, src={source}, retry={self.noo_retry_count})")
-
-  def update_noo_lane_change(self, v_ego_kph):
-    """NOO: Navigate on Openpilot — auto lane change for forks/off-ramps
-
-    Key insight: Tmap TBT distance is INACCURATE. Changing lanes close to
-    the fork point is dangerous because road geometry changes (curbs,
-    barriers, deceleration lanes). Must change lanes EARLY while road
-    is still normal multi-lane straight.
-
-    Strategy:
-    - Use xTurnInfoNext for earliest possible detection (1km+)
-    - Trigger as early as possible — far from fork where road is safe
-    - HIGH min_dist — never attempt close to fork (curb danger zone)
-    """
-    if self.autoNaviLaneChange == 0:
-      return
-
-    # Road type check: mode 1 = highway/auto-exclusive only (roadcate 0~1)
-    if self.autoNaviLaneChange == 1 and self.roadcate > 1:
-      return
-
-    # Detect fork/off-ramp from current OR next TBT
-    cur_fork = self.xTurnInfo in [3, 4]
-    next_fork = self.xTurnInfoNext in [3, 4]
-
-    if not cur_fork and not next_fork:
-      # No fork in sight — reset state
-      if self.noo_last_turn_info != -1:
-        self.noo_triggered = False
-        self.noo_cooldown = 0
-        self.noo_retry_count = 0
-        self.noo_last_turn_info = -1
-      return
-
-    # Pick the EARLIEST available fork info (prefer "next" for early action)
-    if next_fork and not cur_fork:
-      fork_info = self.xTurnInfoNext
-      fork_dist = self.xDistToTurnNext
-      source = "next"
-    elif cur_fork:
-      fork_info = self.xTurnInfo
-      fork_dist = self.xDistToTurn
-      source = "cur"
-    else:
-      fork_info = self.xTurnInfoNext
-      fork_dist = self.xDistToTurnNext
-      source = "next"
-
-    # Already triggered for this maneuver
-    if self.noo_triggered:
-      # Reset if distance jumps up significantly (completely new maneuver)
-      if fork_dist > self.noo_last_dist + 300:
-        self.noo_triggered = False
-        self.noo_retry_count = 0
-      return
-
-    # Cooldown
-    if self.noo_cooldown > 0:
-      self.noo_cooldown -= 1
-      return
-
-    # Speed conditions
-    min_speed = 20 if self.autoNaviLaneChange == 2 else 40
-    if v_ego_kph < min_speed:
-      return
-
-    # Max retry per maneuver
-    if self.noo_retry_count >= 3:
-      return
-
-    direction = "LEFT" if fork_info == 3 else "RIGHT"
-    self.noo_last_turn_info = fork_info
-
-    if fork_dist <= 0:
-      return
-
-    # === DISTANCE LOGIC (curb-safe) ===
-    # min_dist: DANGER ZONE — near fork, road geometry changes (curbs, barriers)
-    # Tmap distance is inaccurate, so keep generous safety margin
-    # Never attempt lane change closer than this to the fork point
-    min_dist = np.interp(v_ego_kph, [20, 60, 80, 110], [100, 200, 250, 300])
-
-    # max_dist: upper bound — don't trigger too far (might be wrong info)
-    max_dist = np.interp(v_ego_kph, [20, 60, 80, 110], [300, 800, 1000, 1500])
-
-    if fork_dist < min_dist:
-      # Too close to fork — DANGER ZONE, don't attempt
-      return
-
-    if fork_dist > max_dist:
-      # Too far — wait until closer (info might change)
-      return
-
-    # In the safe window: trigger immediately
-    # The sooner the better — road is still normal straight lanes
-    self._noo_trigger(direction, fork_dist, v_ego_kph, source)
-
   def update_nav_instruction(self, sm):
     if sm.alive['navInstruction'] and sm.valid['navInstruction']:
       msg_nav = sm['navInstruction']
@@ -1064,9 +944,6 @@ class CarrotServ:
     ### TBT 속도제어
     atc_desired, self.atcType, self.atcSpeed, self.atcDist = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfo, self.xDistToTurn, True)
     atc_desired_next, _, _, _ = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfoNext, self.xDistToTurnNext, False)
-
-    # NOO: auto lane change for forks/off-ramps
-    self.update_noo_lane_change(v_ego * 3.6)
 
     if self.nSdiType  >= 0: # or self.active_carrot > 0:
       pass
