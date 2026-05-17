@@ -91,6 +91,9 @@ class CarInterface(CarInterfaceBase):
         if 0x1cf not in fingerprint[CAN.ECAN]:
           ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
           print("$$$CANFD ALT_BUTTONS")
+        if candidate == CAR.HYUNDAI_IONIQ_5_PE and 0x3c1 in fingerprint[CAN.ECAN]:
+          ret.flags |= HyundaiFlags.ENABLE_BLINKERS.value
+          print("$$$CANFD BLINKER_STALKS")
         #if not ret.flags & HyundaiFlags.RADAR_SCC:
         #  ret.flags |= HyundaiFlags.CANFD_CAMERA_SCC.value
         #  print("$$$CANFD CAMERA_SCC")
@@ -250,7 +253,7 @@ class CarInterface(CarInterfaceBase):
       params.put_bool("EnableRadarTracksResult", result)
 
     # for blinkers
-    if CP.flags & HyundaiFlags.ENABLE_BLINKERS:
+    if CP.flags & HyundaiFlags.CANFD_HDA2 and CP.flags & HyundaiFlags.ENABLE_BLINKERS:
       disable_ecu(can_recv, can_send, bus=CanBus(CP).ECAN, addr=0x7B1, com_cont_req=b'\x28\x83\x01')
 
 def enable_radar_tracks(CP, logcan, sendcan):

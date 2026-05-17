@@ -129,10 +129,13 @@ class Controls:
     actuators = CC.actuators
     actuators.longControlState = self.LoC.long_control_state
 
-    # Enable blinkers while lane changing
+    # Enable blinkers while lane changing or while ATC/nav is requesting a turn.
     if model_v2.meta.laneChangeState != LaneChangeState.off:
       CC.leftBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.left
       CC.rightBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.right
+    elif model_v2.meta.desire in (log.Desire.turnLeft, log.Desire.turnRight):
+      CC.leftBlinker = model_v2.meta.desire == log.Desire.turnLeft
+      CC.rightBlinker = model_v2.meta.desire == log.Desire.turnRight
 
     if not CC.latActive:
       self.LaC.reset()

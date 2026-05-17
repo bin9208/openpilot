@@ -311,7 +311,7 @@ class CarController(CarControllerBase):
       can_sends.append(make_tester_present_msg(addr, bus, suppress_response=True))
 
       # for blinkers
-      if self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
+      if self.CP.flags & HyundaiFlags.CANFD_HDA2 and self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
         can_sends.append(make_tester_present_msg(0x7b1, self.CAN.ECAN, suppress_response=True))
 
     camera_scc = self.CP.flags & HyundaiFlags.CAMERA_SCC
@@ -336,8 +336,13 @@ class CarController(CarControllerBase):
           can_sends.extend(hyundaicanfd.create_lfa_icon_non_camera_scc(self.packer, CS, self.CAN, CC))
 
       # blinkers
-      if hda2 and self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
-        can_sends.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, CC.leftBlinker, CC.rightBlinker))
+      if self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
+        if hda2:
+          can_sends.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, CC.leftBlinker, CC.rightBlinker))
+        elif self.frame % 20 == 0:
+          blinker_msg = hyundaicanfd.create_blinker_stalk_message(self.packer, self.CAN, CS, CC.leftBlinker, CC.rightBlinker)
+          if blinker_msg is not None:
+            can_sends.append(blinker_msg)
 
       if self.camera_scc_params in [2, 3]:
         self.canfd_toggle_adas(CC, CS)

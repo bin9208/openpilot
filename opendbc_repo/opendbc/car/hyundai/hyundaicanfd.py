@@ -463,6 +463,15 @@ def create_spas_messages(packer, CAN, frame, left_blink, right_blink):
 
   return ret
 
+def create_blinker_stalk_message(packer, CAN, CS, left_blink, right_blink):
+  if CS.blinker_stalks is None or left_blink == right_blink:
+    return None
+
+  values = copy.copy(CS.blinker_stalks)
+  values["LEFT_BLINKER"] = 1 if left_blink else 0
+  values["RIGHT_BLINKER"] = 1 if right_blink else 0
+  return packer.make_can_msg("BLINKER_STALKS", CAN.ECAN, values)
+
 
 def create_fca_warning_light(CP, packer, CAN, frame):
   ret = []
