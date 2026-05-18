@@ -353,9 +353,12 @@ def wrong_car_mode_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
 
 
 def joystick_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
-  gb = sm['carControl'].actuators.accel / 4.
-  steer = sm['carControl'].actuators.torque
-  vals = f"Gas: {round(gb * 100.)}%, Steer: {round(steer * 100.)}%"
+  axes = list(sm['testJoystick'].axes) if sm.recv_frame['testJoystick'] > 0 else []
+  raw_gb = axes[0] if len(axes) > 0 else 0.
+  raw_steer = axes[1] if len(axes) > 1 else 0.
+  out_gb = sm['carControl'].actuators.accel / 4.
+  out_steer = sm['carControl'].actuators.torque
+  vals = f"In: {round(raw_gb * 100.)}%/{round(raw_steer * 100.)}%, Out: {round(out_gb * 100.)}%/{round(out_steer * 100.)}%"
   return NormalPermanentAlert("Joystick Mode", vals)
 
 

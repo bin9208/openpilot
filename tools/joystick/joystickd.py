@@ -38,10 +38,6 @@ def joystickd_thread():
     cc_msg = messaging.new_message('carControl')
     cc_msg.valid = True
     CC = cc_msg.carControl
-    CC.enabled = sm['selfdriveState'].enabled
-    CC.latActive = sm['selfdriveState'].active and not sm['carState'].steerFaultTemporary and not sm['carState'].steerFaultPermanent
-    CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in sm['onroadEvents']) and CP.openpilotLongitudinalControl
-    CC.cruiseControl.cancel = sm['carState'].cruiseState.enabled and (not CC.enabled or not CP.pcmCruise)
     CC.hudControl.leadDistanceBars = 2
 
     actuators = CC.actuators
@@ -65,6 +61,11 @@ def joystickd_thread():
       CC.cruiseControl.cancel = True
     if not operator_active:
       joystick_axes = [0.0, 0.0]
+
+    CC.enabled = True
+    CC.latActive = operator_active and not sm['carState'].steerFaultTemporary and not sm['carState'].steerFaultPermanent
+    CC.longActive = not any(e.overrideLongitudinal for e in sm['onroadEvents']) and CP.openpilotLongitudinalControl
+    CC.cruiseControl.cancel = CC.cruiseControl.cancel or (sm['carState'].cruiseState.enabled and not CP.pcmCruise)
 
     if CC.longActive:
       axis_accel = float(np.clip(joystick_axes[0], -1, 1))
