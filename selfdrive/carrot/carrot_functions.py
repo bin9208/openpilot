@@ -8,6 +8,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.filter_simple import MyMovingAverage
 from openpilot.selfdrive.selfdrived.events import Events
+from openpilot.selfdrive.carrot.driver_style_tuner import DriverStyleTuner
 
 EventName = log.OnroadEvent.EventName
 LaneChangeState = log.LaneChangeState
@@ -45,6 +46,7 @@ A_CRUISE_MAX_BP_CARROT = [0., 10 * CV.KPH_TO_MS, 40 * CV.KPH_TO_MS, 60 * CV.KPH_
 class CarrotPlanner:
   def __init__(self):
     self.params = Params()
+    self.driverStyleTuner = DriverStyleTuner(self.params)
     self.params_count = 0
     self.frame = 0
 
@@ -144,6 +146,7 @@ class CarrotPlanner:
     self.frame += 1
     self.params_count += 1
     if self.params_count % 10 == 0:
+      self.driverStyleTuner.update_params()
       myDrivingMode = DrivingMode(self.params.get_int("MyDrivingMode"))
       if myDrivingMode != self.myDrivingMode_last:
         self.myDrivingMode_disable_auto = True
@@ -188,10 +191,21 @@ class CarrotPlanner:
 
   def get_carrot_accel(self, v_ego):
     cruiseMaxVals = [self.cruiseMaxVals0, self.cruiseMaxVals1, self.cruiseMaxVals2, self.cruiseMaxVals3, self.cruiseMaxVals4, self.cruiseMaxVals5, self.cruiseMaxVals6]
+    cruiseMaxVals = self.driverStyleTuner.apply_accel(cruiseMaxVals)
     factor = self.myHighModeFactor if self.myDrivingMode == DrivingMode.High else self.mySafeFactor
     return np.interp(v_ego, A_CRUISE_MAX_BP_CARROT, cruiseMaxVals) * factor
 
+  def get_carrot_decel(self, base_min_accel):
+    return self.driverStyleTuner.apply_decel_limit(base_min_accel)
+
+  def update_driver_style_from_openpilot(self, sm, lead, desired_distance, t_follow, source, a_target):
+    self.driverStyleTuner.observe_openpilot(sm, sm['carState'], lead, self.stop_distance, desired_distance, t_follow, source, a_target)
+
+  def _effective_t_follow_gaps(self):
+    return self.driverStyleTuner.apply_t_follow_gaps([self.tFollowGap1, self.tFollowGap2, self.tFollowGap3, self.tFollowGap4])
+
   def _get_base_t_follow(self, personality, v_ego):
+    tFollowGap1, tFollowGap2, tFollowGap3, tFollowGap4 = self._effective_t_follow_gaps()
     if self.enableSpeedTF < 0:
       TF_SPEED_BPS = {
         -1: [0, 30, 60, 90],
@@ -205,7 +219,7 @@ class CarrotPlanner:
       tf_base = float(np.interp(
         v_kph,
         bp,
-        [self.tFollowGap1, self.tFollowGap2, self.tFollowGap3, self.tFollowGap4]
+        [tFollowGap1, tFollowGap2, tFollowGap3, tFollowGap4]
       ))
 
       self.jerk_factor = float(np.interp(v_kph, bp, [1.0, 0.7, 0.5, 0.5]))
@@ -224,16 +238,16 @@ class CarrotPlanner:
     else:
       if personality == log.LongitudinalPersonality.moreRelaxed:
         self.jerk_factor = 1.0
-        tf_base = self.tFollowGap4
+        tf_base = tFollowGap4
       elif personality == log.LongitudinalPersonality.relaxed:
         self.jerk_factor = 1.0
-        tf_base = self.tFollowGap3
+        tf_base = tFollowGap3
       elif personality == log.LongitudinalPersonality.standard:
         self.jerk_factor = 1.0 if self.myDrivingMode == DrivingMode.Safe else 0.7
-        tf_base = self.tFollowGap2
+        tf_base = tFollowGap2
       elif personality == log.LongitudinalPersonality.aggressive:
         self.jerk_factor = 1.0 if self.myDrivingMode == DrivingMode.Safe else 0.5
-        tf_base = self.tFollowGap1
+        tf_base = tFollowGap1
       else:
         raise NotImplementedError("Longitudinal personality not supported")
 
@@ -275,8 +289,9 @@ class CarrotPlanner:
 
 
   def _clip_t_follow(self, t_follow):
-    tf_min = float(min(self.tFollowGap1, self.tFollowGap2, self.tFollowGap3, self.tFollowGap4))
-    tf_max = float(max(self.tFollowGap1, self.tFollowGap2, self.tFollowGap3, self.tFollowGap4))
+    t_follow_gaps = self._effective_t_follow_gaps()
+    tf_min = float(min(t_follow_gaps))
+    tf_max = float(max(t_follow_gaps))
     return float(np.clip(t_follow, max(0.3, tf_min), tf_max))
 
   def get_T_FOLLOW(self, personality=log.LongitudinalPersonality.standard, v_ego=0.0, a_ego=0.0):
@@ -457,7 +472,7 @@ class CarrotPlanner:
     #self.soft_hold_active = sm['carControl'].hudControl.softHoldActive # carrot 1
     self.soft_hold_active = sm['carState'].softHoldActive # carrot 2
 
-    self.comfort_brake = self.comfortBrake
+    self.comfort_brake = self.driverStyleTuner.apply_comfort_brake(self.comfortBrake)
 
     v_ego = carstate.vEgo
     a_ego = carstate.aEgo
@@ -466,6 +481,8 @@ class CarrotPlanner:
     v_ego_cluster_kph = v_ego_cluster * CV.MS_TO_KPH
 
     leadOne = radarstate.leadOne
+    self.driverStyleTuner.observe(sm, carstate, leadOne, self.stop_distance)
+
     self.mySafeFactor = 1.0
     if self.myDrivingMode == DrivingMode.Eco: # eco
       self.mySafeFactor = self.myEcoModeFactor

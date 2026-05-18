@@ -173,7 +173,7 @@ class LongitudinalPlanner:
 
     if self.mpc.mode == 'acc':
       #accel_limits = [A_CRUISE_MIN, get_max_accel(v_ego)]
-      accel_limits = [A_CRUISE_MIN, carrot.get_carrot_accel(v_ego)]
+      accel_limits = [carrot.get_carrot_decel(A_CRUISE_MIN), carrot.get_carrot_accel(v_ego)]
       steer_angle_without_offset = sm['carState'].steeringAngleDeg - sm['liveParameters'].angleOffsetDeg
       #accel_limits_turns = limit_accel_in_turns(v_ego, steer_angle_without_offset, accel_limits, self.CP)
       a_lat_max = 3.0
@@ -262,6 +262,7 @@ class LongitudinalPlanner:
     self.output_a_target = output_a_target
     self.output_v_target_now = output_v_target_now
     self.output_j_target_now = self.j_desired_trajectory[0]
+    carrot.update_driver_style_from_openpilot(sm, sm['radarState'].leadOne, self.mpc.desired_distance, self.mpc.t_follow, self.mpc.source, output_a_target)
 
   def publish(self, sm, pm, carrot):
     plan_send = messaging.new_message('longitudinalPlan')

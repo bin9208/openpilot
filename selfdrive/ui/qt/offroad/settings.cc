@@ -1,4 +1,6 @@
 #include <cassert>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 #include <tuple>
@@ -6,6 +8,10 @@
 #include <thread> //차선캘리
 
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QProcess>
 
 #include "common/watchdog.h"
@@ -591,6 +597,180 @@ static QStringList get_list(const char* path) {
   return stringList;
 }
 
+namespace {
+
+constexpr std::array<const char*, 7> ACCEL_PARAM_KEYS = {
+  "CruiseMaxVals0", "CruiseMaxVals1", "CruiseMaxVals2", "CruiseMaxVals3", "CruiseMaxVals4", "CruiseMaxVals5", "CruiseMaxVals6",
+};
+constexpr std::array<int, 7> ACCEL_SPEED_BPS = {0, 10, 40, 60, 80, 110, 140};
+constexpr std::array<const char*, 4> TF_PARAM_KEYS = {"TFollowGap1", "TFollowGap2", "TFollowGap3", "TFollowGap4"};
+constexpr std::array<int, 4> TF_SPEED_BPS = {0, 40, 80, 120};
+constexpr int ACCEL_MIN_SAMPLES_UI = 12;
+constexpr int DECEL_MIN_SAMPLES_UI = 12;
+constexpr int TF_MIN_SAMPLES_UI = 20;
+
+QJsonObject readAutoTuneData(Params &params) {
+  QJsonParseError err;
+  const QByteArray raw = QByteArray::fromStdString(params.get("LongitudinalAutoTuneData"));
+  const QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
+  return err.error == QJsonParseError::NoError && doc.isObject() ? doc.object() : QJsonObject();
+}
+
+QString learnedValue(const QJsonArray &values, const QJsonArray &counts, int idx, double scale, const QString &suffix) {
+  if (idx >= values.size() || idx >= counts.size() || !values.at(idx).isDouble()) {
+    return "--";
+  }
+  const int count = counts.at(idx).toInt(0);
+  const QString value = QString::number(values.at(idx).toDouble() * scale, 'f', scale >= 100.0 ? 0 : 2);
+  return QString("%1%2 (%3)").arg(value, suffix).arg(count);
+}
+
+int learnedIntValue(const QJsonArray &values, const QJsonArray &counts, int idx, int min_count, double scale, int min_value, int max_value, int fallback) {
+  if (idx >= values.size() || idx >= counts.size() || !values.at(idx).isDouble() || counts.at(idx).toInt(0) < min_count) {
+    return fallback;
+  }
+  return qBound(min_value, static_cast<int>(std::round(values.at(idx).toDouble() * scale)), max_value);
+}
+
+QString formatCountedValue(double value, int count, int min_count, const QString &suffix) {
+  if (count <= 0) {
+    return "--";
+  }
+  const QString ready = count >= min_count ? "ready" : "learning";
+  return QString("%1%2 (%3, %4)").arg(QString::number(value, 'f', 2), suffix).arg(count).arg(ready);
+}
+
+}  // namespace
+
+CAutoTuneControl::CAutoTuneControl(QWidget* parent) : AbstractControl("Learned", "", "", parent) {
+  summary.setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  summary.setWordWrap(true);
+  summary.setMinimumWidth(600);
+  summary.setStyleSheet("font-size: 28px; color: #e0e879;");
+  hlayout->addWidget(&summary, 3);
+
+  const QString btnStyle = R"(
+    QPushButton {
+      padding: 0 16px;
+      border-radius: 34px;
+      font-size: 18px;
+      font-weight: 500;
+      color: #E4E4E4;
+      background-color: #393939;
+    }
+    QPushButton:pressed { background-color: #4a4a4a; }
+  )";
+
+  for (QPushButton *btn : {&refresh_btn, &use_btn, &accel_btn, &gap_btn, &clear_btn}) {
+    btn->setStyleSheet(btnStyle);
+    btn->setFixedSize(125, 72);
+    hlayout->addWidget(btn);
+  }
+
+  refresh_btn.setText("REFRESH");
+  use_btn.setText("USE ALL");
+  accel_btn.setText("ACCEL");
+  gap_btn.setText("GAP");
+  clear_btn.setText("CLEAR");
+
+  QObject::connect(&refresh_btn, &QPushButton::clicked, [this]() { refresh(); });
+  QObject::connect(&use_btn, &QPushButton::clicked, [this]() { useLearnedValues(); });
+  QObject::connect(&accel_btn, &QPushButton::clicked, [this]() { copyAccel(); });
+  QObject::connect(&gap_btn, &QPushButton::clicked, [this]() { copyGap(); });
+  QObject::connect(&clear_btn, &QPushButton::clicked, [this]() { clearLearnedValues(); });
+
+  refresh();
+}
+
+void CAutoTuneControl::showEvent(QShowEvent* event) {
+  AbstractControl::showEvent(event);
+  refresh();
+}
+
+QString CAutoTuneControl::summaryText() {
+  const QJsonObject data = readAutoTuneData(params);
+  const QJsonArray accel = data.value("accel").toArray();
+  const QJsonArray accel_count = data.value("accel_count").toArray();
+  const QJsonArray tf = data.value("t_follow").toArray();
+  const QJsonArray tf_count = data.value("t_follow_count").toArray();
+
+  QStringList accel_parts;
+  for (int i = 0; i < ACCEL_SPEED_BPS.size(); ++i) {
+    accel_parts.append(QString("%1:%2").arg(ACCEL_SPEED_BPS[i]).arg(learnedValue(accel, accel_count, i, 100.0, "")));
+  }
+
+  QStringList tf_parts;
+  for (int i = 0; i < TF_SPEED_BPS.size(); ++i) {
+    tf_parts.append(QString("%1:%2").arg(TF_SPEED_BPS[i]).arg(learnedValue(tf, tf_count, i, 1.0, "s")));
+  }
+
+  const double decel = data.value("decel").toDouble(0.0);
+  const int decel_count = data.value("decel_count").toInt(0);
+  const int mode = params.getInt("LongitudinalAutoTune");
+  const int ratio = params.getInt("LongitudinalAutoTuneRatio");
+  const int op_learning = params.getInt("LongitudinalAutoTuneOpLearning");
+
+  return QString("Mode %1 / Ratio %2% / OP learn %3\nAccel x0.01: %4\nDecel: %5\nTF: %6")
+      .arg(mode)
+      .arg(ratio)
+      .arg(op_learning > 0 ? "ON" : "OFF")
+      .arg(accel_parts.join("  "))
+      .arg(formatCountedValue(decel, decel_count, DECEL_MIN_SAMPLES_UI, "m/s2"))
+      .arg(tf_parts.join("  "));
+}
+
+void CAutoTuneControl::refresh() {
+  summary.setText(summaryText());
+}
+
+void CAutoTuneControl::useLearnedValues() {
+  params.putInt("LongitudinalAutoTune", 2);
+  params.putInt("LongitudinalAutoTuneRatio", 100);
+  refresh();
+  ConfirmationDialog::alert("AutoTune learned values enabled at 100%.", this);
+}
+
+void CAutoTuneControl::copyAccel() {
+  const QJsonObject data = readAutoTuneData(params);
+  const QJsonArray accel = data.value("accel").toArray();
+  const QJsonArray counts = data.value("accel_count").toArray();
+
+  for (int i = 0; i < ACCEL_PARAM_KEYS.size(); ++i) {
+    const int current = params.getInt(ACCEL_PARAM_KEYS[i]);
+    const int value = learnedIntValue(accel, counts, i, ACCEL_MIN_SAMPLES_UI, 100.0, 1, 250, current);
+    params.putInt(ACCEL_PARAM_KEYS[i], value);
+  }
+
+  refresh();
+  ConfirmationDialog::alert("Learned accel values copied to CruiseMaxVals.", this);
+}
+
+void CAutoTuneControl::copyGap() {
+  const QJsonObject data = readAutoTuneData(params);
+  const QJsonArray tf = data.value("t_follow").toArray();
+  const QJsonArray counts = data.value("t_follow_count").toArray();
+
+  int last_value = 70;
+  for (int i = 0; i < TF_PARAM_KEYS.size(); ++i) {
+    const int current = params.getInt(TF_PARAM_KEYS[i]);
+    int value = learnedIntValue(tf, counts, i, TF_MIN_SAMPLES_UI, 100.0, 70, 300, current);
+    value = std::max(value, last_value);
+    params.putInt(TF_PARAM_KEYS[i], value);
+    last_value = value;
+  }
+
+  refresh();
+  ConfirmationDialog::alert("Learned gap values copied to TFollowGap.", this);
+}
+
+void CAutoTuneControl::clearLearnedValues() {
+  if (!ConfirmationDialog::confirm("Clear learned AutoTune data?", "Clear", this)) {
+    return;
+  }
+  params.put("LongitudinalAutoTuneData", "{}");
+  refresh();
+}
+
 CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   main_layout = new QStackedLayout(this);
   homeScreen = new QWidget(this);
@@ -649,6 +829,14 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
     updateButtonStyles();
   });
 
+  QPushButton* autoTune_btn = new QPushButton(tr("Tune"));
+  autoTune_btn->setObjectName("autoTune_btn");
+  QObject::connect(autoTune_btn, &QPushButton::clicked, this, [this]() {
+    this->currentCarrotIndex = 6;
+    this->togglesCarrot(6);
+    updateButtonStyles();
+  });
+
 
   updateButtonStyles();
 
@@ -658,6 +846,7 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   select_layout->addWidget(latLong_btn);
   select_layout->addWidget(disp_btn);
   select_layout->addWidget(path_btn);
+  select_layout->addWidget(autoTune_btn);
   carrotLayout->addLayout(select_layout, 0);
 
   QWidget* toggles = new QWidget();
@@ -877,12 +1066,19 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   speedToggles->addItem(new CValueControl("AutoTurnMapChange", tr("ATC Auto Map Change(0)"), "", 0, 1, 1));
   speedToggles->addItem(new CValueControl("AutoNaviLaneChange", tr("NOO: Auto Lane Change(0)"), tr("0:Off, 1:Highway only, 2:All roads"), 0, 2, 1));
 
+  autoTuneToggles = new ListWidget(this);
+  autoTuneToggles->addItem(new CValueControl("LongitudinalAutoTune", tr("AutoTune mode"), tr("0:Off, 1:Learn only, 2:Learn+Apply"), 0, 2, 1));
+  autoTuneToggles->addItem(new CValueControl("LongitudinalAutoTuneRatio", tr("AutoTune apply ratio(50%)"), tr("Blend learned values with manual settings."), 0, 100, 5));
+  autoTuneToggles->addItem(new CValueControl("LongitudinalAutoTuneOpLearning", tr("AutoTune learn while OP active"), tr("Learns slowly from lead pressure and accel/decel demand while openpilot is active."), 0, 1, 1));
+  autoTuneToggles->addItem(new CAutoTuneControl(this));
+
   toggles_layout->addWidget(cruiseToggles);
   toggles_layout->addWidget(latLongToggles);
   toggles_layout->addWidget(dispToggles);
   toggles_layout->addWidget(pathToggles);
   toggles_layout->addWidget(startToggles);
   toggles_layout->addWidget(speedToggles);
+  toggles_layout->addWidget(autoTuneToggles);
   ScrollView* toggles_view = new ScrollView(toggles, this);
   carrotLayout->addWidget(toggles_view, 1);
 
@@ -900,14 +1096,15 @@ void CarrotPanel::togglesCarrot(int widgetIndex) {
   latLongToggles->setVisible(widgetIndex == 3);
   dispToggles->setVisible(widgetIndex == 4);
   pathToggles->setVisible(widgetIndex == 5);
+  autoTuneToggles->setVisible(widgetIndex == 6);
 }
 
 void CarrotPanel::updateButtonStyles() {
   QString styleSheet = R"(
-      #start_btn, #cruise_btn, #speed_btn, #latLong_btn ,#disp_btn, #path_btn {
+      #start_btn, #cruise_btn, #speed_btn, #latLong_btn ,#disp_btn, #path_btn, #autoTune_btn {
         height: 120px; border-radius: 15px; background-color: #393939;
       }
-      #start_btn:pressed, #cruise_btn:pressed, #speed_btn:pressed, #latLong_btn:pressed, #disp_btn:pressed, #path_btn:pressed {
+      #start_btn:pressed, #cruise_btn:pressed, #speed_btn:pressed, #latLong_btn:pressed, #disp_btn:pressed, #path_btn:pressed, #autoTune_btn:pressed {
         background-color: #4a4a4a;
       }
   )";
@@ -930,6 +1127,9 @@ void CarrotPanel::updateButtonStyles() {
     break;
   case 5:
     styleSheet += "#path_btn { background-color: #33ab4c; }";
+    break;
+  case 6:
+    styleSheet += "#autoTune_btn { background-color: #33ab4c; }";
     break;
   }
 

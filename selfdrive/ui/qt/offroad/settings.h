@@ -121,6 +121,7 @@ private:
   ListWidget* dispToggles;
   ListWidget* startToggles;
   ListWidget* speedToggles;
+  ListWidget* autoTuneToggles;
 
   void togglesCarrot(int widgetIndex);
   void updateButtonStyles();
@@ -152,4 +153,28 @@ private:
   int m_min;
   int m_max;
   int m_unit;
+};
+
+class CAutoTuneControl : public AbstractControl {
+public:
+  explicit CAutoTuneControl(QWidget* parent = nullptr);
+
+protected:
+  void showEvent(QShowEvent* event) override;
+
+private:
+  void refresh();
+  void copyAccel();
+  void copyGap();
+  void useLearnedValues();
+  void clearLearnedValues();
+  QString summaryText();
+
+  QPushButton refresh_btn;
+  QPushButton use_btn;
+  QPushButton accel_btn;
+  QPushButton gap_btn;
+  QPushButton clear_btn;
+  QLabel summary;
+  Params params;
 };
