@@ -27,6 +27,17 @@ V_EGO_STATIONARY = 4.   # no stationary object flag below this speed
 RADAR_TO_CENTER = 2.7   # (deprecated) RADAR is ~ 2.7m ahead from center of car
 RADAR_TO_CAMERA = 1.52  # RADAR is ~ 1.5m ahead from center of mesh frame
 
+CUT_IN_VEHICLE_HALF_WIDTH = 0.9
+CUT_IN_MAX_DIST = 50.0
+CUT_IN_CLOSE_DIST = 30.0
+CUT_IN_MIN_TRACK_AGE = 0.30
+CUT_IN_MIN_TRACK_AGE_CLOSE = 0.15
+
+VISION_MIN_X_STD = 1.5
+VISION_MIN_Y_STD = 0.45
+VISION_MIN_Y_STD_CUT_IN = 1.4
+VISION_MIN_V_STD = 2.0
+
 
 def laplacian_pdf(x: float, mu: float, b: float):
   diff = abs(x - mu) / max(b, 1e-4)
@@ -49,8 +60,12 @@ class Track:
     self.score = 0.0
     self.in_lane_prob = 0.0
     self.in_lane_prob_future = 0.0
+    self.in_lane_prob_expanded = 0.0
+    self.in_lane_prob_future_expanded = 0.0
 
     self.dPath = 0.0
+    self.dPath_future = 0.0
+    self.lane_half_width = 1.8
 
     # ---- noise filter state (new) ----
     self._vLead_last = 0.0
@@ -98,10 +113,12 @@ class Track:
       lane_half_width = max(0.1, abs(right_lane_y - left_lane_y) / 2.0)
       dist_from_center = yRel + center_y
       in_lane_prob = max(0.0, 1.0 - (abs(dist_from_center) / lane_half_width))
-      return dist_from_center, in_lane_prob
+      expanded_dist = max(0.0, abs(dist_from_center) - CUT_IN_VEHICLE_HALF_WIDTH)
+      in_lane_prob_expanded = max(0.0, 1.0 - (expanded_dist / lane_half_width))
+      return dist_from_center, in_lane_prob, in_lane_prob_expanded, lane_half_width
 
-    self.dPath, self.in_lane_prob = d_path_interp(self.dRel, self.yRel)
-    self.dPath_future, self.in_lane_prob_future = d_path_interp(self.dRel_future, self.yRel_future)
+    self.dPath, self.in_lane_prob, self.in_lane_prob_expanded, self.lane_half_width = d_path_interp(self.dRel, self.yRel)
+    self.dPath_future, self.in_lane_prob_future, self.in_lane_prob_future_expanded, _ = d_path_interp(self.dRel_future, self.yRel_future)
 
   # ---- noise suppression only when cnt>=2 ----
   def vlead_for_matching(self, dv_max: float = 4.0, alpha: float = 0.35) -> float:
@@ -149,6 +166,21 @@ class Track:
       "score": self.score,
     }
 
+  def get_CutInState(self, v_ego: float, model_prob: float = 0.03, vision_y_rel=0.0):
+    lead = self.get_RadarState(model_prob, vision_y_rel)
+
+    v_lead = max(0.0, self.vlead_for_matching(dv_max=3.0, alpha=0.35))
+    lead["vLead"] = float(v_lead)
+    lead["vLeadK"] = float(v_lead)
+    lead["vRel"] = float(v_lead - v_ego)
+
+    a_lead = 0.0 if abs(self.aLeadK) > 3.5 else clamp(self.aLeadK, -1.2, 0.8)
+    lead["aLead"] = float(a_lead)
+    lead["aLeadK"] = float(a_lead)
+    lead["aLeadTau"] = _LEAD_ACCEL_TAU
+    lead["jLead"] = 0.0
+    return lead
+
   def potential_low_speed_lead(self, v_ego: float):
     return abs(self.yRel) < 1.0 and (v_ego < V_EGO_STATIONARY) and (0.75 < self.dRel < 25)
 
@@ -164,6 +196,10 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
     return None
 
   offset_vision_dist = float(lead.x[0] - RADAR_TO_CAMERA)
+  x_std = max(float(lead.xStd[0]), VISION_MIN_X_STD)
+  y_std = max(float(lead.yStd[0]), VISION_MIN_Y_STD)
+  y_std_cut_in = max(y_std * 2.0, VISION_MIN_Y_STD_CUT_IN)
+  v_std = max(float(lead.vStd[0]), VISION_MIN_V_STD)
 
   # distance gates
   max_vision_dist  = max(offset_vision_dist * 1.25, 5.0)
@@ -211,7 +247,13 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
     # If in-lane probability exists (it does in your Track), use it as safety.
     # When it's clearly not in our lane, don't use moving-bias.
     # (This line is intentionally mild; you can tune 0.2~0.5)
-    if hasattr(t, "dPath") and (t.in_lane_prob < 0.25):
+    lane_evidence = max(
+      getattr(t, "in_lane_prob", 0.0),
+      getattr(t, "in_lane_prob_future", 0.0),
+      getattr(t, "in_lane_prob_expanded", 0.0),
+      getattr(t, "in_lane_prob_future_expanded", 0.0),
+    )
+    if hasattr(t, "dPath") and lane_evidence < 0.18:
       return False
 
     return True
@@ -222,12 +264,12 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
     score2: wide yStd for cut-in
     NOTE: uses t.vlead_for_matching() only for scoring (cnt>=2 only).
     """
-    pd = laplacian_pdf(float(t.dRel), offset_vision_dist, float(lead.xStd[0]))
-    py = laplacian_pdf(float(t.yRel), -float(lead.y[0]), float(lead.yStd[0]))
-    py2 = laplacian_pdf(float(t.yRel), -float(lead.y[0]), float(lead.yStd[0]) * 2.0)
+    pd = laplacian_pdf(float(t.dRel), offset_vision_dist, x_std)
+    py = laplacian_pdf(float(t.yRel), -float(lead.y[0]), y_std)
+    py2 = laplacian_pdf(float(t.yRel), -float(lead.y[0]), y_std_cut_in)
 
     v_use = float(t.vlead_for_matching())  # noise suppression only if cnt>=2
-    pv = laplacian_pdf(v_use, float(lead.v[0]), float(lead.vStd[0]))
+    pv = laplacian_pdf(v_use, float(lead.v[0]), v_std)
 
     s1 = pd * py * pv
     s2 = pd * py2 * pv
@@ -250,15 +292,14 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
     if s2 > extra_score:
       extra_track, extra_score = t, s2
 
-  # score floor
-  if first_track is None or first_score < 1e-4:
+  if first_track is None:
     return None
 
   # ---- selection policy (same logic, cleaner & safer) ----
   best_track = None
 
   # A) normal match
-  if dist_sane(first_track) and vel_sane(first_track):
+  if first_score > 1e-6 and dist_sane(first_track) and vel_sane(first_track):
     if y_sane(first_track):
       if lead.prob > 0.5:
         best_track = first_track
@@ -268,7 +309,7 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
       best_track = first_track
 
   # B) stopped-car-like (only if not chosen yet)
-  if best_track is None and dist_sane(first_track) and y_sane(first_track, wide=True):
+  if best_track is None and first_score > 1e-6 and dist_sane(first_track) and y_sane(first_track, wide=True):
     if (second_track is not None and second_score > 1e-5 and
         dist_sane(second_track) and y_sane(second_track) and vel_sane(second_track)):
       best_track = second_track
@@ -282,15 +323,15 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, tracks
   # C) cut-in wide matching (only if not chosen yet)
   if best_track is None and offset_vision_dist < 90.0 and lead.prob > 0.65:
     # wide-y winner first (cut-in)
-    if (extra_track is not None and extra_score > first_score and
+    if (extra_track is not None and extra_score > max(first_score, 1e-7) and
         dist_sane(extra_track, wide=True) and vel_sane(extra_track) and y_sane(extra_track, wide=True)):
       best_track = extra_track
 
     # then allow first/second with wide gates
-    elif dist_sane(first_track, wide=True) and vel_sane(first_track) and y_sane(first_track, wide=True):
+    elif first_score > 1e-7 and dist_sane(first_track, wide=True) and vel_sane(first_track) and y_sane(first_track, wide=True):
       best_track = first_track
 
-    elif (second_track is not None and second_score > 1e-4 and
+    elif (second_track is not None and second_score > 1e-7 and
           dist_sane(second_track, wide=True) and vel_sane(second_track) and y_sane(second_track, wide=True)):
       best_track = second_track
 
@@ -538,7 +579,7 @@ class RadarD:
       self.radar_state.leadOne, self.radar_detected = self.get_lead(sm['carState'], md, alive_tracks, 0, leads_v3[0], model_v_ego, low_speed_override=False)
       self.radar_state.leadTwo, _ = self.get_lead(sm['carState'], md, alive_tracks, 1, leads_v3[1], model_v_ego, low_speed_override=False)
 
-      self.lane_line_available = md.laneLineProbs[1] > 0.5 and md.laneLineProbs[2] > 0.5
+      self.lane_line_available = self._lane_lines_available(md)
       self.compute_leads(self.v_ego, alive_tracks, md)
       if self.leadTwo is not None:
         self.radar_state.leadTwo = self.leadTwo
@@ -599,6 +640,43 @@ class RadarD:
 
     return lead_dict, radar
 
+  def _lane_lines_available(self, md) -> bool:
+    if len(md.laneLineProbs) <= 2 or len(md.laneLines) <= 2:
+      return False
+
+    if len(md.laneLines[1].y) == 0 or len(md.laneLines[2].y) == 0:
+      return False
+
+    left_prob = float(md.laneLineProbs[1])
+    right_prob = float(md.laneLineProbs[2])
+    lane_width = abs(float(md.laneLines[2].y[0]) - float(md.laneLines[1].y[0]))
+    return left_prob > 0.35 and right_prob > 0.35 and 2.3 < lane_width < 4.8
+
+  def _cut_in_candidate(self, c: Track) -> bool:
+    if not self.lane_line_available:
+      return False
+    if not (3.0 < c.dRel < CUT_IN_MAX_DIST and c.vLead > 4.0):
+      return False
+
+    close = c.dRel < CUT_IN_CLOSE_DIST
+    min_track_age = CUT_IN_MIN_TRACK_AGE_CLOSE if close else CUT_IN_MIN_TRACK_AGE
+    if c.cnt * DT_MDL < min_track_age:
+      return False
+
+    if abs(c.dPath) > 4.5 and abs(c.dPath_future) > 4.5:
+      return False
+
+    lane_now = max(c.in_lane_prob, c.in_lane_prob_expanded * 0.65)
+    lane_future = max(c.in_lane_prob_future, c.in_lane_prob_future_expanded * 0.65)
+    moving_toward_center = abs(c.dPath_future) < abs(c.dPath) - (0.05 if close else 0.12)
+    lane_evidence_growing = lane_future > lane_now + 0.04
+    center_entering = max(c.in_lane_prob, c.in_lane_prob_future) > (0.02 if close else 0.06)
+    touching_our_lane = max(lane_now, lane_future) > (0.08 if close else 0.14)
+
+    if close:
+      return touching_our_lane and (moving_toward_center or lane_evidence_growing or center_entering)
+    return touching_our_lane and (moving_toward_center or lane_evidence_growing)
+
   def compute_leads(self, v_ego, tracks, md):
     lead_msg = md.leadsV3[0] if (md is not None and len(md.position.x) == 33) else None
     self.leadCutIn = {'status': False}
@@ -612,6 +690,14 @@ class RadarD:
       return
     
     left_list, right_list, center_list, cutin_list = [], [], [], []
+
+    def maybe_add_cut_in(c: Track):
+      if self._cut_in_candidate(c):
+        confirm_frames = max(1, int((0.10 if c.dRel < CUT_IN_CLOSE_DIST else 0.20) / DT_MDL))
+        if c.cut_in_count >= confirm_frames:
+          cutin_list.append(c.get_CutInState(v_ego, 0.03, float(-lead_msg.y[0])))
+        c.cut_in_count += 3 if c.dRel < CUT_IN_CLOSE_DIST else 2
+
     for c in tracks.values():
       y_rel_neg = - c.yRel
       # center
@@ -624,19 +710,11 @@ class RadarD:
       # left/right
       elif y_rel_neg < 0: #left_lane_y:
         ld = c.get_RadarState(0, 0)
-        if self.lane_line_available and c.in_lane_prob_future > 0.1 and c.cnt > int(2.0/DT_MDL):
-          if c.cut_in_count > int(0.1/DT_MDL):
-            ld['modelProb'] = 0.03
-            cutin_list.append(ld)
-          c.cut_in_count += 2
+        maybe_add_cut_in(c)
         left_list.append(ld)
       else:
         ld = c.get_RadarState(0, 0)
-        if self.lane_line_available and c.in_lane_prob_future > 0.1 and c.cnt > int(2.0/DT_MDL):
-          if c.cut_in_count > int(0.1/DT_MDL):
-            ld['modelProb'] = 0.03
-            cutin_list.append(ld)
-          c.cut_in_count += 2
+        maybe_add_cut_in(c)
         right_list.append(ld)
 
       c.cut_in_count = max(c.cut_in_count - 1, 0)
