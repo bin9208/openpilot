@@ -1,116 +1,89 @@
-from collections import deque
 import time
 
-# COCO class IDs relevant to driving
-CLASS_PERSON = 0
-CLASS_BICYCLE = 1
-CLASS_CAR = 2
-CLASS_MOTORCYCLE = 3
-CLASS_BUS = 5
-CLASS_TRUCK = 7
-CLASS_TRAFFIC_LIGHT = 9
-CLASS_STOP_SIGN = 11
 
-# Speed limits by class and distance (m/s)
-# (max_distance_m, speed_limit_ms)
-CLASS_SPEED_RULES = {
-  CLASS_PERSON: [
-    (15.0, 0.0),    # < 15m -> stop
-    (30.0, 2.78),   # < 30m -> 10 km/h
-  ],
-  CLASS_BICYCLE: [
-    (20.0, 5.56),   # < 20m -> 20 km/h
-  ],
-  CLASS_MOTORCYCLE: [
-    (20.0, 5.56),   # < 20m -> 20 km/h
-  ],
-  CLASS_STOP_SIGN: [
-    (30.0, 0.0),    # < 30m -> stop
-  ],
-}
-
-STALE_TIMEOUT = 0.5  # seconds
+STALE_TIMEOUT = 0.7  # seconds
+MAX_ACCEPTED_RTT_MS = 450
 MIN_CONSECUTIVE_FRAMES = 3
+MIN_RED_CONFIDENCE = 0.45
+
+
+def _signal_state(name):
+  text = str(name or "").lower().replace("-", "_").replace(" ", "_")
+  if any(word in text for word in ("green", "go", "left_green", "arrow_green")):
+    return "green"
+  if any(word in text for word in ("yellow", "amber", "orange")):
+    return "yellow"
+  if any(word in text for word in ("red", "stop")):
+    return "red"
+  return ""
 
 
 class YoloControlProcessor:
   def __init__(self):
-    self.detection_history = deque(maxlen=10)
-    self.last_valid_ts = 0.0
-    self.consecutive_counts = {}  # class_id -> consecutive frame count
+    self.last_frame_id = None
+    self.last_update_ts = 0.0
+    self.red_count = 0
+    self.green_count = 0
+    self.red_active = False
 
   def process(self, yolo_data, v_ego, v_cruise):
-    """Process YOLO detections and return adjusted speed constraints.
+    """Process traffic-light YOLO detections.
 
-    Returns:
-      (adjusted_v_cruise, should_stop)
-      - adjusted_v_cruise: minimum allowed cruise speed (m/s), None if no constraint
-      - should_stop: True if emergency stop required
+    The phone model is expected to be traffic-light-specific, so class ids are
+    intentionally not treated as COCO ids here. Only explicit red/green/yellow
+    state from the class name or hasRedLight/hasGreenLight summary is used.
     """
     now = time.monotonic()
-
     if yolo_data is None:
       self._decay_counts()
       return v_cruise, False
 
-    # Check staleness via message validity
-    self.last_valid_ts = now
+    frame_id = getattr(yolo_data, "frameId", 0)
+    if frame_id == self.last_frame_id and now - self.last_update_ts <= STALE_TIMEOUT:
+      return (0.0, True) if self.red_active else (v_cruise, False)
 
-    # Handle backward-compatible red light field
-    should_stop = False
-    if getattr(yolo_data, 'hasRedLight', False):
-      should_stop = True
-
-    # Process multi-object detections
-    detections = getattr(yolo_data, 'detections', None)
-    if detections is None or len(detections) == 0:
+    if now - self.last_update_ts > STALE_TIMEOUT:
       self._decay_counts()
-      if should_stop:
-        return 0.0, True
-      return v_cruise, False
 
-    # Track which classes are present this frame
-    classes_this_frame = set()
-    min_v_cruise = v_cruise
+    self.last_frame_id = frame_id
+    self.last_update_ts = now
 
-    for det in detections:
-      class_id = det.classId
-      dist = det.distanceEstimate
-      conf = det.confidence
+    rtt_ms = int(getattr(yolo_data, "roundTripMs", 0) or 0)
+    if rtt_ms > MAX_ACCEPTED_RTT_MS:
+      self._decay_counts()
+      return (0.0, True) if self.red_active else (v_cruise, False)
 
-      if conf < 0.5:
-        continue
+    red_seen = bool(getattr(yolo_data, "hasRedLight", False))
+    green_seen = bool(getattr(yolo_data, "hasGreenLight", False))
 
-      classes_this_frame.add(class_id)
+    detections = getattr(yolo_data, "detections", None)
+    if detections is not None:
+      for det in detections:
+        conf = float(getattr(det, "confidence", 0.0))
+        if conf < MIN_RED_CONFIDENCE:
+          continue
+        state = _signal_state(getattr(det, "className", ""))
+        red_seen = red_seen or state == "red"
+        green_seen = green_seen or state == "green"
 
-      # Update consecutive count
-      self.consecutive_counts[class_id] = self.consecutive_counts.get(class_id, 0) + 1
+    if red_seen:
+      self.red_count += 1
+      self.green_count = 0
+    elif green_seen:
+      self.green_count += 1
+      self.red_count = max(0, self.red_count - 2)
+    else:
+      self._decay_counts()
 
-      # Only act if seen for enough consecutive frames
-      if self.consecutive_counts[class_id] < MIN_CONSECUTIVE_FRAMES:
-        continue
+    self.red_active = self.red_count >= MIN_CONSECUTIVE_FRAMES
+    if self.green_count >= 2:
+      self.red_active = False
+      self.red_count = 0
 
-      # Apply class-specific speed rules
-      rules = CLASS_SPEED_RULES.get(class_id)
-      if rules:
-        for max_dist, speed_limit in rules:
-          if dist < max_dist:
-            min_v_cruise = min(min_v_cruise, speed_limit)
-            if speed_limit == 0.0:
-              should_stop = True
-            break
-
-    # Decay counts for classes not seen this frame
-    for class_id in list(self.consecutive_counts.keys()):
-      if class_id not in classes_this_frame:
-        self.consecutive_counts[class_id] = max(0, self.consecutive_counts[class_id] - 1)
-        if self.consecutive_counts[class_id] == 0:
-          del self.consecutive_counts[class_id]
-
-    return min_v_cruise, should_stop
+    return (0.0, True) if self.red_active else (v_cruise, False)
 
   def _decay_counts(self):
-    for class_id in list(self.consecutive_counts.keys()):
-      self.consecutive_counts[class_id] = max(0, self.consecutive_counts[class_id] - 1)
-      if self.consecutive_counts[class_id] == 0:
-        del self.consecutive_counts[class_id]
+    self.red_count = max(0, self.red_count - 1)
+    self.green_count = max(0, self.green_count - 1)
+    if self.red_count == 0:
+      self.red_active = False

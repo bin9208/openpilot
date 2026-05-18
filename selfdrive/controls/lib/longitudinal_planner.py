@@ -202,7 +202,8 @@ class LongitudinalPlanner:
       accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast_interp)
 
     yolo_stop = False
-    if self.yolo_processor is not None:
+    yolo_enabled = getattr(carrot, "trafficLightDetectMode", 0) > 0
+    if self.yolo_processor is not None and yolo_enabled:
       try:
         yolo_data = sm['yoloObjectData']
         yolo_v_cruise, yolo_stop = self.yolo_processor.process(yolo_data, v_ego, v_cruise)

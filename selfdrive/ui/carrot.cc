@@ -1,6 +1,8 @@
 #include "selfdrive/ui/carrot.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -2882,6 +2884,7 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       int n_det = yolo.getNumDetections();
       int ms = yolo.getInferenceTimeMs();
       int rtt = yolo.getRoundTripMs();   // full pipeline: frame→phone→result
+      bool yolo_laggy = rtt > 450;
       std::string cls(yolo.getYoloClass().cStr());
       bool phone_connected = cls.find("connected") != std::string::npos;
 
@@ -2904,13 +2907,13 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
           snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %d/%dms", det_str.c_str(), ms, rtt);
         else
           snprintf(yolo_text, sizeof(yolo_text), "YOLO: %s  %dms", det_str.c_str(), ms);
-        bg_color = nvgRGBA(0, 140, 0, 210);
+        bg_color = yolo_laggy ? nvgRGBA(180, 90, 0, 220) : nvgRGBA(0, 140, 0, 210);
       } else if (phone_connected || ms > 0) {
         if (rtt > 0)
           snprintf(yolo_text, sizeof(yolo_text), "YOLO: 감지없음  %d/%dms", ms, rtt);
         else
           snprintf(yolo_text, sizeof(yolo_text), "YOLO: 감지없음  %dms", ms);
-        bg_color = nvgRGBA(0, 90, 140, 180);
+        bg_color = yolo_laggy ? nvgRGBA(180, 90, 0, 180) : nvgRGBA(0, 90, 140, 180);
       } else {
         snprintf(yolo_text, sizeof(yolo_text), "YOLO: 연결중...");
         bg_color = nvgRGBA(160, 110, 0, 180);
@@ -2986,26 +2989,44 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         float conf = det.getConfidence();
         int   cls  = det.getClassId();
         std::string name(det.getClassName().cStr());
+        std::string lower_name = name;
+        std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
 
-        if (nw < 0.005f || nh < 0.005f || cx < 0.0f || cy < 0.0f) continue;
+        if (nw < 0.001f || nh < 0.001f || cx < 0.0f || cy < 0.0f || conf <= 0.0f) continue;
+        float nx1 = std::clamp(cx - nw * 0.5f, 0.0f, 1.0f);
+        float ny1 = std::clamp(cy - nh * 0.5f, 0.0f, 1.0f);
+        float nx2 = std::clamp(cx + nw * 0.5f, 0.0f, 1.0f);
+        float ny2 = std::clamp(cy + nh * 0.5f, 0.0f, 1.0f);
+        if (nx2 <= nx1 || ny2 <= ny1) continue;
 
         // YOLO normalized (0-1) → camera pixel → screen pixel
-        float sx    = zoom * (cx * cam_w) + tx;
-        float sy    = zoom * (cy * cam_h) + ty;
-        float box_w = zoom * nw * cam_w;
-        float box_h = zoom * nh * cam_h;
-        float x1    = sx - box_w * 0.5f;
-        float y1    = sy - box_h * 0.5f;
+        float x1    = zoom * (nx1 * cam_w) + tx;
+        float y1    = zoom * (ny1 * cam_h) + ty;
+        float x2    = zoom * (nx2 * cam_w) + tx;
+        float y2    = zoom * (ny2 * cam_h) + ty;
+        float box_w = x2 - x1;
+        float box_h = y2 - y1;
+        if (x2 < 0.0f || y2 < 0.0f || x1 > fw || y1 > fh) continue;
 
         // Color per class: person=red  traffic_light=yellow  stop_sign=orange
         //                  bicycle/motorcycle=amber  vehicles=cyan
         NVGcolor box_col;
-        switch (cls) {
-          case 0:           box_col = nvgRGBA(255,  50,  50, 230); break; // person
-          case 9:           box_col = nvgRGBA(255, 220,   0, 230); break; // traffic light
-          case 11:          box_col = nvgRGBA(255, 100,   0, 230); break; // stop sign
-          case 1: case 3:   box_col = nvgRGBA(255, 160,   0, 230); break; // bicycle/motorcycle
-          default:          box_col = nvgRGBA(  0, 200, 255, 230); break; // car/bus/truck
+        if (lower_name.find("red") != std::string::npos) {
+          box_col = nvgRGBA(255, 50, 50, 230);
+        } else if (lower_name.find("green") != std::string::npos) {
+          box_col = nvgRGBA(0, 220, 90, 230);
+        } else if (lower_name.find("yellow") != std::string::npos ||
+                   lower_name.find("amber") != std::string::npos ||
+                   lower_name.find("orange") != std::string::npos) {
+          box_col = nvgRGBA(255, 190, 0, 230);
+        } else {
+          switch (cls) {
+            case 0:           box_col = nvgRGBA(255,  50,  50, 230); break; // person
+            case 9:           box_col = nvgRGBA(255, 220,   0, 230); break; // traffic light
+            case 11:          box_col = nvgRGBA(255, 100,   0, 230); break; // stop sign
+            case 1: case 3:   box_col = nvgRGBA(255, 160,   0, 230); break; // bicycle/motorcycle
+            default:          box_col = nvgRGBA(  0, 200, 255, 230); break; // car/bus/truck
+          }
         }
 
         // Box outline
