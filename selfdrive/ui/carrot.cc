@@ -2980,7 +2980,11 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
       float tx = (fw / 2.0f - x_offset) - (cx_cam * zoom);
       float ty = (fh / 2.0f - y_offset) - (cy_cam * zoom);
 
+      int drawn_yolo_boxes = 0;
+      const int max_yolo_boxes = 12;
+
       for (int i = 0; i < n_draw; i++) {
+        if (drawn_yolo_boxes >= max_yolo_boxes) break;
         auto det = dets[i];
         float cx   = det.getX();
         float cy   = det.getY();
@@ -2991,8 +2995,21 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         std::string name(det.getClassName().cStr());
         std::string lower_name = name;
         std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+        bool signal_name = lower_name.find("light") != std::string::npos ||
+                           lower_name.find("signal") != std::string::npos ||
+                           lower_name.find("red") != std::string::npos ||
+                           lower_name.find("green") != std::string::npos ||
+                           lower_name.find("yellow") != std::string::npos ||
+                           lower_name.find("amber") != std::string::npos ||
+                           lower_name.find("caution") != std::string::npos ||
+                           lower_name.find("left_turn") != std::string::npos ||
+                           lower_name.find("straight") != std::string::npos ||
+                           lower_name.find("stop") != std::string::npos ||
+                           lower_name.find("no_signal") != std::string::npos;
 
-        if (nw < 0.001f || nh < 0.001f || cx < 0.0f || cy < 0.0f || conf <= 0.0f) continue;
+        if (nw < 0.001f || nh < 0.001f || cx < 0.0f || cy < 0.0f || conf < 0.25f) continue;
+        if (!signal_name && cls != 9) continue;
+        if (nw > 0.45f || nh > 0.40f || nw * nh > 0.12f) continue;
         float nx1 = std::clamp(cx - nw * 0.5f, 0.0f, 1.0f);
         float ny1 = std::clamp(cy - nh * 0.5f, 0.0f, 1.0f);
         float nx2 = std::clamp(cx + nw * 0.5f, 0.0f, 1.0f);
@@ -3007,6 +3024,17 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         float box_w = x2 - x1;
         float box_h = y2 - y1;
         if (x2 < 0.0f || y2 < 0.0f || x1 > fw || y1 > fh) continue;
+        drawn_yolo_boxes++;
+
+        float center_x = (x1 + x2) * 0.5f;
+        float center_y = (y1 + y2) * 0.5f;
+        bool tiny_box = box_w < 24.0f || box_h < 24.0f;
+        if (tiny_box) {
+          box_w = std::max(box_w, 16.0f);
+          box_h = std::max(box_h, 16.0f);
+          x1 = center_x - box_w * 0.5f;
+          y1 = center_y - box_h * 0.5f;
+        }
 
         // Color per class: person=red  traffic_light=yellow  stop_sign=orange
         //                  bicycle/motorcycle=amber  vehicles=cyan
@@ -3033,31 +3061,35 @@ void ui_draw(UIState *s, ModelRenderer* model_renderer, int w, int h) {
         nvgBeginPath(s->vg);
         nvgRect(s->vg, x1, y1, box_w, box_h);
         nvgStrokeColor(s->vg, box_col);
-        nvgStrokeWidth(s->vg, 5.0f);
+        nvgStrokeWidth(s->vg, tiny_box ? 3.0f : 4.0f);
         nvgStroke(s->vg);
 
         // Corner accent — top-left corner tick marks
-        float tick = std::min(box_w, box_h) * 0.18f;
-        tick = std::max(tick, 16.0f);
-        nvgStrokeWidth(s->vg, 7.0f);
-        nvgBeginPath(s->vg);
-        nvgMoveTo(s->vg, x1, y1 + tick); nvgLineTo(s->vg, x1, y1); nvgLineTo(s->vg, x1 + tick, y1);
-        nvgMoveTo(s->vg, x1 + box_w - tick, y1); nvgLineTo(s->vg, x1 + box_w, y1); nvgLineTo(s->vg, x1 + box_w, y1 + tick);
-        nvgMoveTo(s->vg, x1, y1 + box_h - tick); nvgLineTo(s->vg, x1, y1 + box_h); nvgLineTo(s->vg, x1 + tick, y1 + box_h);
-        nvgMoveTo(s->vg, x1 + box_w - tick, y1 + box_h); nvgLineTo(s->vg, x1 + box_w, y1 + box_h); nvgLineTo(s->vg, x1 + box_w, y1 + box_h - tick);
-        nvgStroke(s->vg);
+        if (!tiny_box) {
+          float tick = std::min(box_w, box_h) * 0.18f;
+          tick = std::clamp(tick, 10.0f, 28.0f);
+          nvgStrokeWidth(s->vg, 5.0f);
+          nvgBeginPath(s->vg);
+          nvgMoveTo(s->vg, x1, y1 + tick); nvgLineTo(s->vg, x1, y1); nvgLineTo(s->vg, x1 + tick, y1);
+          nvgMoveTo(s->vg, x1 + box_w - tick, y1); nvgLineTo(s->vg, x1 + box_w, y1); nvgLineTo(s->vg, x1 + box_w, y1 + tick);
+          nvgMoveTo(s->vg, x1, y1 + box_h - tick); nvgLineTo(s->vg, x1, y1 + box_h); nvgLineTo(s->vg, x1 + tick, y1 + box_h);
+          nvgMoveTo(s->vg, x1 + box_w - tick, y1 + box_h); nvgLineTo(s->vg, x1 + box_w, y1 + box_h); nvgLineTo(s->vg, x1 + box_w, y1 + box_h - tick);
+          nvgStroke(s->vg);
+        }
 
         // Label: "person 87%"
         char label[64];
         snprintf(label, sizeof(label), "%s %.1f%%", name.c_str(), conf * 100.0f);
 
+        if (tiny_box) continue;
+
         // Measure text for background sizing
-        nvgFontSize(s->vg, 40.0f);
+        nvgFontSize(s->vg, 28.0f);
         nvgFontFace(s->vg, "sans-bold");
         float bounds[4];
         nvgTextBounds(s->vg, 0, 0, label, nullptr, bounds);
         float label_w = bounds[2] - bounds[0] + 20.0f;
-        float label_h = 52.0f;
+        float label_h = 40.0f;
 
         // Place label above box, or below if no space
         float lx = x1;

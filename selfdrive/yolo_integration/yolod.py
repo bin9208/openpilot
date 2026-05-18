@@ -23,7 +23,7 @@ import numpy as np
 import cereal.messaging as messaging
 from openpilot.common.swaglog import cloudlog
 
-VERSION = "v8"
+VERSION = "v9"
 
 def ylog(msg):
   """Log to both cloudlog AND stdout (tmux visible)."""
@@ -44,6 +44,9 @@ YOLO_ROI_Y_BOTTOM = float(os.getenv("YOLO_ROI_Y_BOTTOM", "0.76"))
 DEFAULT_CAMERA_WIDTH = 1928
 DEFAULT_CAMERA_HEIGHT = 1208
 MIN_TRAFFIC_LIGHT_CONF = 0.25
+MAX_TRAFFIC_LIGHT_BOX_W = float(os.getenv("YOLO_MAX_BOX_W", "0.45"))
+MAX_TRAFFIC_LIGHT_BOX_H = float(os.getenv("YOLO_MAX_BOX_H", "0.40"))
+MAX_TRAFFIC_LIGHT_BOX_AREA = float(os.getenv("YOLO_MAX_BOX_AREA", "0.12"))
 
 # Shared state (protected by lock)
 TARGET_IP = None
@@ -481,6 +484,18 @@ def _normalize_detection(obj, frame_meta):
   }
 
 
+def _valid_detection(det):
+  if det["conf"] < MIN_TRAFFIC_LIGHT_CONF:
+    return False
+  if det["w"] <= 0.0 or det["h"] <= 0.0:
+    return False
+  if det["w"] > MAX_TRAFFIC_LIGHT_BOX_W or det["h"] > MAX_TRAFFIC_LIGHT_BOX_H:
+    return False
+  if det["w"] * det["h"] > MAX_TRAFFIC_LIGHT_BOX_AREA:
+    return False
+  return True
+
+
 def _safe_publish(pm, dat):
   """Thread-safe wrapper for pm.send(). Sets valid=True for SubMaster."""
   dat.valid = True
@@ -493,6 +508,7 @@ def _publish_detections(pm, frame_id, inference_ms, objects, rtt_ms=0, frame_met
   global last_detect_pub_time
   try:
     detections = [_normalize_detection(obj, frame_meta) for obj in objects]
+    detections = [det for det in detections if _valid_detection(det)]
 
     dat = messaging.new_message('yoloObjectData')
     yolo = dat.yoloObjectData
