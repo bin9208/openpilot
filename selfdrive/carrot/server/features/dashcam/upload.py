@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from aiohttp import ClientSession, ClientTimeout
 import requests
+from requests.auth import AuthBase, HTTPBasicAuth, HTTPDigestAuth
 
 from openpilot.system.hardware import HARDWARE
 
@@ -112,7 +113,7 @@ def webdav_base_url() -> str:
   ).strip().rstrip("/")
 
 
-def webdav_auth() -> tuple[str, str] | None:
+def webdav_credentials() -> tuple[str, str] | None:
   username = (
     os.environ.get("CARROT_WEBDAV_USERNAME")
     or os.environ.get("NAS_UPLOAD_USER")
@@ -124,6 +125,22 @@ def webdav_auth() -> tuple[str, str] | None:
     or "lumyon1200@"
   )
   return (username, password) if username else None
+
+
+def resolve_webdav_auth(base_url: str) -> AuthBase | None:
+  credentials = webdav_credentials()
+  if not credentials:
+    return None
+
+  for auth in (HTTPBasicAuth(*credentials), HTTPDigestAuth(*credentials)):
+    try:
+      resp = requests.request("OPTIONS", base_url, auth=auth, timeout=10, allow_redirects=False)
+    except requests.RequestException:
+      continue
+    if resp.status_code != 401:
+      return auth
+
+  raise RuntimeError(f"WebDAV authentication failed [401]: {base_url}")
 
 
 def webdav_url(base_url: str, *parts: str) -> str:
@@ -138,14 +155,14 @@ def webdav_url(base_url: str, *parts: str) -> str:
   return f"{base_url.rstrip('/')}/{'/'.join(quoted_parts)}"
 
 
-def webdav_mkcol(url: str, auth: tuple[str, str] | None) -> None:
+def webdav_mkcol(url: str, auth: AuthBase | None) -> None:
   resp = requests.request("MKCOL", url, auth=auth, timeout=10)
   if resp.status_code in (200, 201, 204, 405):
     return
   raise RuntimeError(f"WebDAV MKCOL failed [{resp.status_code}]: {url}")
 
 
-def verify_webdav_file(url: str, auth: tuple[str, str] | None, expected_size: int) -> None:
+def verify_webdav_file(url: str, auth: AuthBase | None, expected_size: int) -> None:
   resp = requests.head(url, auth=auth, timeout=10)
   if 200 <= resp.status_code < 300:
     length = resp.headers.get("Content-Length")
@@ -167,7 +184,7 @@ def verify_webdav_file(url: str, auth: tuple[str, str] | None, expected_size: in
   raise RuntimeError(f"WebDAV verify failed [{resp.status_code}/{propfind.status_code}]: {url}")
 
 
-def ensure_webdav_dir(base_url: str, remote_dir: str, auth: tuple[str, str] | None, check_cancel: Callable[[], None]) -> None:
+def ensure_webdav_dir(base_url: str, remote_dir: str, auth: AuthBase | None, check_cancel: Callable[[], None]) -> None:
   parts = [part for part in str(remote_dir or "").replace("\\", "/").split("/") if part]
   cur = []
   for part in parts:
@@ -270,7 +287,7 @@ def upload_folder_to_webdav(
       raise RuntimeError("upload canceled")
 
   base_url = webdav_base_url()
-  auth = webdav_auth()
+  auth = resolve_webdav_auth(base_url)
   base_path = f"routes/{directory}/{remote_path}".strip("/").replace("\\", "/")
 
   check_cancel()

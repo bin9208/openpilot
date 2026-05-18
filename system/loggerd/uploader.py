@@ -8,6 +8,7 @@ import time
 import traceback
 import datetime
 from collections.abc import Iterator
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 from cereal import log
 import cereal.messaging as messaging
@@ -35,6 +36,19 @@ fake_upload = os.getenv("FAKEUPLOAD") is not None
 nas_upload_url  = os.getenv("NAS_UPLOAD_URL",  "https://lunabox.myqnapcloud.com:5128/openpilot")
 nas_upload_user = os.getenv("NAS_UPLOAD_USER", "lumyon1200-1")
 nas_upload_pass = os.getenv("NAS_UPLOAD_PASS", "lumyon1200@")
+
+
+def resolve_nas_auth(base_url: str):
+  if not nas_upload_user:
+    return None
+  for auth in (HTTPBasicAuth(nas_upload_user, nas_upload_pass), HTTPDigestAuth(nas_upload_user, nas_upload_pass)):
+    try:
+      resp = requests.request("OPTIONS", base_url, auth=auth, timeout=5, allow_redirects=False)
+    except requests.RequestException:
+      continue
+    if resp.status_code != 401:
+      return auth
+  return HTTPDigestAuth(nas_upload_user, nas_upload_pass)
 
 
 class FakeRequest:
@@ -151,7 +165,6 @@ class Uploader:
     if nas_upload_url:
       nas_key = self.dongle_id + '/' + key
       url = nas_upload_url.rstrip('/') + '/' + nas_key
-      auth = (nas_upload_user, nas_upload_pass) if nas_upload_user else None
       cloudlog.debug("nas_upload %s", url)
 
       if fake_upload:
@@ -159,6 +172,7 @@ class Uploader:
 
       # 부모 디렉토리 생성 (WebDAV MKCOL): dongle_id/ → dongle_id/logdir/
       base = nas_upload_url.rstrip('/')
+      auth = resolve_nas_auth(base)
       try:
         requests.request('MKCOL', f"{base}/{self.dongle_id}", auth=auth, timeout=5)
       except Exception:
@@ -175,6 +189,7 @@ class Uploader:
         compress = key.endswith('.zst') and not fn.endswith('.zst')
         stream, _ = get_upload_stream(fn, compress)
         response = requests.put(url, data=stream, auth=auth, timeout=30)
+        response.is_nas_upload = True
         return response
       finally:
         if stream:
@@ -227,7 +242,8 @@ class Uploader:
       except Exception as e:
         last_exc = (e, traceback.format_exc())
 
-      if stat is not None and stat.status_code in (200, 201, 204, 401, 403, 412):
+      ok_statuses = (200, 201, 204) if getattr(stat, "is_nas_upload", False) else (200, 201, 204, 401, 403, 412)
+      if stat is not None and stat.status_code in ok_statuses:
         self.last_filename = fn
         dt = time.monotonic() - start_time
         if stat.status_code == 412:
