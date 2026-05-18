@@ -22,7 +22,7 @@ The available buttons and axes will print showing their key mappings. In general
 ### Joystick on your comma three
 
 Plug the joystick into your comma three aux USB-C port. Then, SSH into the device and start `joystick_control.py`.
-Hold L1 while commanding the car. Releasing L1 or losing joystick packets makes joystickd command a controlled stop.
+If the controller disconnects or joystick packets stop, joystickd commands a controlled stop.
 
 ### Joystick on your laptop
 
@@ -49,7 +49,7 @@ In order to use a joystick over the network, we need to run joystick_control loc
 ---
 Now start your car and openpilot should go into joystick mode with an alert on startup! The status of the axes will display on the alert, while button statuses print in the shell.
 For custom publishers, send `testJoystick.axes = [accel, steer]` in the `[-1.0, 1.0]` range and `testJoystick.buttons = [deadman, cancel]`.
-Only set `deadman` true while the operator is actively holding a physical enable switch. If packets stop arriving, joystickd falls back to braking.
+Only set `deadman` true while the operator is actively holding a physical enable switch. The built-in DualSense publisher sends `deadman` true while the controller is connected. If packets stop arriving, joystickd falls back to braking.
 
 Make sure the normal panda safety conditions are met to allow controls (e.g. cruise control engaged). Do not bypass panda safety for joystick testing.
 

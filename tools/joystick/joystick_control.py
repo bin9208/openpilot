@@ -50,7 +50,6 @@ class Joystick:
     # This class supports a PlayStation 5 DualSense controller on the comma 3X
     # TODO: find a way to get this from API or detect gamepad/PC, perhaps "inputs" doesn't support it
     self.cancel_button = 'BTN_NORTH'  # BTN_NORTH=X/triangle
-    self.deadman_button = 'BTN_TL'  # L1, must be held for non-failsafe control
     if HARDWARE.get_device_type() == 'pc':
       accel_axis = 'ABS_Z'
       steer_axis = 'ABS_RX'
@@ -65,43 +64,44 @@ class Joystick:
     self.max_axis_value = {accel_axis: 255., steer_axis: 255.}
     self.axes_values = {accel_axis: 0., steer_axis: 0.}
     self.axes_order = [accel_axis, steer_axis]
-    self.buttons_values = {'deadman': False, 'cancel': False}
+    self.buttons_values = {'deadman': True, 'cancel': False}
     self.buttons_order = ['deadman', 'cancel']
     self.cancel = False
 
   def update(self):
     try:
-      joystick_event = get_gamepad()[0]
+      joystick_events = get_gamepad()
     except (OSError, UnpluggedError):
       self.axes_values = dict.fromkeys(self.axes_values, 0.)
       self.buttons_values = dict.fromkeys(self.buttons_values, False)
       return False
 
-    event = (joystick_event.code, joystick_event.state)
+    handled = False
+    for joystick_event in joystick_events:
+      event = (joystick_event.code, joystick_event.state)
 
-    # flip left trigger to negative accel
-    if event[0] in self.flip_map:
-      event = (self.flip_map[event[0]], -event[1])
+      # flip left trigger to negative accel
+      if event[0] in self.flip_map:
+        event = (self.flip_map[event[0]], -event[1])
 
-    if event[0] == self.cancel_button:
-      if event[1] == 1:
-        self.cancel = True
-      elif event[1] == 0:   # state 0 is falling edge
-        self.cancel = False
-      self.buttons_values['cancel'] = self.cancel
-    elif event[0] == self.deadman_button:
-      self.buttons_values['deadman'] = event[1] == 1
-    elif event[0] in self.axes_values:
-      self.max_axis_value[event[0]] = max(event[1], self.max_axis_value[event[0]])
-      self.min_axis_value[event[0]] = min(event[1], self.min_axis_value[event[0]])
+      if event[0] == self.cancel_button:
+        if event[1] == 1:
+          self.cancel = True
+        elif event[1] == 0:   # state 0 is falling edge
+          self.cancel = False
+        self.buttons_values['cancel'] = self.cancel
+      elif event[0] in self.axes_values:
+        self.max_axis_value[event[0]] = max(event[1], self.max_axis_value[event[0]])
+        self.min_axis_value[event[0]] = min(event[1], self.min_axis_value[event[0]])
 
-      norm = -float(np.interp(event[1], [self.min_axis_value[event[0]], self.max_axis_value[event[0]]], [-1., 1.]))
-      norm = norm if abs(norm) > 0.03 else 0.  # center can be noisy, deadzone of 3%
-      expo = EXPO_ACCEL if event[0] == self.axes_order[0] else EXPO_STEER
-      self.axes_values[event[0]] = expo * norm ** 3 + (1 - expo) * norm  # less action near center for fine control
-    else:
-      return False
-    return True
+        norm = -float(np.interp(event[1], [self.min_axis_value[event[0]], self.max_axis_value[event[0]]], [-1., 1.]))
+        norm = norm if abs(norm) > 0.03 else 0.  # center can be noisy, deadzone of 3%
+        expo = EXPO_ACCEL if event[0] == self.axes_order[0] else EXPO_STEER
+        self.axes_values[event[0]] = expo * norm ** 3 + (1 - expo) * norm  # less action near center for fine control
+      else:
+        continue
+      handled = True
+    return handled
 
 
 def send_thread(joystick):
