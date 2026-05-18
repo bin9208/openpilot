@@ -117,12 +117,12 @@ def webdav_credentials() -> tuple[str, str] | None:
   username = (
     os.environ.get("CARROT_WEBDAV_USERNAME")
     or os.environ.get("NAS_UPLOAD_USER")
-    or "lumyon1200-1"
+    or "openpilot"
   ).strip()
   password = (
     os.environ.get("CARROT_WEBDAV_PASSWORD")
     or os.environ.get("NAS_UPLOAD_PASS")
-    or "lumyon1200@"
+    or "openpilot1200@"
   )
   return (username, password) if username else None
 
