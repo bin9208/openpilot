@@ -353,7 +353,7 @@ window.CarrotTranslations.register("en", {
     show_segments: "Show segments",
     collapse: "Collapse",
     log_upload: "Upload Logs",
-    log_upload_confirm: "Upload {count} logs to the Carrot server?",
+    log_upload_confirm: "Upload {count} logs to NAS?",
     upload_data_warning: "This upload may use mobile data depending on your network connection.",
     upload_file_count: "{count} files",
     upload_files_unknown: "files unknown",

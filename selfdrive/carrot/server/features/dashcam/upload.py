@@ -1,10 +1,11 @@
 import base64
 import os
 import subprocess
-from ftplib import FTP
 from typing import Any, Callable
+from urllib.parse import quote
 
 from aiohttp import ClientSession, ClientTimeout
+import requests
 
 from openpilot.system.hardware import HARDWARE
 
@@ -103,6 +104,78 @@ def discord_webhook_url(params: Any) -> str:
   return decode_obfuscated(DASHCAM_DEFAULT_DISCORD_WEBHOOK, DASHCAM_DEFAULT_DISCORD_KEY)
 
 
+def webdav_base_url() -> str:
+  return (
+    os.environ.get("CARROT_WEBDAV_URL")
+    or os.environ.get("NAS_UPLOAD_URL")
+    or "https://lunabox.myqnapcloud.com:5128/openpilot"
+  ).strip().rstrip("/")
+
+
+def webdav_auth() -> tuple[str, str] | None:
+  username = (
+    os.environ.get("CARROT_WEBDAV_USERNAME")
+    or os.environ.get("NAS_UPLOAD_USER")
+    or "lumyon1200-1"
+  ).strip()
+  password = (
+    os.environ.get("CARROT_WEBDAV_PASSWORD")
+    or os.environ.get("NAS_UPLOAD_PASS")
+    or "lumyon1200@"
+  )
+  return (username, password) if username else None
+
+
+def webdav_url(base_url: str, *parts: str) -> str:
+  quoted_parts = []
+  for part in parts:
+    for subpart in str(part or "").replace("\\", "/").split("/"):
+      subpart = subpart.strip()
+      if subpart:
+        quoted_parts.append(quote(subpart, safe=""))
+  if not quoted_parts:
+    return base_url.rstrip("/")
+  return f"{base_url.rstrip('/')}/{'/'.join(quoted_parts)}"
+
+
+def webdav_mkcol(url: str, auth: tuple[str, str] | None) -> None:
+  resp = requests.request("MKCOL", url, auth=auth, timeout=10)
+  if resp.status_code in (200, 201, 204, 405):
+    return
+  raise RuntimeError(f"WebDAV MKCOL failed [{resp.status_code}]: {url}")
+
+
+def verify_webdav_file(url: str, auth: tuple[str, str] | None, expected_size: int) -> None:
+  resp = requests.head(url, auth=auth, timeout=10)
+  if 200 <= resp.status_code < 300:
+    length = resp.headers.get("Content-Length")
+    try:
+      actual_size = int(length) if length is not None else expected_size
+    except (TypeError, ValueError):
+      actual_size = expected_size
+    if actual_size == expected_size:
+      return
+    raise RuntimeError(f"WebDAV verify size mismatch [{actual_size} != {expected_size}]: {url}")
+
+  if resp.status_code in (404, 410):
+    raise RuntimeError(f"WebDAV verify missing file [{resp.status_code}]: {url}")
+
+  # Some WebDAV servers do not implement HEAD. Fall back to PROPFIND depth 0.
+  propfind = requests.request("PROPFIND", url, auth=auth, headers={"Depth": "0"}, timeout=10)
+  if propfind.status_code in (200, 207):
+    return
+  raise RuntimeError(f"WebDAV verify failed [{resp.status_code}/{propfind.status_code}]: {url}")
+
+
+def ensure_webdav_dir(base_url: str, remote_dir: str, auth: tuple[str, str] | None, check_cancel: Callable[[], None]) -> None:
+  parts = [part for part in str(remote_dir or "").replace("\\", "/").split("/") if part]
+  cur = []
+  for part in parts:
+    check_cancel()
+    cur.append(part)
+    webdav_mkcol(webdav_url(base_url, *cur), auth)
+
+
 def upload_message_lines(payload: dict[str, Any], max_results: int | None = None) -> list[str]:
   meta = payload.get("meta") or {}
   commit = str(meta.get("commit") or "").strip()
@@ -186,7 +259,7 @@ async def send_discord_webhook(url: str, payload: dict[str, Any]) -> dict[str, A
     return {"configured": True, "ok": False, "error": str(e)}
 
 
-def upload_folder_to_ftp(
+def upload_folder_to_webdav(
   local_folder: str,
   directory: str,
   remote_path: str,
@@ -196,47 +269,46 @@ def upload_folder_to_ftp(
     if should_cancel and should_cancel():
       raise RuntimeError("upload canceled")
 
-  ftp_server = os.environ.get("CARROT_FTP_SERVER", "shind0.synology.me")
-  ftp_port = int(os.environ.get("CARROT_FTP_PORT", "8021"))
-  ftp_username = os.environ.get("CARROT_FTP_USERNAME", "carrotpilot")
-  ftp_password = os.environ.get("CARROT_FTP_PASSWORD", "Ekdrmsvkdlffjt7710")
+  base_url = webdav_base_url()
+  auth = webdav_auth()
+  base_path = f"routes/{directory}/{remote_path}".strip("/").replace("\\", "/")
 
   check_cancel()
-  ftp = FTP()
-  ftp.connect(ftp_server, ftp_port, timeout=20)
-  check_cancel()
-  ftp.login(ftp_username, ftp_password)
-  try:
+  ensure_webdav_dir(base_url, base_path, auth, check_cancel)
+
+  uploaded_count = 0
+  uploaded_bytes = 0
+  for root, _, files in os.walk(local_folder):
     check_cancel()
-    ftp.cwd("routes")
-    routes_root = ftp.pwd()
-
-    def cwd_or_create(path: str) -> None:
+    rel_dir = os.path.relpath(root, local_folder)
+    remote_dir = base_path if rel_dir == "." else f"{base_path}/{rel_dir.replace(os.sep, '/')}"
+    ensure_webdav_dir(base_url, remote_dir, auth, check_cancel)
+    for filename in files:
       check_cancel()
-      ftp.cwd(routes_root)
-      for part in [p for p in path.split("/") if p]:
-        check_cancel()
-        try:
-          ftp.cwd(part)
-        except Exception:
-          ftp.mkd(part)
-          ftp.cwd(part)
-
-    base_path = f"{directory}/{remote_path}".strip("/")
-    for root, _, files in os.walk(local_folder):
+      local_path = os.path.join(root, filename)
+      if filename.endswith(".lock") or not os.path.isfile(local_path):
+        continue
+      file_size = os.path.getsize(local_path)
+      url = webdav_url(base_url, remote_dir, filename)
+      with open(local_path, "rb") as f:
+        resp = requests.put(url, data=f, auth=auth, timeout=120)
+      if resp.status_code not in (200, 201, 204):
+        raise RuntimeError(f"WebDAV upload failed [{resp.status_code}]: {url}")
+      verify_webdav_file(url, auth, file_size)
+      uploaded_count += 1
+      uploaded_bytes += file_size
       check_cancel()
-      rel_dir = os.path.relpath(root, local_folder)
-      remote_dir = base_path if rel_dir == "." else f"{base_path}/{rel_dir.replace(os.sep, '/')}"
-      cwd_or_create(remote_dir)
-      for filename in files:
-        check_cancel()
-        local_path = os.path.join(root, filename)
-        with open(local_path, "rb") as f:
-          ftp.storbinary(f"STOR {filename}", f)
-        check_cancel()
-    return True
-  finally:
-    try:
-      ftp.quit()
-    except Exception:
-      pass
+
+  if uploaded_count <= 0:
+    raise RuntimeError(f"WebDAV upload found no files in {local_folder}")
+  print(f"WebDAV upload complete: {uploaded_count} files, {uploaded_bytes} bytes -> {webdav_url(base_url, base_path)}")
+  return True
+
+
+def upload_folder_to_ftp(
+  local_folder: str,
+  directory: str,
+  remote_path: str,
+  should_cancel: Callable[[], bool] | None = None,
+) -> bool:
+  return upload_folder_to_webdav(local_folder, directory, remote_path, should_cancel)

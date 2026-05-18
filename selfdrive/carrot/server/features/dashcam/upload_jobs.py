@@ -194,7 +194,7 @@ async def run_upload_segments(segments: list[str], job: dict[str, Any] | None = 
       segment_path = segment_dir(segment)
       files = await asyncio.to_thread(segment_file_summary, segment_path)
       ok = await asyncio.to_thread(
-        upload.upload_folder_to_ftp,
+        upload.upload_folder_to_webdav,
         segment_path,
         directory,
         segment,

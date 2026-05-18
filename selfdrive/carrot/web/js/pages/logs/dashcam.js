@@ -2,7 +2,7 @@
 
 // Logs page — Dashcam tab.
 // Route + segment virtual listing, FFmpeg thumb/preview lazy load,
-// segment selection, FTP upload (with cancel/resume), segment menu, player.
+// segment selection, NAS upload (with cancel/resume), segment menu, player.
 
 const DASHCAM_UPLOAD_JOB_STORAGE_KEY = "carrot_dashcam_upload_job_id";
 const DASHCAM_ROUTE_PAGE_MIN = 10;
@@ -1177,7 +1177,7 @@ async function uploadDashcamSegments(segments) {
     if (Array.isArray(summary?.summaries)) uploadStats = dashcamUploadStats(summary.summaries);
   } catch {}
   const confirmMessage = [
-    getUIText("log_upload_confirm", `Upload ${targets.length} logs to the Carrot server?`, { count: targets.length }),
+    getUIText("log_upload_confirm", `Upload ${targets.length} logs to NAS?`, { count: targets.length }),
     dashcamUploadSummaryLabel(uploadStats),
     getUIText("upload_data_warning", "This upload may use mobile data depending on your network connection."),
   ].join("\n\n");

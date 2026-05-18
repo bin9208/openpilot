@@ -33,8 +33,8 @@ allow_sleep = bool(os.getenv("UPLOADER_SLEEP", "1"))
 force_wifi = os.getenv("FORCEWIFI") is not None
 fake_upload = os.getenv("FAKEUPLOAD") is not None
 nas_upload_url  = os.getenv("NAS_UPLOAD_URL",  "https://lunabox.myqnapcloud.com:5128/openpilot")
-nas_upload_user = os.getenv("NAS_UPLOAD_USER", "openpilot")
-nas_upload_pass = os.getenv("NAS_UPLOAD_PASS", "openpilot1200@")
+nas_upload_user = os.getenv("NAS_UPLOAD_USER", "lumyon1200-1")
+nas_upload_pass = os.getenv("NAS_UPLOAD_PASS", "lumyon1200@")
 
 
 class FakeRequest:
