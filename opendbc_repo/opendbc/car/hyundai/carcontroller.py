@@ -140,6 +140,10 @@ class CarController(CarControllerBase):
     self.apply_angle_last = 0
     self.lkas_max_torque = 0
     self.angle_max_torque = 250
+    self.prev_abs_angle_error = 0.0
+    self.recover_level = 1.0
+
+    self.lkas11_active = False
 
     self.canfd_debug = 0
     self.MainMode_ACC_trigger = 0
@@ -236,9 +240,22 @@ class CarController(CarControllerBase):
     if angle_control:
       apply_steer_req = CC.latActive
 
+    def _clip(x, lo, hi):
+      return min(max(x, lo), hi)
+
+    def _scale01(x, lo, hi):
+      return _clip((x - lo) / (hi - lo), 0.0, 1.0)
+
+    angle_error = apply_angle - CS.out.steeringAngleDeg
+    abs_angle_error = abs(angle_error)
+
+    error_delta = self.prev_abs_angle_error - abs_angle_error
+
     if CS.out.steeringPressed:
-      #self.apply_angle_last = CS.out.steeringAngleDeg
-      self.lkas_max_torque = max(self.lkas_max_torque - 20, 25)
+      # Driver touched the wheel, immediately yield.
+      self.lkas_max_torque = 25
+      self.recover_level = 0.0
+
     else:
       target_torque = self.angle_max_torque
 
@@ -247,11 +264,33 @@ class CarController(CarControllerBase):
       rate_up = self.params.ANGLE_TORQUE_UP_RATE * rate_ratio
       rate_down = self.params.ANGLE_TORQUE_DOWN_RATE * rate_ratio
 
+      recover_level = self.recover_level
+
+      # error_delta > 0 means actual steering angle and apply_angle are getting closer.
+      recover_factor = 0.0
+      if error_delta > 0.02:
+        recover_factor = _scale01(error_delta, 0.02, 0.30)
+
+      # Normal recovery is slow.
+      # If angle error is decreasing, recover faster.
+      recover_rate = 0.005 + recover_factor * 0.035
+      recover_level = _clip(recover_level + recover_rate, 0.0, 1.0)
+      self.recover_level = recover_level
+
+      # While recovering, limit available torque.
+      # recover_level = 0.0 -> 30%
+      # recover_level = 1.0 -> 100%
+      target_torque *= 0.3 + recover_level * 0.7
+
+      # If angle error is already converging, allow torque to come back a little faster.
+      rate_up *= 1.0 + recover_factor * 0.5
+
       if self.lkas_max_torque > target_torque:
         self.lkas_max_torque = max(self.lkas_max_torque - rate_down, target_torque)
       else:
         self.lkas_max_torque = min(self.lkas_max_torque + rate_up, target_torque)
 
+    self.prev_abs_angle_error = abs_angle_error
 
     if not CC.latActive:
       apply_torque = 0
@@ -351,7 +390,7 @@ class CarController(CarControllerBase):
         self.hyundai_jerk.check_carrot_cruise(CC, CS, hud_control, stopping, accel, actuators.aTarget)
 
         if True: #not camera_scc:
-          can_sends.extend(hyundaicanfd.create_ccnc_messages(self.CP, self.packer, self.CAN, self.frame, CC, CS, hud_control, apply_angle, left_lane_warning, right_lane_warning, self.enable_corner_radar, stopping))
+          can_sends.extend(hyundaicanfd.create_ccnc_messages(self.CP, self.packer, self.CAN, self.frame, CC, CS, hud_control, apply_angle, left_lane_warning, right_lane_warning, self.enable_corner_radar, stopping, self.canfd_debug))
           if hda2:
             can_sends.extend(hyundaicanfd.create_adrv_messages(self.CP, self.packer, self.CAN, self.frame))
           else:
@@ -376,10 +415,12 @@ class CarController(CarControllerBase):
           can_sends.extend(self.create_button_messages(CC, CS, use_clu11=False))
     else:
       if CS.lkas11 is not None:
-        can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
-                                                  torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
-                                                  hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                                  left_lane_warning, right_lane_warning, self.is_ldws_car))
+        if self.lkas11_active:
+          can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+                                                    torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+                                                    hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+                                                    left_lane_warning, right_lane_warning, self.is_ldws_car))
+        self.lkas11_active = True
 
       if not self.CP.openpilotLongitudinalControl:
         can_sends.extend(self.create_button_messages(CC, CS, use_clu11=True))
