@@ -23,15 +23,19 @@ class Keyboard:
                      'a': 'steer', 'd': 'steer'}
     self.axes_values = {'gb': 0., 'steer': 0.}
     self.axes_order = ['gb', 'steer']
+    self.buttons_values = {'deadman': True, 'cancel': False}
+    self.buttons_order = ['deadman', 'cancel']
     self.cancel = False
 
   def update(self):
     key = self.kb.getch().lower()
     self.cancel = False
+    self.buttons_values['cancel'] = False
     if key == 'r':
       self.axes_values = dict.fromkeys(self.axes_values, 0.)
     elif key == 'c':
       self.cancel = True
+      self.buttons_values['cancel'] = True
     elif key in self.axes_map:
       axis = self.axes_map[key]
       incr = self.axis_increment if key in ['w', 'a'] else -self.axis_increment
@@ -46,6 +50,7 @@ class Joystick:
     # This class supports a PlayStation 5 DualSense controller on the comma 3X
     # TODO: find a way to get this from API or detect gamepad/PC, perhaps "inputs" doesn't support it
     self.cancel_button = 'BTN_NORTH'  # BTN_NORTH=X/triangle
+    self.deadman_button = 'BTN_TL'  # L1, must be held for non-failsafe control
     if HARDWARE.get_device_type() == 'pc':
       accel_axis = 'ABS_Z'
       steer_axis = 'ABS_RX'
@@ -60,6 +65,8 @@ class Joystick:
     self.max_axis_value = {accel_axis: 255., steer_axis: 255.}
     self.axes_values = {accel_axis: 0., steer_axis: 0.}
     self.axes_order = [accel_axis, steer_axis]
+    self.buttons_values = {'deadman': False, 'cancel': False}
+    self.buttons_order = ['deadman', 'cancel']
     self.cancel = False
 
   def update(self):
@@ -67,6 +74,7 @@ class Joystick:
       joystick_event = get_gamepad()[0]
     except (OSError, UnpluggedError):
       self.axes_values = dict.fromkeys(self.axes_values, 0.)
+      self.buttons_values = dict.fromkeys(self.buttons_values, False)
       return False
 
     event = (joystick_event.code, joystick_event.state)
@@ -80,6 +88,9 @@ class Joystick:
         self.cancel = True
       elif event[1] == 0:   # state 0 is falling edge
         self.cancel = False
+      self.buttons_values['cancel'] = self.cancel
+    elif event[0] == self.deadman_button:
+      self.buttons_values['deadman'] = event[1] == 1
     elif event[0] in self.axes_values:
       self.max_axis_value[event[0]] = max(event[1], self.max_axis_value[event[0]])
       self.min_axis_value[event[0]] = min(event[1], self.min_axis_value[event[0]])
@@ -105,6 +116,7 @@ def send_thread(joystick):
     joystick_msg = messaging.new_message('testJoystick')
     joystick_msg.valid = True
     joystick_msg.testJoystick.axes = [joystick.axes_values[ax] for ax in joystick.axes_order]
+    joystick_msg.testJoystick.buttons = [joystick.buttons_values[btn] for btn in joystick.buttons_order]
 
     pm.send('testJoystick', joystick_msg)
 
