@@ -96,6 +96,7 @@ const CanMsg HYUNDAI_CANFD_HDA1_TX_MSGS[] = {
   {0x1CF, 2, 8},  // CRUISE_BUTTON
   {0x1E0, 0, 16}, // LFAHDA_CLUSTER
   {0x3C1, 0, 8},  // BLINKER_STALKS
+  {0x130, 0, 16}, // GEAR_SHIFTER test
   {0x160, 0, 16}, // ADRV_0x160
   {0x7D0, 0, 8},  // tester present for radar ECU disable
   {0x1AA, 2, 16}, // CRUISE_ALT_BUTTONS , carrot

@@ -1197,6 +1197,7 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   startToggles->addItem(selectCarBtn);
   startToggles->addItem(new CValueControl("HyundaiCameraSCC", tr("HYUNDAI: CAMERA SCC"), tr("1:Connect the SCC's CAN line to CAM, 2:Sync Cruise state, 3:StockLong"), 0, 3, 1));
   startToggles->addItem(new CValueControl("CanfdHDA2", tr("CANFD: HDA2 mode"), tr("1:HDA2,2:HDA2+BSM"), 0, 2, 1));
+  startToggles->addItem(new CValueControl("HyundaiGearShifterTest", tr("HYUNDAI: Gear shifter test"), tr("0:Off, 1:Send P-to-D shifter request when navigation starts"), 0, 1, 1));
   startToggles->addItem(new CValueControl("EnableRadarTracks", tr("Enable Radar Track"), tr("1:Enable RadarTrack, -1,2:Disable use HKG SCC radar at all times"), -1, 3, 1));
   startToggles->addItem(new CValueControl("AutoCruiseControl", tr("Auto Cruise control"), tr("Softhold, Auto Cruise ON/OFF control"), 0, 3, 1));
   startToggles->addItem(new CValueControl("CruiseOnDist", tr("CRUISE: Auto ON distance(0cm)"), tr("When GAS/Brake is OFF, Cruise ON when the lead car gets closer."), 0, 2500, 50));

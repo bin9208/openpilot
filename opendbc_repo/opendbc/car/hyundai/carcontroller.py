@@ -11,6 +11,7 @@ from opendbc.car.vehicle_model import VehicleModel
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
+GearShifter = structs.CarState.GearShifter
 
 
 from openpilot.common.params import Params
@@ -151,6 +152,14 @@ class CarController(CarControllerBase):
     self.blinker_stalk_command = 0
     self.blinker_stalk_counter = None
     self.blinker_stalk_off_frames = 0
+    self.gear_shifter_test = 0
+    self.gear_shifter_test_counter = None
+    self.gear_shifter_test_frames = 0
+    self.gear_shifter_test_release_frames = 0
+    self.gear_shifter_nav_destination = ""
+    self.gear_shifter_nav_pending = False
+    self.gear_shifter_nav_pending_frames = 0
+    self.gear_shifter_last_active_carrot = 0
 
     self.activeCarrot = 0
     self.camera_scc_params = Params().get_int("HyundaiCameraSCC")
@@ -203,6 +212,24 @@ class CarController(CarControllerBase):
       self.canfd_debug = params.get_int("CanfdDebug")
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
+      self.gear_shifter_test = params.get_int("HyundaiGearShifterTest")
+      nav_destination = params.get("NavDestination") or ""
+      if isinstance(nav_destination, bytes):
+        nav_destination = nav_destination.decode(errors="ignore")
+      if self.gear_shifter_test <= 0:
+        self.gear_shifter_nav_destination = nav_destination
+        self.gear_shifter_nav_pending = False
+        self.gear_shifter_test_frames = 0
+        self.gear_shifter_test_release_frames = 0
+        self.gear_shifter_test_counter = None
+        self.gear_shifter_last_active_carrot = 0
+        self.gear_shifter_nav_pending_frames = 0
+      elif not nav_destination:
+        self.gear_shifter_nav_destination = ""
+      elif nav_destination != self.gear_shifter_nav_destination:
+        self.gear_shifter_nav_destination = nav_destination
+        self.gear_shifter_nav_pending = True
+        self.gear_shifter_nav_pending_frames = int(10.0 / DT_CTRL)
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -406,6 +433,9 @@ class CarController(CarControllerBase):
           elif blinker_command == 0:
             self.blinker_stalk_counter = None
 
+      if not hda2 and self.gear_shifter_test > 0:
+        can_sends.extend(self.create_gear_shifter_test_messages(CC, CS))
+
       if self.camera_scc_params in [2, 3]:
         self.canfd_toggle_adas(CC, CS)
       if self.CP.openpilotLongitudinalControl:
@@ -494,6 +524,61 @@ class CarController(CarControllerBase):
 
     self.frame += 1
     return new_actuators, can_sends
+
+  def create_gear_shifter_test_messages(self, CC: structs.CarControl, CS: CarState):
+    can_sends = []
+
+    active_carrot = CC.hudControl.activeCarrot
+    if active_carrot > 1 and self.gear_shifter_last_active_carrot <= 1:
+      self.gear_shifter_nav_pending = True
+      self.gear_shifter_nav_pending_frames = int(10.0 / DT_CTRL)
+    self.gear_shifter_last_active_carrot = active_carrot
+
+    if self.gear_shifter_nav_pending_frames > 0:
+      self.gear_shifter_nav_pending_frames -= 1
+      if self.gear_shifter_nav_pending_frames <= 0:
+        self.gear_shifter_nav_pending = False
+
+    if CS.gear_shifter_canfd is None:
+      self.gear_shifter_test_frames = 0
+      self.gear_shifter_test_release_frames = 0
+      return can_sends
+
+    ready_for_test = (
+      self.gear_shifter_nav_pending and
+      CS.out.gearShifter == GearShifter.park and
+      CS.out.standstill and
+      CS.out.brakePressed
+    )
+    if ready_for_test:
+      self.gear_shifter_nav_pending = False
+      self.gear_shifter_test_frames = int(1.2 / DT_CTRL)
+      self.gear_shifter_test_release_frames = 0
+      self.gear_shifter_test_counter = CS.gear_shifter_canfd["COUNTER"]
+
+    if self.gear_shifter_test_frames <= 0 and self.gear_shifter_test_release_frames <= 0:
+      return can_sends
+
+    stock_counter = CS.gear_shifter_canfd["COUNTER"]
+    base_counter = self.gear_shifter_test_counter if self.gear_shifter_test_counter is not None else stock_counter
+    self.gear_shifter_test_counter = (base_counter + 1) % 256
+
+    knob_position = 5 if self.gear_shifter_test_frames > 0 else 3
+    gear_msg = hyundaicanfd.create_gear_shifter_message(self.packer, self.CAN, CS, self.gear_shifter_test_counter, knob_position)
+    if gear_msg is not None:
+      can_sends.append(gear_msg)
+
+    if self.gear_shifter_test_frames > 0:
+      self.gear_shifter_test_frames -= 1
+      if CS.out.gearShifter == GearShifter.drive or self.gear_shifter_test_frames <= 0:
+        self.gear_shifter_test_frames = 0
+        self.gear_shifter_test_release_frames = int(0.4 / DT_CTRL)
+    elif self.gear_shifter_test_release_frames > 0:
+      self.gear_shifter_test_release_frames -= 1
+      if self.gear_shifter_test_release_frames <= 0:
+        self.gear_shifter_test_counter = None
+
+    return can_sends
 
 
   def create_button_messages(self, CC: structs.CarControl, CS: CarState, use_clu11: bool):

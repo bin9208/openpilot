@@ -108,6 +108,7 @@ class CarState(CarStateBase):
     self.cam_0x2a4 = None
     self.manual_speed_limit_assist = None
     self.accelerator = None
+    self.gear_shifter_canfd = None
     self.blinkers = None
     self.blinker_stalks = None
     self.blinkers_alt = None
@@ -252,6 +253,7 @@ class CarState(CarStateBase):
           add_and_cache(self.cp, "MANUAL_SPEED_LIMIT_ASSIST", "manual_speed_limit_assist", ignore_counter = True)
           if self.gear_msg_canfd == "ACCELERATOR":
             add_and_cache(self.cp, "ACCELERATOR", "accelerator", ignore_counter = True)
+          add_and_cache(self.cp, "GEAR_SHIFTER", "gear_shifter_canfd", ignore_counter = True)
           add_and_cache(self.cp, "BLINKERS", "blinkers")
           add_and_cache(self.cp, "BLINKER_STALKS", "blinker_stalks")
           add_and_cache(self.cp, "BLINKERS_ALT", "blinkers_alt")
