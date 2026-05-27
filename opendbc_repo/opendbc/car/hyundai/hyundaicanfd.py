@@ -463,14 +463,44 @@ def create_spas_messages(packer, CAN, frame, left_blink, right_blink):
 
   return ret
 
-def create_blinker_stalk_message(packer, CAN, CS, left_blink, right_blink):
-  if CS.blinker_stalks is None or left_blink == right_blink:
+BLINKER_STALKS_OFF_CHECKSUMS = {
+  0x0: 0x59, 0x1: 0xe0, 0x2: 0x36, 0x3: 0x8f, 0x4: 0x87,
+  0x5: 0x3e, 0x6: 0xe8, 0x7: 0x51, 0x8: 0xf8, 0x9: 0x41,
+  0xa: 0x97, 0xb: 0x2e, 0xc: 0x26, 0xd: 0x9f, 0xe: 0x49,
+}
+
+def next_blinker_stalk_counter(counter):
+  return 0 if counter is None or counter >= 0xe else counter + 1
+
+def create_blinker_stalk_message(packer, CAN, CS, left_blink, right_blink, counter):
+  if CS.blinker_stalks is None or (left_blink and right_blink):
     return None
 
   values = copy.copy(CS.blinker_stalks)
+  values["COUNTER_ALT"] = counter
   values["LEFT_BLINKER"] = 1 if left_blink else 0
   values["RIGHT_BLINKER"] = 1 if right_blink else 0
-  return packer.make_can_msg("BLINKER_STALKS", CAN.ECAN, values)
+
+  checksum = BLINKER_STALKS_OFF_CHECKSUMS.get(counter, BLINKER_STALKS_OFF_CHECKSUMS[0])
+  if left_blink:
+    checksum ^= 0xba
+  elif right_blink:
+    checksum ^= 0x09
+  values["CHECKSUM_MAYBE"] = checksum
+
+  addr, dat, bus = packer.make_can_msg("BLINKER_STALKS", CAN.ECAN, values)
+  dat = bytearray(dat)
+  if dat[2] & 0x04:
+    dat[0] ^= 0x05
+  if left_blink:
+    dat[4] = (dat[4] & ~0x41) | 0x10
+  elif right_blink:
+    dat[3] &= ~0x40
+    dat[4] = (dat[4] & ~0x10) | 0x41
+  else:
+    dat[3] &= ~0x40
+    dat[4] &= ~0x51
+  return addr, bytes(dat), bus
 
 
 def create_fca_warning_light(CP, packer, CAN, frame):

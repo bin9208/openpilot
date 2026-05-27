@@ -148,6 +148,9 @@ class CarController(CarControllerBase):
     self.canfd_debug = 0
     self.MainMode_ACC_trigger = 0
     self.LFA_trigger = 0
+    self.blinker_stalk_command = 0
+    self.blinker_stalk_counter = None
+    self.blinker_stalk_off_frames = 0
 
     self.activeCarrot = 0
     self.camera_scc_params = Params().get_int("HyundaiCameraSCC")
@@ -378,10 +381,30 @@ class CarController(CarControllerBase):
       if self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
         if hda2:
           can_sends.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, CC.leftBlinker, CC.rightBlinker))
-        elif self.frame % 20 == 0:
-          blinker_msg = hyundaicanfd.create_blinker_stalk_message(self.packer, self.CAN, CS, CC.leftBlinker, CC.rightBlinker)
-          if blinker_msg is not None:
-            can_sends.append(blinker_msg)
+        else:
+          blinker_command = 1 if CC.leftBlinker and not CC.rightBlinker else 2 if CC.rightBlinker and not CC.leftBlinker else 0
+          command_changed = blinker_command != self.blinker_stalk_command
+          if command_changed:
+            stock_counter = None if CS.blinker_stalks is None else CS.blinker_stalks["COUNTER_ALT"]
+            base_counter = self.blinker_stalk_counter if self.blinker_stalk_counter is not None else stock_counter
+            self.blinker_stalk_counter = hyundaicanfd.next_blinker_stalk_counter(base_counter)
+            self.blinker_stalk_command = blinker_command
+            self.blinker_stalk_off_frames = int(0.6 / DT_CTRL) if blinker_command == 0 else 0
+
+          send_blinker_stalk = blinker_command > 0 or self.blinker_stalk_off_frames > 0
+          if send_blinker_stalk and (command_changed or self.frame % 20 == 0):
+            blinker_msg = hyundaicanfd.create_blinker_stalk_message(
+              self.packer, self.CAN, CS,
+              self.blinker_stalk_command == 1,
+              self.blinker_stalk_command == 2,
+              self.blinker_stalk_counter,
+            )
+            if blinker_msg is not None:
+              can_sends.append(blinker_msg)
+          if self.blinker_stalk_off_frames > 0:
+            self.blinker_stalk_off_frames -= 1
+          elif blinker_command == 0:
+            self.blinker_stalk_counter = None
 
       if self.camera_scc_params in [2, 3]:
         self.canfd_toggle_adas(CC, CS)
