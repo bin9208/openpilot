@@ -1,11 +1,13 @@
 import base64
 import os
 import subprocess
+import threading
 from typing import Any, Callable
 from urllib.parse import quote
 
 from aiohttp import ClientSession, ClientTimeout
 import requests
+from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase, HTTPBasicAuth, HTTPDigestAuth
 
 from openpilot.system.hardware import HARDWARE
@@ -127,20 +129,55 @@ def webdav_credentials() -> tuple[str, str] | None:
   return (username, password) if username else None
 
 
-def resolve_webdav_auth(base_url: str) -> AuthBase | None:
+def webdav_upload_workers() -> int:
+  value = (
+    os.environ.get("CARROT_WEBDAV_UPLOAD_WORKERS")
+    or os.environ.get("NAS_UPLOAD_WORKERS")
+    or "3"
+  ).strip()
+  try:
+    return max(1, min(8, int(value)))
+  except (TypeError, ValueError):
+    return 3
+
+
+def webdav_verify_uploads() -> bool:
+  value = (
+    os.environ.get("CARROT_WEBDAV_VERIFY")
+    or os.environ.get("NAS_UPLOAD_VERIFY")
+    or "0"
+  ).strip().lower()
+  return value in {"1", "true", "yes", "on"}
+
+
+def resolve_webdav_auth_kind(base_url: str, session: requests.Session | None = None) -> tuple[str, tuple[str, str] | None]:
   credentials = webdav_credentials()
   if not credentials:
-    return None
+    return ("none", None)
 
-  for auth in (HTTPBasicAuth(*credentials), HTTPDigestAuth(*credentials)):
+  requester = session.request if session else requests.request
+  for kind, auth in (("basic", HTTPBasicAuth(*credentials)), ("digest", HTTPDigestAuth(*credentials))):
     try:
-      resp = requests.request("OPTIONS", base_url, auth=auth, timeout=10, allow_redirects=False)
+      resp = requester("OPTIONS", base_url, auth=auth, timeout=10, allow_redirects=False)
     except requests.RequestException:
       continue
     if resp.status_code != 401:
-      return auth
+      return (kind, credentials)
 
   raise RuntimeError(f"WebDAV authentication failed [401]: {base_url}")
+
+
+def webdav_auth_from_kind(kind: str, credentials: tuple[str, str] | None) -> AuthBase | None:
+  if not credentials or kind == "none":
+    return None
+  if kind == "digest":
+    return HTTPDigestAuth(*credentials)
+  return HTTPBasicAuth(*credentials)
+
+
+def resolve_webdav_auth(base_url: str) -> AuthBase | None:
+  kind, credentials = resolve_webdav_auth_kind(base_url)
+  return webdav_auth_from_kind(kind, credentials)
 
 
 def webdav_url(base_url: str, *parts: str) -> str:
@@ -153,6 +190,104 @@ def webdav_url(base_url: str, *parts: str) -> str:
   if not quoted_parts:
     return base_url.rstrip("/")
   return f"{base_url.rstrip('/')}/{'/'.join(quoted_parts)}"
+
+
+class WebDAVClient:
+  def __init__(self, base_url: str | None = None, verify: bool | None = None, pool_maxsize: int | None = None):
+    self.base_url = (base_url or webdav_base_url()).rstrip("/")
+    self.verify = webdav_verify_uploads() if verify is None else bool(verify)
+    self.pool_maxsize = max(1, int(pool_maxsize or webdav_upload_workers()))
+    self.auth_kind, self.credentials = self._resolve_auth()
+    self._local = threading.local()
+    self._sessions: list[requests.Session] = []
+    self._sessions_lock = threading.Lock()
+    self._known_dirs: set[str] = set()
+    self._known_dirs_lock = threading.Lock()
+
+  def _resolve_auth(self) -> tuple[str, tuple[str, str] | None]:
+    with requests.Session() as session:
+      adapter = HTTPAdapter(pool_connections=self.pool_maxsize, pool_maxsize=self.pool_maxsize)
+      session.mount("http://", adapter)
+      session.mount("https://", adapter)
+      return resolve_webdav_auth_kind(self.base_url, session)
+
+  def _session_and_auth(self) -> tuple[requests.Session, AuthBase | None]:
+    session = getattr(self._local, "session", None)
+    auth = getattr(self._local, "auth", None)
+    if session is None:
+      session = requests.Session()
+      adapter = HTTPAdapter(pool_connections=self.pool_maxsize, pool_maxsize=self.pool_maxsize)
+      session.mount("http://", adapter)
+      session.mount("https://", adapter)
+      auth = webdav_auth_from_kind(self.auth_kind, self.credentials)
+      self._local.session = session
+      self._local.auth = auth
+      with self._sessions_lock:
+        self._sessions.append(session)
+    return session, auth
+
+  def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+    session, auth = self._session_and_auth()
+    return session.request(method, url, auth=auth, **kwargs)
+
+  def mkcol(self, url: str) -> None:
+    resp = self.request("MKCOL", url, timeout=10)
+    if resp.status_code in (200, 201, 204, 405):
+      return
+    raise RuntimeError(f"WebDAV MKCOL failed [{resp.status_code}]: {url}")
+
+  def verify_file(self, url: str, expected_size: int) -> None:
+    if not self.verify:
+      return
+    resp = self.request("HEAD", url, timeout=10)
+    if 200 <= resp.status_code < 300:
+      length = resp.headers.get("Content-Length")
+      try:
+        actual_size = int(length) if length is not None else expected_size
+      except (TypeError, ValueError):
+        actual_size = expected_size
+      if actual_size == expected_size:
+        return
+      raise RuntimeError(f"WebDAV verify size mismatch [{actual_size} != {expected_size}]: {url}")
+
+    if resp.status_code in (404, 410):
+      raise RuntimeError(f"WebDAV verify missing file [{resp.status_code}]: {url}")
+
+    # Some WebDAV servers do not implement HEAD. Fall back to PROPFIND depth 0.
+    propfind = self.request("PROPFIND", url, headers={"Depth": "0"}, timeout=10)
+    if propfind.status_code in (200, 207):
+      return
+    raise RuntimeError(f"WebDAV verify failed [{resp.status_code}/{propfind.status_code}]: {url}")
+
+  def ensure_dir(self, remote_dir: str, check_cancel: Callable[[], None]) -> None:
+    parts = [part for part in str(remote_dir or "").replace("\\", "/").split("/") if part]
+    cur = []
+    for part in parts:
+      check_cancel()
+      cur.append(part)
+      path = "/".join(cur)
+      with self._known_dirs_lock:
+        if path in self._known_dirs:
+          continue
+        self.mkcol(webdav_url(self.base_url, *cur))
+        self._known_dirs.add(path)
+
+  def upload_file(self, local_path: str, remote_dir: str, filename: str) -> tuple[int, str]:
+    file_size = os.path.getsize(local_path)
+    url = webdav_url(self.base_url, remote_dir, filename)
+    with open(local_path, "rb") as f:
+      resp = self.request("PUT", url, data=f, timeout=120)
+    if resp.status_code not in (200, 201, 204):
+      raise RuntimeError(f"WebDAV upload failed [{resp.status_code}]: {url}")
+    self.verify_file(url, file_size)
+    return file_size, url
+
+  def close(self) -> None:
+    with self._sessions_lock:
+      sessions = list(self._sessions)
+      self._sessions.clear()
+    for session in sessions:
+      session.close()
 
 
 def webdav_mkcol(url: str, auth: AuthBase | None) -> None:
@@ -281,45 +416,44 @@ def upload_folder_to_webdav(
   directory: str,
   remote_path: str,
   should_cancel: Callable[[], bool] | None = None,
+  client: WebDAVClient | None = None,
 ) -> bool:
   def check_cancel() -> None:
     if should_cancel and should_cancel():
       raise RuntimeError("upload canceled")
 
-  base_url = webdav_base_url()
-  auth = resolve_webdav_auth(base_url)
+  own_client = client is None
+  client = client or WebDAVClient()
   base_path = f"routes/{directory}/{remote_path}".strip("/").replace("\\", "/")
 
-  check_cancel()
-  ensure_webdav_dir(base_url, base_path, auth, check_cancel)
-
-  uploaded_count = 0
-  uploaded_bytes = 0
-  for root, _, files in os.walk(local_folder):
+  try:
     check_cancel()
-    rel_dir = os.path.relpath(root, local_folder)
-    remote_dir = base_path if rel_dir == "." else f"{base_path}/{rel_dir.replace(os.sep, '/')}"
-    ensure_webdav_dir(base_url, remote_dir, auth, check_cancel)
-    for filename in files:
-      check_cancel()
-      local_path = os.path.join(root, filename)
-      if filename.endswith(".lock") or not os.path.isfile(local_path):
-        continue
-      file_size = os.path.getsize(local_path)
-      url = webdav_url(base_url, remote_dir, filename)
-      with open(local_path, "rb") as f:
-        resp = requests.put(url, data=f, auth=auth, timeout=120)
-      if resp.status_code not in (200, 201, 204):
-        raise RuntimeError(f"WebDAV upload failed [{resp.status_code}]: {url}")
-      verify_webdav_file(url, auth, file_size)
-      uploaded_count += 1
-      uploaded_bytes += file_size
-      check_cancel()
+    client.ensure_dir(base_path, check_cancel)
 
-  if uploaded_count <= 0:
-    raise RuntimeError(f"WebDAV upload found no files in {local_folder}")
-  print(f"WebDAV upload complete: {uploaded_count} files, {uploaded_bytes} bytes -> {webdav_url(base_url, base_path)}")
-  return True
+    uploaded_count = 0
+    uploaded_bytes = 0
+    for root, _, files in os.walk(local_folder):
+      check_cancel()
+      rel_dir = os.path.relpath(root, local_folder)
+      remote_dir = base_path if rel_dir == "." else f"{base_path}/{rel_dir.replace(os.sep, '/')}"
+      client.ensure_dir(remote_dir, check_cancel)
+      for filename in files:
+        check_cancel()
+        local_path = os.path.join(root, filename)
+        if filename.endswith(".lock") or not os.path.isfile(local_path):
+          continue
+        file_size, _ = client.upload_file(local_path, remote_dir, filename)
+        uploaded_count += 1
+        uploaded_bytes += file_size
+        check_cancel()
+
+    if uploaded_count <= 0:
+      raise RuntimeError(f"WebDAV upload found no files in {local_folder}")
+    print(f"WebDAV upload complete: {uploaded_count} files, {uploaded_bytes} bytes -> {webdav_url(client.base_url, base_path)}")
+    return True
+  finally:
+    if own_client:
+      client.close()
 
 
 def upload_folder_to_ftp(

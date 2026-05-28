@@ -175,33 +175,51 @@ async def run_upload_segments(segments: list[str], job: dict[str, Any] | None = 
   directory = f"{car_selected} {dongle_id}".strip()
   remote_base_path = f"routes/{directory}/".replace("\\", "/")
   total = len(segments)
-  results = []
+  results_by_index: list[dict[str, Any] | None] = [None] * total
+  completed = 0
 
   if job:
     job["upload_meta"] = meta
     job["remote_base_path"] = remote_base_path
-    job["partial_results"] = results
-    progress(job, message="Preparing upload", current=0, total=total, percent=0)
+    job["partial_results"] = []
+    workers = min(upload.webdav_upload_workers(), max(1, total))
+    progress(job, message=f"Preparing upload ({workers} parallel)", current=0, total=total, percent=0)
 
   ensure_not_canceled(job)
-  for idx, segment in enumerate(segments, start=1):
+  client = upload.WebDAVClient(pool_maxsize=upload.webdav_upload_workers())
+  semaphore = asyncio.Semaphore(upload.webdav_upload_workers())
+
+  def ordered_results() -> list[dict[str, Any]]:
+    return [item for item in results_by_index if item is not None]
+
+  def store_result(index: int, result: dict[str, Any]) -> None:
+    nonlocal completed
+    results_by_index[index] = result
+    completed += 1
+    if job:
+      job["partial_results"] = ordered_results()
+      progress(job, message=f"Uploaded {completed}/{total}", current=completed, total=total)
+
+  async def upload_segment(index: int, segment: str) -> None:
     ensure_not_canceled(job)
     files = []
     if job:
-      progress(job, message=f"Uploading {idx}/{total}", current=idx - 1, total=total)
-      append(job, f"[{idx}/{total}] {segment}")
+      append(job, f"[{index + 1}/{total}] {segment}")
     try:
-      segment_path = segment_dir(segment)
-      files = await asyncio.to_thread(segment_file_summary, segment_path)
-      ok = await asyncio.to_thread(
-        upload.upload_folder_to_webdav,
-        segment_path,
-        directory,
-        segment,
-        (lambda: is_cancel_requested(job)) if job else None,
-      )
+      async with semaphore:
+        ensure_not_canceled(job)
+        segment_path = segment_dir(segment)
+        files = await asyncio.to_thread(segment_file_summary, segment_path)
+        ok = await asyncio.to_thread(
+          upload.upload_folder_to_webdav,
+          segment_path,
+          directory,
+          segment,
+          (lambda: is_cancel_requested(job)) if job else None,
+          client,
+        )
       ensure_not_canceled(job)
-      results.append({
+      store_result(index, {
         "segment": segment,
         "route": route_name(segment),
         "segmentIndex": segment_index(segment),
@@ -210,11 +228,11 @@ async def run_upload_segments(segments: list[str], job: dict[str, Any] | None = 
         "files": files,
       })
       if job:
-        append(job, f"[{idx}/{total}] {segment} OK")
+        append(job, f"[{index + 1}/{total}] {segment} OK")
     except Exception as e:
       if is_cancel_requested(job):
         raise UploadCanceled("upload canceled") from e
-      results.append({
+      store_result(index, {
         "segment": segment,
         "route": route_name(segment),
         "segmentIndex": segment_index(segment),
@@ -224,13 +242,25 @@ async def run_upload_segments(segments: list[str], job: dict[str, Any] | None = 
         "error": str(e),
       })
       if job:
-        append(job, f"[{idx}/{total}] {segment} FAILED: {e}")
+        append(job, f"[{index + 1}/{total}] {segment} FAILED: {e}")
 
-    if job:
-      job["partial_results"] = results
-      progress(job, message=f"Uploaded {idx}/{total}", current=idx, total=total)
+  tasks = [asyncio.create_task(upload_segment(index, segment)) for index, segment in enumerate(segments)]
+  try:
+    if tasks:
+      await asyncio.gather(*tasks)
+  except UploadCanceled:
+    if tasks:
+      await asyncio.gather(*tasks, return_exceptions=True)
+    raise
+  except Exception:
+    if tasks:
+      await asyncio.gather(*tasks, return_exceptions=True)
+    raise
+  finally:
+    client.close()
 
   ensure_not_canceled(job)
+  results = ordered_results()
   ok_count = sum(1 for item in results if item["ok"])
   uploaded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
   response_payload = {
