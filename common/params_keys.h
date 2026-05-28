@@ -268,7 +268,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"FingerPrints", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING}},
     {"IsLdwsCar", {PERSISTENT, INT, "0"}},
     {"CanfdHDA2", {PERSISTENT, INT, "0"}},
-    {"HyundaiGearShifterTest", {PERSISTENT, INT, "0"}},
     {"CanfdDebug", {PERSISTENT, INT, "0"}},
 
     {"SoundVolumeAdjust", {PERSISTENT, INT, "100"}},

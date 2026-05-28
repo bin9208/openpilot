@@ -502,20 +502,6 @@ def create_blinker_stalk_message(packer, CAN, CS, left_blink, right_blink, count
     dat[4] &= ~0x51
   return addr, bytes(dat), bus
 
-def create_gear_shifter_message(packer, CAN, CS, counter, knob_position):
-  if CS.gear_shifter_canfd is None:
-    return None
-
-  values = copy.copy(CS.gear_shifter_canfd)
-  values["COUNTER"] = counter
-  values["PARK_BUTTON"] = 2
-  values["KNOB_POSITION"] = knob_position
-  values["CHECKSUM"] = 0
-
-  addr, dat, bus = packer.make_can_msg("GEAR_SHIFTER", CAN.ECAN, values)
-  values["CHECKSUM"] = hkg_can_fd_checksum(addr, None, bytearray(dat))
-  return packer.make_can_msg("GEAR_SHIFTER", CAN.ECAN, values)
-
 
 def create_fca_warning_light(CP, packer, CAN, frame):
   ret = []
