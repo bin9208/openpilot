@@ -36,6 +36,23 @@ LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
+LANELESS_CURVATURE_SMOOTH_SECONDS = 0.10
+LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS = 0.24
+
+
+def get_laneless_curvature_smooth_seconds(v_ego: float, desired_curvature: float, model_v2) -> float:
+  speed_factor = float(np.clip((v_ego - 22.0) / 8.0, 0.0, 1.0))
+  straight_factor = float(1.0 - np.clip((abs(desired_curvature) - 3.5e-4) / 6.5e-4, 0.0, 1.0))
+  if speed_factor <= 0.0 or straight_factor <= 0.0:
+    return LANELESS_CURVATURE_SMOOTH_SECONDS
+
+  y_std_1s = 0.0
+  if len(model_v2.position.yStd) > 10:
+    y_std_1s = float(model_v2.position.yStd[10])
+
+  uncertainty_factor = float(np.clip((y_std_1s - 0.05) / 0.05, 0.0, 1.0))
+  extra_smooth = speed_factor * straight_factor * (0.06 + 0.08 * uncertainty_factor)
+  return min(LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS, LANELESS_CURVATURE_SMOOTH_SECONDS + extra_smooth)
 
 
 class Controls:
@@ -159,7 +176,12 @@ class Controls:
       "turn left", "turn right", "atc left", "atc right", "fork left", "fork right",
     )
     model_turn_active = model_v2.meta.desire in (log.Desire.turnLeft, log.Desire.turnRight)
-    use_mpc_curvature = self.lanefull_mode_enabled or atc_turn_active or model_turn_active
+    laneless_highway_straight = (
+      not lat_plan.useLaneLines and
+      CS.vEgo > 25.0 and
+      abs(model_v2.action.desiredCurvature) < 1.0e-3
+    )
+    use_mpc_curvature = self.lanefull_mode_enabled or atc_turn_active or model_turn_active or laneless_highway_straight
     lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
     steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
     if steer_actuator_delay == 0.0:
@@ -175,10 +197,17 @@ class Controls:
       if len(lat_plan.curvatures) == 0:
         new_desired_curvature = self.curvature
       else:
-        curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
-        new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
+        mpc_smooth_seconds = lat_smooth_seconds
+        if laneless_highway_straight:
+          mpc_smooth_seconds = max(
+            mpc_smooth_seconds,
+            get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2),
+          )
+        curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances)
+        new_desired_curvature = smooth_value(curvature, self.desired_curvature, mpc_smooth_seconds)
     else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+      smooth_seconds = get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2)
+      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, smooth_seconds)
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 

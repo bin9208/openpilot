@@ -20,6 +20,9 @@ from openpilot.common.params import Params
 MAX_ANGLE = 85
 MAX_ANGLE_FRAMES = 89
 MAX_ANGLE_CONSECUTIVE_FRAMES = 2
+ANGLE_CONTROL_DEFAULT_MAX_TORQUE = 250
+ANGLE_CONTROL_MAX_TORQUE = 255
+ANGLE_CONTROL_RECOVERY_MIN_FRAC = 0.55
 
 vibrate_intervals = [
   (0.0, 0.5),
@@ -56,6 +59,22 @@ def process_hud_alert(enabled, fingerprint, hud_control):
 
 def rate_limit(x, x_last, lo, hi):
   return float(np.clip(x, x_last + lo, x_last + hi))
+
+def estimate_steer_ratio_from_curvature(desired_sw_deg: float,
+                                        desired_curvature: float,
+                                        wheelbase_m: float,
+                                        fallback_steer_ratio: float) -> float | None:
+  abs_curvature = abs(float(desired_curvature))
+  abs_sw_deg = abs(float(desired_sw_deg))
+  if abs_curvature < 8e-4 or abs_sw_deg < 2.0:
+    return None
+
+  road_wheel_deg = float(np.degrees(np.arctan(wheelbase_m * abs_curvature)))
+  if road_wheel_deg < 0.1:
+    return None
+
+  steer_ratio = abs_sw_deg / road_wheel_deg
+  return float(np.clip(steer_ratio, fallback_steer_ratio * 0.85, fallback_steer_ratio * 1.30))
 
 def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      last_sw_deg: float,
@@ -138,8 +157,9 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
+    self.angle_limit_steer_ratio = CP.steerRatio
     self.lkas_max_torque = 0
-    self.angle_max_torque = 250
+    self.angle_max_torque = ANGLE_CONTROL_DEFAULT_MAX_TORQUE
     self.prev_abs_angle_error = 0.0
     self.recover_level = 1.0
 
@@ -172,6 +192,9 @@ class CarController(CarControllerBase):
       steerDeltaDownLC = params.get_int("CustomSteerDeltaDownLC")
       if steerMax > 0:
         self.params.STEER_MAX = steerMax
+      if self.CP.flags & HyundaiFlags.ANGLE_CONTROL:
+        angle_max_torque = steerMax if steerMax > 0 else ANGLE_CONTROL_DEFAULT_MAX_TORQUE
+        self.angle_max_torque = int(np.clip(angle_max_torque, self.params.ANGLE_MIN_TORQUE, ANGLE_CONTROL_MAX_TORQUE))
       if steerDeltaUp > 0:
         self.steerDeltaUp = steerDeltaUp
         #self.params.ANGLE_TORQUE_UP_RATE = steerDeltaUp
@@ -228,6 +251,15 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw, 
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
+    estimated_steer_ratio = estimate_steer_ratio_from_curvature(
+      actuators.steeringAngleDeg,
+      actuators.curvature,
+      self.CP.wheelbase,
+      self.CP.steerRatio,
+    )
+    if estimated_steer_ratio is not None:
+      self.angle_limit_steer_ratio = 0.90 * self.angle_limit_steer_ratio + 0.10 * estimated_steer_ratio
+
     apply_angle = apply_steer_angle_limits_physics(
       actuators.steeringAngleDeg,
       self.apply_angle_last,
@@ -235,7 +267,7 @@ class CarController(CarControllerBase):
       CS.out.steeringAngleDeg,
       CC.latActive,
       self.CP.wheelbase,
-      self.CP.steerRatio,
+      self.angle_limit_steer_ratio,
       self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
     )
 
@@ -276,17 +308,17 @@ class CarController(CarControllerBase):
 
       # Normal recovery is slow.
       # If angle error is decreasing, recover faster.
-      recover_rate = 0.005 + recover_factor * 0.035
+      recover_rate = 0.012 + recover_factor * 0.050
       recover_level = _clip(recover_level + recover_rate, 0.0, 1.0)
       self.recover_level = recover_level
 
       # While recovering, limit available torque.
-      # recover_level = 0.0 -> 30%
+      # recover_level = 0.0 -> 55%
       # recover_level = 1.0 -> 100%
-      target_torque *= 0.3 + recover_level * 0.7
+      target_torque *= ANGLE_CONTROL_RECOVERY_MIN_FRAC + recover_level * (1.0 - ANGLE_CONTROL_RECOVERY_MIN_FRAC)
 
       # If angle error is already converging, allow torque to come back a little faster.
-      rate_up *= 1.0 + recover_factor * 0.5
+      rate_up *= 1.0 + recover_factor
 
       if self.lkas_max_torque > target_torque:
         self.lkas_max_torque = max(self.lkas_max_torque - rate_down, target_torque)
