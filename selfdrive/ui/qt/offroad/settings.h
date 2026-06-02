@@ -178,18 +178,3 @@ private:
   QLabel summary;
   Params params;
 };
-
-class AutoTunerHistoryPanel : public QFrame {
-  Q_OBJECT
-public:
-  explicit AutoTunerHistoryPanel(QWidget* parent = nullptr);
-private slots:
-  void refreshHistory();
-  void deleteItem(const QString& id);
-  void restoreItem(const QString& id);
-  void clearAll();
-private:
-  QVBoxLayout *list_layout;
-protected:
-  void showEvent(QShowEvent *event) override;
-};
