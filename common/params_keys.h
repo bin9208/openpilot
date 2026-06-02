@@ -242,10 +242,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongTuningKf", {PERSISTENT, INT, "100"}},
     {"LongActuatorDelay", {PERSISTENT, INT, "20"}},
     {"VEgoStopping", {PERSISTENT, INT, "50"}},
-    {"LongitudinalAutoTune", {PERSISTENT, INT, "0"}},
-    {"LongitudinalAutoTuneRatio", {PERSISTENT, INT, "50"}},
-    {"LongitudinalAutoTuneOpLearning", {PERSISTENT, INT, "0"}},
-    {"LongitudinalAutoTuneData", {PERSISTENT | DONT_LOG, JSON, "{}"}},
 
     {"RadarReactionFactor", {PERSISTENT, INT, "100"}},
     {"EnableRadarTracks", {PERSISTENT, INT, "0"}},
