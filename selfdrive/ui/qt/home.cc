@@ -87,7 +87,7 @@ void HomeWindow::offroadTransition(bool offroad) {
   sidebar->setVisible(offroad);
   UIState* s = uiState();
   if (offroad) {
-    
+
     s->scene._current_carrot_display = 1;
     slayout->setCurrentWidget(home);
   } else {
