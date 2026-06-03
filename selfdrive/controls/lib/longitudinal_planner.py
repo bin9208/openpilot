@@ -42,6 +42,13 @@ def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
 
 
+def get_longitudinal_accel_min(params):
+  accel_min = params.get_int("LongitudinalAccelMin")
+  if accel_min <= 0:
+    return ACCEL_MIN
+  return -float(np.clip(accel_min, 100, 600)) * 0.01
+
+
 def limit_accel_in_turns_org(v_ego, angle_steers, a_target, CP):
   """
   This function returns a limited long acceleration allowed, depending on the existing lateral acceleration
@@ -142,6 +149,7 @@ class LongitudinalPlanner:
 
   def update(self, sm, carrot):
     self.mpc.mode = 'blended' if sm['selfdriveState'].experimentalMode else 'acc'
+    longitudinal_accel_min = get_longitudinal_accel_min(self.params)
 
     if len(sm['carControl'].orientationNED) == 3:
       accel_coast = get_coast_accel(sm['carControl'].orientationNED[1])
@@ -175,14 +183,14 @@ class LongitudinalPlanner:
 
     if self.mpc.mode == 'acc':
       #accel_limits = [A_CRUISE_MIN, get_max_accel(v_ego)]
-      accel_limits = [A_CRUISE_MIN, carrot.get_carrot_accel(v_ego)]
+      accel_limits = [longitudinal_accel_min, carrot.get_carrot_accel(v_ego)]
       steer_angle_without_offset = sm['carState'].steeringAngleDeg - sm['liveParameters'].angleOffsetDeg
       #accel_limits_turns = limit_accel_in_turns(v_ego, steer_angle_without_offset, accel_limits, self.CP)
       a_lat_max = 3.0
       accel_limits_turns = limit_accel_in_turns(v_ego, sm['controlsState'].desiredCurvature, accel_limits, a_lat_max)
     else:
-      accel_limits = [ACCEL_MIN, ACCEL_MAX]
-      accel_limits_turns = [ACCEL_MIN, ACCEL_MAX]
+      accel_limits = [longitudinal_accel_min, ACCEL_MAX]
+      accel_limits_turns = [longitudinal_accel_min, ACCEL_MAX]
 
     if reset_state:
       self.v_desired_filter.x = v_ego

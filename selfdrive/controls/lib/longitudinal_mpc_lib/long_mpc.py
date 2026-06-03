@@ -240,6 +240,9 @@ class LongitudinalMpc:
 
     self.a_change_cost = A_CHANGE_COST
     self.j_lead = 0.0
+    self.min_a = ACCEL_MIN
+    self.cruise_min_a = ACCEL_MIN
+    self.max_a = 0.0
 
     self.reset()
     self.source = SOURCES[2]
@@ -342,7 +345,7 @@ class LongitudinalMpc:
 
     # MPC will not converge if immediate crash is expected
     # Clip lead distance to what is still possible to brake for
-    min_x_lead = ((v_ego + v_lead)/2) * (v_ego - v_lead) / (-ACCEL_MIN * 2)
+    min_x_lead = ((v_ego + v_lead)/2) * (v_ego - v_lead) / (-self.min_a * 2)
     x_lead = np.clip(x_lead, min_x_lead, 1e8)
     v_lead = np.clip(v_lead, 0.0, 1e8)
     a_lead = np.clip(a_lead, -10., 5.)
@@ -356,8 +359,7 @@ class LongitudinalMpc:
     return lead_xv, v_lead
 
   def set_accel_limits(self, min_a, max_a):
-    # TODO this sets a max accel limit, but the minimum limit is only for cruise decel
-    # needs refactor
+    self.min_a = min_a
     self.cruise_min_a = min_a
     self.max_a = max_a
 
@@ -395,7 +397,7 @@ class LongitudinalMpc:
     
     self.desired_distance = desired_follow_distance(v_ego, lead_v_0, comfort_brake, stop_distance, t_follow)
 
-    self.params[:,0] = ACCEL_MIN if not reset_state else a_ego
+    self.params[:,0] = self.min_a if not reset_state else a_ego
     # negative accel constraint causes problems because negative speed is not allowed
     self.params[:,1] = max(0.0, self.max_a if not reset_state else a_ego)
 

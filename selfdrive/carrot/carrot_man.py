@@ -1009,6 +1009,9 @@ class CarrotMan:
   def carrot_curve_speed_params(self):
     self.autoCurveSpeedFactor = self.params.get_int("AutoCurveSpeedFactor")*0.01
     self.autoCurveSpeedAggressiveness = self.params.get_int("AutoCurveSpeedAggressiveness")*0.01
+    self.autoCurveSpeedPreview = self.params.get_int("AutoCurveSpeedPreview")
+    self.autoCurveSpeedPreviewDecelRate = max(0.1, self.params.get_int("AutoCurveSpeedPreviewDecelRate") * 0.01)
+    self.autoCurveSpeedPreviewTime = max(0.0, self.params.get_int("AutoCurveSpeedPreviewTime") * 0.1)
 
   def carrot_curve_speed(self, sm):
     self.carrot_curve_speed_params()
@@ -1028,11 +1031,19 @@ class CarrotMan:
     # Set the curve sensitivity
     orientation_rate = np.array(modelData.orientationRate.z) * self.autoCurveSpeedFactor
     velocity = np.array(modelData.velocity.x)
+    n = min(len(orientation_rate), len(velocity))
+    if n == 0:
+        return 250
+    orientation_rate = orientation_rate[:n]
+    velocity = np.maximum(velocity[:n], 0.1)
 
     # Get the maximum lat accel from the model
-    max_index = np.argmax(np.abs(orientation_rate))
+    pred_lat_acc = np.abs(orientation_rate) * velocity
+    max_index = int(np.argmax(pred_lat_acc))
     curv_direction = np.sign(orientation_rate[max_index])
-    max_pred_lat_acc = np.amax(np.abs(orientation_rate) * velocity)
+    max_pred_lat_acc = pred_lat_acc[max_index]
+    if max_pred_lat_acc <= 1e-4:
+        return 250
 
     # Get the maximum curve based on the current velocity
     max_curve = max_pred_lat_acc / (v_ego**2)
@@ -1044,6 +1055,39 @@ class CarrotMan:
     #turnSpeed = max(abs(adjusted_target_lat_a / max_curve)**0.5  * 3.6, self.autoCurveSpeedLowerLimit)
     turnSpeed = max(abs(adjusted_target_lat_a / max_curve)**0.5  * 3.6, 5)
     turnSpeed = min(turnSpeed, 250)
+
+    if self.autoCurveSpeedPreview > 0 and turnSpeed < 250:
+      if len(modelData.position.x) >= n:
+        distances = np.maximum(np.array(modelData.position.x[:n]), 0.0)
+      elif len(modelData.velocity.t) >= n:
+        times = np.array(modelData.velocity.t[:n])
+        distances = np.maximum(times, 0.0) * v_ego
+      else:
+        distances = np.arange(n) * v_ego * 0.2
+
+      preview_speed = 250.0
+      preview_direction = curv_direction
+      # Apply a braking envelope to each predicted curve point, not just the sharpest one.
+      for i in range(n):
+        effective_curve = pred_lat_acc[i] / (v_ego**2)
+        if effective_curve <= 1e-5:
+          continue
+        target_speed = max(abs(adjusted_target_lat_a / effective_curve)**0.5 * 3.6, 5)
+        target_speed = min(target_speed, 250)
+        allowed_speed = self.carrot_serv.calculate_current_speed(
+          distances[i],
+          target_speed,
+          self.autoCurveSpeedPreviewTime,
+          self.autoCurveSpeedPreviewDecelRate,
+        )
+        if allowed_speed < preview_speed:
+          preview_speed = allowed_speed
+          preview_direction = np.sign(orientation_rate[i]) or preview_direction
+
+      if preview_speed < 250:
+        turnSpeed = preview_speed
+        curv_direction = preview_direction
+
     return turnSpeed * curv_direction
 
   def carrot_navi_thread(self):

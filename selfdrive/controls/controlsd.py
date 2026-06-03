@@ -38,6 +38,11 @@ LaneChangeDirection = log.LaneChangeDirection
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 LANELESS_CURVATURE_SMOOTH_SECONDS = 0.10
 LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS = 0.24
+LANELESS_CURVE_MPC_SMOOTH_SECONDS = 0.08
+
+
+def get_model_y_std_1s(model_v2) -> float:
+  return float(model_v2.position.yStd[10]) if len(model_v2.position.yStd) > 10 else 0.0
 
 
 def get_laneless_curvature_smooth_seconds(v_ego: float, desired_curvature: float, model_v2) -> float:
@@ -46,13 +51,22 @@ def get_laneless_curvature_smooth_seconds(v_ego: float, desired_curvature: float
   if speed_factor <= 0.0 or straight_factor <= 0.0:
     return LANELESS_CURVATURE_SMOOTH_SECONDS
 
-  y_std_1s = 0.0
-  if len(model_v2.position.yStd) > 10:
-    y_std_1s = float(model_v2.position.yStd[10])
-
+  y_std_1s = get_model_y_std_1s(model_v2)
   uncertainty_factor = float(np.clip((y_std_1s - 0.05) / 0.05, 0.0, 1.0))
   extra_smooth = speed_factor * straight_factor * (0.06 + 0.08 * uncertainty_factor)
   return min(LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS, LANELESS_CURVATURE_SMOOTH_SECONDS + extra_smooth)
+
+
+def should_use_laneless_mpc_curve(v_ego: float, desired_curvature: float, model_v2) -> bool:
+  if v_ego < 5.0:
+    return False
+
+  abs_curvature = abs(float(desired_curvature))
+  if abs_curvature > 2.5e-3:
+    return True
+
+  y_std_1s = get_model_y_std_1s(model_v2)
+  return abs_curvature > 1.2e-3 and y_std_1s > 0.08
 
 
 class Controls:
@@ -140,7 +154,10 @@ class Controls:
     standstill = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, MIN_LATERAL_CONTROL_SPEED) or CS.standstill
     CC.latActive = ((self.sm['selfdriveState'].active or lateral_enabled) and CS.latEnabled and
                     not CS.steerFaultTemporary and not CS.steerFaultPermanent and not standstill)
-    CC.latActive = self.carrot_controls.lat_suspend_control(CS, CC.latActive)
+    if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
+      self.carrot_controls.reset_lat_suspend()
+    else:
+      CC.latActive = self.carrot_controls.lat_suspend_control(CS, CC.latActive)
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
 
     actuators = CC.actuators
@@ -181,7 +198,14 @@ class Controls:
       CS.vEgo > 25.0 and
       abs(model_v2.action.desiredCurvature) < 1.0e-3
     )
-    use_mpc_curvature = self.lanefull_mode_enabled or atc_turn_active or model_turn_active or laneless_highway_straight
+    laneless_mpc_curve = (
+      not lat_plan.useLaneLines and
+      should_use_laneless_mpc_curve(CS.vEgo, model_v2.action.desiredCurvature, model_v2)
+    )
+    use_mpc_curvature = (
+      self.lanefull_mode_enabled or atc_turn_active or model_turn_active or
+      laneless_highway_straight or laneless_mpc_curve
+    )
     lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
     steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
     if steer_actuator_delay == 0.0:
@@ -203,6 +227,8 @@ class Controls:
             mpc_smooth_seconds,
             get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2),
           )
+        elif laneless_mpc_curve and mpc_smooth_seconds > 0.0:
+          mpc_smooth_seconds = min(mpc_smooth_seconds, LANELESS_CURVE_MPC_SMOOTH_SECONDS)
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, mpc_smooth_seconds)
     else:      
