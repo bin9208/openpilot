@@ -87,10 +87,16 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   max_lat_accel = 5.0   # m/s^2
 
   v = max(float(v_ego), 1.0)
-  max_lat_jerk = float(np.interp(v, [5.0, 12.0, 22.0], [8.0, 5.5, 4.0]))
-  max_sw_rate_deg_per_tick = float(np.interp(v, [5.0, 12.0, 22.0], [3.6, 2.8, 2.0]))
+  max_lat_jerk = float(np.interp(v, [5.0, 12.0, 22.0], [12.0, 9.0, 6.5]))
+  max_sw_rate_deg_per_tick = float(np.interp(v, [5.0, 12.0, 22.0], [4.0, 3.5, 3.0]))
 
   target_sw = float(np.clip(desired_sw_deg, -steer_sw_max_deg, steer_sw_max_deg))
+
+  # Unwind logic: allow higher rate limit when steering wheel is returning to center
+  unwinding = abs(target_sw) < abs(last_sw_deg)
+  if unwinding:
+    max_lat_jerk *= 2.0
+    max_sw_rate_deg_per_tick *= 1.5
 
   target_rw = target_sw / steer_ratio
   last_rw   = float(last_sw_deg) / steer_ratio
@@ -100,7 +106,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   rw_max = float(np.degrees(rw_max_rad))
 
   # --- jerk -> rate limit ---
-  sec2 = 1.2
+  sec2 = 1.0
   max_drw_dt = (max_lat_jerk * wheelbase_m) / (v * v * sec2)     # rad/s
   max_drw_per_tick = max_drw_dt * DT_CTRL                        # rad/tick
   max_drw_per_tick_deg = float(np.degrees(max_drw_per_tick))
@@ -109,10 +115,6 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
     max_drw_per_tick_deg,
     max_sw_rate_deg_per_tick / steer_ratio
   )
-  err = abs(target_sw - last_sw_deg)
-  if err > 20.0:
-    large_error_factor = float(np.interp(v, [5.0, 15.0, 25.0], [0.85, 0.65, 0.50]))
-    max_drw_per_tick_deg *= large_error_factor
   
   # --- rate limit ---
   cmd_rw = rate_limit(target_rw, last_rw, -max_drw_per_tick_deg, max_drw_per_tick_deg)
