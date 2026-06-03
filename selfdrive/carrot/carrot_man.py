@@ -229,9 +229,6 @@ class CarrotMan:
     self.carrot_route_thread.daemon = True
     self.carrot_route_thread.start()
 
-    self.is_running = True
-    threading.Thread(target=self.broadcast_version_info).start()
-
     self.navi_points = []
     self.navi_points_start_index = 0
     self.navi_points_active = False
@@ -239,10 +236,20 @@ class CarrotMan:
 
     self.active_carrot_last = False
 
+    self.is_running = True
+    self._navi_route_lock = threading.Lock()
+    self._navi_route_cache = ([], [], 300)
+    self._navi_route_updated_at = 0.0
+
     self._rgdata_ts_lock = threading.Lock()
     self._last_rgdata_timestamp_ms = 0
 
     self.is_metric = self.params.get_bool("IsMetric")
+
+    self.navi_route_worker_thread = threading.Thread(target=self.navi_route_worker)
+    self.navi_route_worker_thread.daemon = True
+    self.navi_route_worker_thread.start()
+    threading.Thread(target=self.broadcast_version_info).start()
 
   def get_broadcast_address(self):
     if PC:
@@ -287,7 +294,7 @@ class CarrotMan:
         remote_addr = self.remote_addr
         remote_ip = remote_addr[0] if remote_addr is not None else ""
         vturn_speed = self.carrot_curve_speed(self.sm)
-        coords, distances, route_speed = self.carrot_navi_route()
+        coords, distances, route_speed = self.get_navi_route_cache()
 
         #print("coords=", coords)
         #print("curvatures=", curvatures)
@@ -335,6 +342,31 @@ class CarrotMan:
         print(f"broadcast_version_info error...: {e}")
         traceback.print_exc()
         time.sleep(1)
+
+  def navi_route_worker(self):
+    while self.is_running:
+      try:
+        start_time = time.monotonic()
+        coords, distances, route_speed = self.carrot_navi_route()
+        elapsed = time.monotonic() - start_time
+        if elapsed > 1.0:
+          print(f"carrot_navi_route slow: {elapsed:.1f}s")
+        with self._navi_route_lock:
+          self._navi_route_cache = (coords, distances, route_speed)
+          self._navi_route_updated_at = time.monotonic()
+      except Exception as e:
+        print(f"navi_route_worker error...: {e}")
+        traceback.print_exc()
+      time.sleep(0.5)
+
+  def get_navi_route_cache(self):
+    with self._navi_route_lock:
+      coords, distances, route_speed = self._navi_route_cache
+      updated_at = self._navi_route_updated_at
+
+    if time.monotonic() - updated_at > 2.0:
+      return [], [], 300
+    return list(coords), list(distances), route_speed
 
 
   def carrot_navi_route(self):
