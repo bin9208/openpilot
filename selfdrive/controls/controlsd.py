@@ -58,8 +58,12 @@ def get_laneless_curvature_smooth_seconds(v_ego: float, desired_curvature: float
 
 
 def should_use_laneless_mpc_curve(v_ego: float, desired_curvature: float, model_v2) -> bool:
-  if v_ego < 5.0:
+  if v_ego < 1.0:
     return False
+
+  # Always use MPC at lower speeds (e.g. below 10.0 m/s = 36 km/h) because intersections/turns are common and need closed-loop path planning
+  if v_ego < 10.0:
+    return True
 
   abs_curvature = abs(float(desired_curvature))
   if abs_curvature > 2.5e-3:
@@ -238,6 +242,10 @@ class Controls:
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
     actuators.curvature = float(self.desired_curvature)
+    if self.calibrated_pose is not None:
+      CC.orientationNED = self.calibrated_pose.orientation.xyz.tolist()
+      CC.angularVelocity = self.calibrated_pose.angular_velocity.xyz.tolist()
+
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
                                                        self.steer_limited_by_controls, self.desired_curvature,
                                                        CC, curvature_limited,
