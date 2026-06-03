@@ -52,6 +52,14 @@ class CarControllerParams:
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
 
+      if CP.carFingerprint in (CAR.KIA_K5_DL3_24, CAR.KIA_K5_DL3_24_HEV):
+        self.STEER_MAX = 409
+        self.STEER_DRIVER_ALLOWANCE = 700
+        self.STEER_DRIVER_MULTIPLIER = 1
+        self.STEER_THRESHOLD = 650
+        self.STEER_DELTA_UP = 5
+        self.STEER_DELTA_DOWN = 12
+
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
     elif CP.carFingerprint in (CAR.GENESIS_G80, CAR.HYUNDAI_ELANTRA, CAR.HYUNDAI_ELANTRA_GT_I30, CAR.HYUNDAI_IONIQ,
