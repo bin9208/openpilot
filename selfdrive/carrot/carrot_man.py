@@ -249,6 +249,9 @@ class CarrotMan:
     self.navi_route_worker_thread = threading.Thread(target=self.navi_route_worker)
     self.navi_route_worker_thread.daemon = True
     self.navi_route_worker_thread.start()
+    self.network_broadcast_thread = threading.Thread(target=self.network_broadcast_worker)
+    self.network_broadcast_thread.daemon = True
+    self.network_broadcast_thread.start()
     threading.Thread(target=self.broadcast_version_info).start()
 
   def get_broadcast_address(self):
@@ -279,11 +282,6 @@ class CarrotMan:
 
   # 브로드캐스트 메시지 전송
   def broadcast_version_info(self):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    frame = 0
-    self.save_toggle_values()
-
     rk = Ratekeeper(20, print_delay_threshold=None)
 
     while self.is_running:
@@ -300,48 +298,58 @@ class CarrotMan:
         #print("curvatures=", curvatures)
         self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speed, self.gps_location_service)
 
-        if frame % 20 == 0 or remote_addr is not None:
-          try:
-            self.broadcast_ip = self.get_broadcast_address() if remote_addr is None else remote_addr[0]
-            if not PC:
-              ip_address = socket.gethostbyname(socket.gethostname())
-            else:
-              ip_address = self.get_local_ip()
-            if ip_address != self.ip_address:
-              self.ip_address = ip_address
-              self.remote_addr = None
-            self.params_memory.put_nonblocking("NetworkAddress", self.ip_address)
-
-            msg = self.make_send_message()
-            if self.broadcast_ip is not None:
-              dat = msg.encode('utf-8')
-              sock.sendto(dat, (self.broadcast_ip, self.broadcast_port))
-            #for i in range(1, 255):
-            #  ip_tuple = socket.inet_aton(self.broadcast_ip)
-            #  new_ip = ip_tuple[:-1] + bytes([i])
-            #  address = (socket.inet_ntoa(new_ip), self.broadcast_port)
-            #  sock.sendto(dat, address)
-
-            if remote_addr is None:
-              #print(f"Broadcasting: {self.broadcast_ip}") #:{msg}")
-              if not self.navd_active:
-                #print("clear path_points: navd_active: ", self.navd_active)
-                self.navi_points = []
-                self.navi_points_active = False
-
-          except Exception as e:
-            if self.connection:
-              self.connection.close()
-            self.connection = None
-            print(f"##### broadcast_error...: {e}")
-            traceback.print_exc()
-
         rk.keep_time()
-        frame += 1
       except Exception as e:
         print(f"broadcast_version_info error...: {e}")
         traceback.print_exc()
         time.sleep(1)
+
+  def network_broadcast_worker(self):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.settimeout(0.2)
+    self.save_toggle_values()
+
+    while self.is_running:
+      start_time = time.monotonic()
+      remote_addr = self.remote_addr
+      try:
+        self.broadcast_ip = self.get_broadcast_address() if remote_addr is None else remote_addr[0]
+        ip_address = self.get_local_ip()
+        if ip_address != self.ip_address:
+          self.ip_address = ip_address
+          self.remote_addr = None
+        self.params_memory.put_nonblocking("NetworkAddress", self.ip_address)
+
+        msg = self.make_send_message()
+        if self.broadcast_ip is not None:
+          dat = msg.encode('utf-8')
+          sock.sendto(dat, (self.broadcast_ip, self.broadcast_port))
+        #for i in range(1, 255):
+        #  ip_tuple = socket.inet_aton(self.broadcast_ip)
+        #  new_ip = ip_tuple[:-1] + bytes([i])
+        #  address = (socket.inet_ntoa(new_ip), self.broadcast_port)
+        #  sock.sendto(dat, address)
+
+        if remote_addr is None:
+          #print(f"Broadcasting: {self.broadcast_ip}") #:{msg}")
+          if not self.navd_active:
+            #print("clear path_points: navd_active: ", self.navd_active)
+            self.navi_points = []
+            self.navi_points_active = False
+
+      except Exception as e:
+        if self.connection:
+          self.connection.close()
+        self.connection = None
+        print(f"##### broadcast_error...: {e}")
+        traceback.print_exc()
+
+      elapsed = time.monotonic() - start_time
+      if elapsed > 1.0:
+        print(f"network_broadcast_worker slow: {elapsed:.1f}s")
+      delay = 0.1 if remote_addr is not None else 1.0
+      time.sleep(max(0.05, delay - elapsed))
 
   def navi_route_worker(self):
     while self.is_running:

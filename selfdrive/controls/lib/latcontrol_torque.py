@@ -285,7 +285,8 @@ class LatControlTorque(LatControl):
                                             friction_input, lateral_accel_deadzone, friction_compensation=True,
                                             gravity_adjusted=True)
 
-      freeze_integrator = steer_limited_by_controls or CS.steeringPressed or CS.vEgo < 5
+      torque_saturated = abs(self.pid.control) >= self.steer_max
+      freeze_integrator = (steer_limited_by_controls and torque_saturated and np.sign(pid_log.error) == np.sign(self.pid.control)) or CS.steeringPressed or CS.vEgo < 0.3
       output_torque = self.pid.update(pid_log.error,
                                       feedforward=ff,
                                       speed=CS.vEgo,
