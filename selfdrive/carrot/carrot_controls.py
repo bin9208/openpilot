@@ -9,6 +9,11 @@ class CarrotControls:
     self.lat_suspend_enter_t = 0.0
     self.lat_suspend_hold_t = 0.0
 
+  def reset_lat_suspend(self):
+    self.lat_suspend_active = False
+    self.lat_suspend_enter_t = 0.0
+    self.lat_suspend_hold_t = 0.0
+
   def lat_suspend_control(self, CS, latActive):
     suspend_angle = float(self.params.get_int("LatSuspendAngleDeg"))
     resume_angle  = 15

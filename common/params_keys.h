@@ -178,6 +178,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoCurveSpeedLowerLimit", {PERSISTENT, INT, "30"}},
     {"AutoCurveSpeedFactor", {PERSISTENT, INT, "120"}},
     {"AutoCurveSpeedAggressiveness", {PERSISTENT, INT, "100"}},
+    {"AutoCurveSpeedPreview", {PERSISTENT, INT, "1"}},
+    {"AutoCurveSpeedPreviewDecelRate", {PERSISTENT, INT, "120"}},
+    {"AutoCurveSpeedPreviewTime", {PERSISTENT, INT, "10"}},
 
     {"AutoTurnControl", {PERSISTENT, INT, "0"}},
     {"AutoTurnControlSpeedTurn", {PERSISTENT, INT, "20"}},
@@ -194,6 +197,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoNaviSpeedSafetyFactor", {PERSISTENT, INT, "105"}},
     {"AutoNaviCountDownMode", {PERSISTENT, INT, "2"}},
     {"TurnSpeedControlMode", {PERSISTENT, INT, "1"}},
+    {"LongitudinalAccelMin", {PERSISTENT, INT, "420"}},
 
     {"MapTurnSpeedFactor", {PERSISTENT, INT, "90"}},
     {"ModelTurnSpeedFactor", {PERSISTENT, INT, "0"}},

@@ -85,10 +85,10 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      steer_ratio: float,
                                      steer_sw_max_deg: float) -> float:
   max_lat_accel = 5.0   # m/s^2
-  max_lat_jerk  = 4.0   # m/s^3
-  max_sw_rate_deg_per_tick = 2.0   # ★ EPS 보호용 상한
 
   v = max(float(v_ego), 1.0)
+  max_lat_jerk = float(np.interp(v, [5.0, 12.0, 22.0], [8.0, 5.5, 4.0]))
+  max_sw_rate_deg_per_tick = float(np.interp(v, [5.0, 12.0, 22.0], [3.6, 2.8, 2.0]))
 
   target_sw = float(np.clip(desired_sw_deg, -steer_sw_max_deg, steer_sw_max_deg))
 
@@ -111,7 +111,8 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   )
   err = abs(target_sw - last_sw_deg)
   if err > 20.0:
-    max_drw_per_tick_deg *= 0.5
+    large_error_factor = float(np.interp(v, [5.0, 15.0, 25.0], [0.85, 0.65, 0.50]))
+    max_drw_per_tick_deg *= large_error_factor
   
   # --- rate limit ---
   cmd_rw = rate_limit(target_rw, last_rw, -max_drw_per_tick_deg, max_drw_per_tick_deg)
@@ -162,6 +163,7 @@ class CarController(CarControllerBase):
     self.angle_max_torque = ANGLE_CONTROL_DEFAULT_MAX_TORQUE
     self.prev_abs_angle_error = 0.0
     self.recover_level = 1.0
+    self.longitudinal_accel_min = CarControllerParams.ACCEL_MIN
 
     self.lkas11_active = False
 
@@ -195,6 +197,11 @@ class CarController(CarControllerBase):
       if self.CP.flags & HyundaiFlags.ANGLE_CONTROL:
         angle_max_torque = steerMax if steerMax > 0 else ANGLE_CONTROL_DEFAULT_MAX_TORQUE
         self.angle_max_torque = int(np.clip(angle_max_torque, self.params.ANGLE_MIN_TORQUE, ANGLE_CONTROL_MAX_TORQUE))
+      longitudinal_accel_min = params.get_int("LongitudinalAccelMin")
+      if longitudinal_accel_min > 0:
+        self.longitudinal_accel_min = -float(np.clip(longitudinal_accel_min, 100, 600)) * 0.01
+      else:
+        self.longitudinal_accel_min = CarControllerParams.ACCEL_MIN
       if steerDeltaUp > 0:
         self.steerDeltaUp = steerDeltaUp
         #self.params.ANGLE_TORQUE_UP_RATE = steerDeltaUp
@@ -339,7 +346,7 @@ class CarController(CarControllerBase):
     self.apply_torque_last = apply_torque
 
     # accel + longitudinal
-    accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+    accel = float(np.clip(actuators.accel, self.longitudinal_accel_min, CarControllerParams.ACCEL_MAX))
     stopping = actuators.longControlState == LongCtrlState.stopping
     set_speed_in_units = hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH)
 
