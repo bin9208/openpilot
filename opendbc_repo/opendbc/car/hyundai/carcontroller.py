@@ -60,22 +60,6 @@ def process_hud_alert(enabled, fingerprint, hud_control):
 def rate_limit(x, x_last, lo, hi):
   return float(np.clip(x, x_last + lo, x_last + hi))
 
-def estimate_steer_ratio_from_curvature(desired_sw_deg: float,
-                                        desired_curvature: float,
-                                        wheelbase_m: float,
-                                        fallback_steer_ratio: float) -> float | None:
-  abs_curvature = abs(float(desired_curvature))
-  abs_sw_deg = abs(float(desired_sw_deg))
-  if abs_curvature < 8e-4 or abs_sw_deg < 2.0:
-    return None
-
-  road_wheel_deg = float(np.degrees(np.arctan(wheelbase_m * abs_curvature)))
-  if road_wheel_deg < 0.1:
-    return None
-
-  steer_ratio = abs_sw_deg / road_wheel_deg
-  return float(np.clip(steer_ratio, fallback_steer_ratio * 0.85, fallback_steer_ratio * 1.30))
-
 def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      last_sw_deg: float,
                                      v_ego: float,
@@ -160,7 +144,6 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
-    self.angle_limit_steer_ratio = CP.steerRatio
     self.lkas_max_torque = 0
     self.angle_max_torque = ANGLE_CONTROL_DEFAULT_MAX_TORQUE
     self.prev_abs_angle_error = 0.0
@@ -260,15 +243,6 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw, 
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
-    estimated_steer_ratio = estimate_steer_ratio_from_curvature(
-      actuators.steeringAngleDeg,
-      actuators.curvature,
-      self.CP.wheelbase,
-      self.CP.steerRatio,
-    )
-    if estimated_steer_ratio is not None:
-      self.angle_limit_steer_ratio = 0.90 * self.angle_limit_steer_ratio + 0.10 * estimated_steer_ratio
-
     apply_angle = apply_steer_angle_limits_physics(
       actuators.steeringAngleDeg,
       self.apply_angle_last,
@@ -276,7 +250,7 @@ class CarController(CarControllerBase):
       CS.out.steeringAngleDeg,
       CC.latActive,
       self.CP.wheelbase,
-      self.angle_limit_steer_ratio,
+      self.CP.steerRatio,
       self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
     )
 

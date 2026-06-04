@@ -39,6 +39,8 @@ ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 LANELESS_CURVATURE_SMOOTH_SECONDS = 0.10
 LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS = 0.24
 LANELESS_CURVE_MPC_SMOOTH_SECONDS = 0.08
+LANELESS_LOW_SPEED_MPC_ENTER = 9.5
+LANELESS_LOW_SPEED_MPC_EXIT = 10.5
 
 
 def get_model_y_std_1s(model_v2) -> float:
@@ -57,16 +59,12 @@ def get_laneless_curvature_smooth_seconds(v_ego: float, desired_curvature: float
   return min(LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS, LANELESS_CURVATURE_SMOOTH_SECONDS + extra_smooth)
 
 
-def should_use_laneless_mpc_curve(v_ego: float, desired_curvature: float, model_v2) -> bool:
-  if v_ego < 5.0:
+def update_laneless_low_speed_mpc(enabled: bool, laneless_mode: bool, v_ego: float) -> bool:
+  if not laneless_mode:
     return False
-
-  abs_curvature = abs(float(desired_curvature))
-  if abs_curvature > 2.5e-3:
-    return True
-
-  y_std_1s = get_model_y_std_1s(model_v2)
-  return abs_curvature > 1.2e-3 and y_std_1s > 0.08
+  if enabled:
+    return v_ego < LANELESS_LOW_SPEED_MPC_EXIT
+  return v_ego < LANELESS_LOW_SPEED_MPC_ENTER
 
 
 class Controls:
@@ -89,6 +87,7 @@ class Controls:
     self.steer_limited_by_controls = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
+    self.laneless_low_speed_mpc = False
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -193,18 +192,11 @@ class Controls:
       "turn left", "turn right", "atc left", "atc right", "fork left", "fork right",
     )
     model_turn_active = model_v2.meta.desire in (log.Desire.turnLeft, log.Desire.turnRight)
-    laneless_highway_straight = (
-      not lat_plan.useLaneLines and
-      CS.vEgo > 25.0 and
-      abs(model_v2.action.desiredCurvature) < 1.0e-3
-    )
-    laneless_mpc_curve = (
-      not lat_plan.useLaneLines and
-      should_use_laneless_mpc_curve(CS.vEgo, model_v2.action.desiredCurvature, model_v2)
-    )
+    laneless_mode = not lat_plan.useLaneLines
+    self.laneless_low_speed_mpc = update_laneless_low_speed_mpc(self.laneless_low_speed_mpc, laneless_mode, CS.vEgo)
     use_mpc_curvature = (
       self.lanefull_mode_enabled or atc_turn_active or model_turn_active or
-      laneless_highway_straight or laneless_mpc_curve
+      self.laneless_low_speed_mpc
     )
     lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
     steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
@@ -222,12 +214,7 @@ class Controls:
         new_desired_curvature = self.curvature
       else:
         mpc_smooth_seconds = lat_smooth_seconds
-        if laneless_highway_straight:
-          mpc_smooth_seconds = max(
-            mpc_smooth_seconds,
-            get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2),
-          )
-        elif laneless_mpc_curve and mpc_smooth_seconds > 0.0:
+        if self.laneless_low_speed_mpc and mpc_smooth_seconds > 0.0:
           mpc_smooth_seconds = min(mpc_smooth_seconds, LANELESS_CURVE_MPC_SMOOTH_SECONDS)
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, mpc_smooth_seconds)
