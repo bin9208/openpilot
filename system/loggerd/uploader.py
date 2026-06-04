@@ -38,17 +38,28 @@ nas_upload_user = os.getenv("NAS_UPLOAD_USER", "openpilot")
 nas_upload_pass = os.getenv("NAS_UPLOAD_PASS", "openpilot1200@")
 
 
-def resolve_nas_auth(base_url: str):
+_nas_auth_cache = None
+
+
+def resolve_nas_auth(base_url: str, session: requests.Session = None):
+  global _nas_auth_cache
+  if _nas_auth_cache is not None:
+    return _nas_auth_cache
+
   if not nas_upload_user:
     return None
+
+  req = session if session is not None else requests
   for auth in (HTTPBasicAuth(nas_upload_user, nas_upload_pass), HTTPDigestAuth(nas_upload_user, nas_upload_pass)):
     try:
-      resp = requests.request("OPTIONS", base_url, auth=auth, timeout=5, allow_redirects=False)
+      resp = req.request("OPTIONS", base_url, auth=auth, timeout=5, allow_redirects=False)
     except requests.RequestException:
       continue
     if resp.status_code != 401:
+      _nas_auth_cache = auth
       return auth
-  return HTTPDigestAuth(nas_upload_user, nas_upload_pass)
+  _nas_auth_cache = HTTPDigestAuth(nas_upload_user, nas_upload_pass)
+  return _nas_auth_cache
 
 
 class FakeRequest:
@@ -108,6 +119,9 @@ class Uploader:
       "rlog": 2, "rlog.zst": 2,
       "fcamera.hevc": 3,
     }
+
+    self.session = requests.Session()
+    self.created_dirs = set()
 
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
     r = self.params.get("AthenadRecentlyViewedRoutes")
@@ -172,15 +186,22 @@ class Uploader:
 
       # 부모 디렉토리 생성 (WebDAV MKCOL): dongle_id/ → dongle_id/logdir/
       base = nas_upload_url.rstrip('/')
-      auth = resolve_nas_auth(base)
-      try:
-        requests.request('MKCOL', f"{base}/{self.dongle_id}", auth=auth, timeout=5)
-      except Exception:
-        pass
-      parent_path = '/'.join(nas_key.split('/')[:-1])
-      if parent_path:
+      auth = resolve_nas_auth(base, self.session)
+      
+      if self.dongle_id not in self.created_dirs:
         try:
-          requests.request('MKCOL', f"{base}/{parent_path}", auth=auth, timeout=5)
+          resp = self.session.request('MKCOL', f"{base}/{self.dongle_id}", auth=auth, timeout=5)
+          if resp.status_code in (200, 201, 204, 405, 409):
+            self.created_dirs.add(self.dongle_id)
+        except Exception:
+          pass
+      
+      parent_path = '/'.join(nas_key.split('/')[:-1])
+      if parent_path and parent_path not in self.created_dirs:
+        try:
+          resp = self.session.request('MKCOL', f"{base}/{parent_path}", auth=auth, timeout=5)
+          if resp.status_code in (200, 201, 204, 405, 409):
+            self.created_dirs.add(parent_path)
         except Exception:
           pass
 
@@ -188,7 +209,7 @@ class Uploader:
       try:
         compress = key.endswith('.zst') and not fn.endswith('.zst')
         stream, _ = get_upload_stream(fn, compress)
-        response = requests.put(url, data=stream, auth=auth, timeout=30)
+        response = self.session.put(url, data=stream, auth=auth, timeout=30)
         response.is_nas_upload = True
         return response
       finally:
@@ -211,7 +232,7 @@ class Uploader:
     try:
       compress = key.endswith('.zst') and not fn.endswith('.zst')
       stream, _ = get_upload_stream(fn, compress)
-      response = requests.put(url, data=stream, headers=headers, timeout=10)
+      response = self.session.put(url, data=stream, headers=headers, timeout=10)
       return response
     finally:
       if stream:
