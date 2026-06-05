@@ -60,6 +60,12 @@ def process_hud_alert(enabled, fingerprint, hud_control):
 def rate_limit(x, x_last, lo, hi):
   return float(np.clip(x, x_last + lo, x_last + hi))
 
+def get_angle_control_steer_rate_limit(v_ego: float) -> float:
+  return float(np.interp(v_ego, [1.0, 4.0, 8.0, 12.0, 22.0], [1.5, 1.8, 4.0, 3.5, 3.0]))
+
+def get_low_speed_angle_torque_factor(v_ego: float) -> float:
+  return float(np.interp(max(float(v_ego), 0.0), [0.0, 1.0, 4.0, 6.0], [0.60, 0.60, 0.85, 1.0]))
+
 def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      last_sw_deg: float,
                                      v_ego: float,
@@ -72,7 +78,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
 
   v = max(float(v_ego), 1.0)
   max_lat_jerk = float(np.interp(v, [5.0, 12.0, 22.0], [12.0, 9.0, 6.5]))
-  max_sw_rate_deg_per_tick = float(np.interp(v, [5.0, 12.0, 22.0], [4.0, 3.5, 3.0]))
+  max_sw_rate_deg_per_tick = get_angle_control_steer_rate_limit(v)
 
   target_sw = float(np.clip(desired_sw_deg, -steer_sw_max_deg, steer_sw_max_deg))
 
@@ -276,6 +282,8 @@ class CarController(CarControllerBase):
 
     else:
       target_torque = self.angle_max_torque
+      if angle_control:
+        target_torque *= get_low_speed_angle_torque_factor(CS.out.vEgoRaw)
 
       max_steering_tq = self.params.STEER_DRIVER_ALLOWANCE * 0.7
       rate_ratio = max(20, max_steering_tq - abs(CS.out.steeringTorque)) / max_steering_tq

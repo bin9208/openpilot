@@ -188,16 +188,9 @@ class Controls:
     carrot_man = self.sm['carrotMan']
     curve_speed_abs = abs(carrot_man.vTurnSpeed)
     self.lanefull_mode_enabled = (lat_plan.useLaneLines and curve_speed_abs > self.params.get_int("UseLaneLineCurveSpeed"))
-    atc_turn_active = carrot_man.activeCarrot > 1 and 0 < carrot_man.xDistToTurn < 100 and carrot_man.atcType in (
-      "turn left", "turn right", "atc left", "atc right", "fork left", "fork right",
-    )
-    model_turn_active = model_v2.meta.desire in (log.Desire.turnLeft, log.Desire.turnRight)
     laneless_mode = not lat_plan.useLaneLines
     self.laneless_low_speed_mpc = update_laneless_low_speed_mpc(self.laneless_low_speed_mpc, laneless_mode, CS.vEgo)
-    use_mpc_curvature = (
-      self.lanefull_mode_enabled or atc_turn_active or model_turn_active or
-      self.laneless_low_speed_mpc
-    )
+    use_mpc_curvature = CC.latActive
     lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
     steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
     if steer_actuator_delay == 0.0:
@@ -216,6 +209,11 @@ class Controls:
         mpc_smooth_seconds = lat_smooth_seconds
         if self.laneless_low_speed_mpc and mpc_smooth_seconds > 0.0:
           mpc_smooth_seconds = min(mpc_smooth_seconds, LANELESS_CURVE_MPC_SMOOTH_SECONDS)
+        elif laneless_mode:
+          mpc_smooth_seconds = max(
+            mpc_smooth_seconds,
+            get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2),
+          )
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, mpc_smooth_seconds)
     else:      
