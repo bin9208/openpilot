@@ -84,6 +84,9 @@ def enable_webrtc(started, params, CP: car.CarParams) -> bool:
 def c3x_lite(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and params.get_bool("HardwareC3xLite")
 
+def lane_marking_shadow(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return started and params.get_bool("LaneMarkingModelEnabled")
+
 procs = [
   DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid"),
 
@@ -128,6 +131,7 @@ procs = [
   PythonProcess("maneuversd", "tools.longitudinal_maneuvers.maneuversd", long_maneuver),
   PythonProcess("radard", "selfdrive.controls.radard", only_onroad),
   PythonProcess("yolod", "selfdrive.yolo_integration.yolod", only_onroad),
+  PythonProcess("lanemarkingd", "selfdrive.lanemarking.lanemarkingd", lane_marking_shadow),
   PythonProcess("hardwared", "system.hardware.hardwared", always_run),
   PythonProcess("tombstoned", "system.tombstoned", always_run, enabled=not PC),
   PythonProcess("updated", "system.updated.updated", enable_updated, enabled=not PC),

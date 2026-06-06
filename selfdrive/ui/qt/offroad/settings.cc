@@ -75,6 +75,30 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
       tr("Display speed in km/h instead of mph."),
       "../assets/offroad/icon_metric.png",
     },
+    {
+      "LaneMarkingModelEnabled",
+      tr("Lane Marking Shadow Model"),
+      tr("Run the fcamera lane marking model in shadow mode only. This does not change steering, acceleration, braking, or lane change control."),
+      "../assets/offroad/icon_warning.png",
+    },
+    {
+      "LaneMarkingDisplayEnabled",
+      tr("Lane Marking Display"),
+      tr("Show the lane marking shadow overlay on the onroad UI."),
+      "../assets/offroad/icon_metric.png",
+    },
+    {
+      "LaneMarkingInterventionEnabled",
+      tr("Lane Marking Intervention Placeholder"),
+      tr("Reserved for future lane-change gating. In this build it is a no-op and cannot allow or block lane changes."),
+      "../assets/offroad/icon_warning.png",
+    },
+    {
+      "LaneMarkingShowDebugOverlay",
+      tr("Lane Marking Debug Overlay"),
+      tr("Show debug details for the lane marking shadow overlay."),
+      "../assets/offroad/icon_metric.png",
+    },
   };
 
 
@@ -705,6 +729,7 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   latLongToggles->addItem(new CValueControl("LaneChangeDelay", tr("LaneChange delay"), tr("x0.1sec"), 0, 100, 5));
   latLongToggles->addItem(new CValueControl("LaneChangeBsd", tr("LaneChange Bsd"), tr("-1:ignore bsd, 0:BSD detect, 1: block steer torque"), -1, 1, 1));
   latLongToggles->addItem(new CValueControl("LaneLineCheck", tr("LaneChange LineCheck"), tr("0:Color+Type, 1:Type only, 2:Type+torque override solid"), 0, 2, 1));
+  latLongToggles->addItem(new CValueControl("LaneMarkingConfidenceThreshold", tr("LaneMarking confidence(60%)"), tr("white_dashed allow_candidate threshold for shadow logs only"), 50, 100, 5));
   latLongToggles->addItem(new CValueControl("CustomSR", tr("LAT: SteerRatiox0.1(0)"), tr("Custom SteerRatio"), 0, 300, 1));
   latLongToggles->addItem(new CValueControl("SteerRatioRate", tr("LAT: SteerRatioRatex0.01(100)"), tr("SteerRatio apply rate"), 30, 170, 1));
   latLongToggles->addItem(new CValueControl("PathOffset", tr("LAT: PathOffset"), tr("(-)left, (+)right"), -150, 150, 1));

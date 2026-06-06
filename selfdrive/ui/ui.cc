@@ -72,6 +72,10 @@ void ui_update_params(UIState *s) {
   s->scene.is_metric = params.getBool("IsMetric");
   s->show_brightness_ratio = params.getFloat("ShowCustomBrightness") / 100.;
   s->scene.map_on_left = params.getBool("NavSettingLeftSide");
+  s->scene.lane_marking_display_enabled = params.getBool("LaneMarkingDisplayEnabled");
+  s->scene.lane_marking_show_debug_overlay = params.getBool("LaneMarkingShowDebugOverlay");
+  const std::string lane_marking_threshold = params.get("LaneMarkingConfidenceThreshold");
+  s->scene.lane_marking_confidence_threshold = lane_marking_threshold.empty() ? 60 : std::stoi(lane_marking_threshold);
 
 }
 

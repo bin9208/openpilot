@@ -81,6 +81,14 @@ selfdrive/modeld/models/*.pkl
 
 build/
 
+tools/lane_marking_model/crops/
+tools/lane_marking_model/outputs/
+tools/lane_marking_model/checkpoints/
+tools/lane_marking_model/**/*.pth
+tools/lane_marking_model/**/*.mp4
+tools/lane_marking_model/**/*.hevc
+tools/lane_marking_model/**/*.ts
+
 !**/.gitkeep
 
 poetry.toml

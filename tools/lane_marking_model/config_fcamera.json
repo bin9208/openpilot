@@ -1,0 +1,36 @@
+{
+  "corrected_labels_csv": "C:\\tmp\\lane_marking_labels_full\\corrected_labels.csv",
+  "camera": "fcamera",
+  "output_dir": "C:\\tmp\\lane_marking_model_pipeline_fcamera",
+  "crops_dir": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\crops",
+  "checkpoints_dir": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\checkpoints",
+  "misclassified_dir": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\outputs\\misclassified",
+  "false_allow_dir": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\outputs\\false_allow_cases",
+  "split_metadata_csv": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\split_metadata.csv",
+  "split_check_json": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\split_check.json",
+  "crop_metadata_csv": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\crop_metadata.csv",
+  "manifest_csv": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\manifest.csv",
+  "manifest_json": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\manifest_summary.json",
+  "frame_mapping_csv": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\frame_mapping.csv",
+  "projection_debug_dir": "C:\\tmp\\lane_marking_model_pipeline_fcamera\\projection_debug",
+  "runtime_model_path": "selfdrive/lanemarking/models/lane_marking_fcamera.torchscript",
+  "runtime_classes": [
+    "road_edge_or_barrier",
+    "white_dashed",
+    "white_solid",
+    "yellow_solid"
+  ],
+  "crop_size": 224,
+  "target_x_evals": [10.0, 15.0, 20.0, 25.0, 30.0],
+  "classes": [
+    "white_dashed",
+    "white_solid",
+    "yellow_solid",
+    "road_edge_or_barrier"
+  ],
+  "model_arch": "resnet18",
+  "batch_size": 64,
+  "epochs": 10,
+  "learning_rate": 0.001,
+  "num_workers": 0
+}

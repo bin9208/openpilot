@@ -71,6 +71,9 @@ typedef struct UIScene {
   uint64_t started_frame;
 
   bool carrot_experimental_mode = false;
+  bool lane_marking_display_enabled = false;
+  bool lane_marking_show_debug_overlay = false;
+  int lane_marking_confidence_threshold = 60;
 
 } UIScene;
 

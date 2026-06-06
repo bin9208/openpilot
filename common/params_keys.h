@@ -165,6 +165,12 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"RecordRoadCam", {PERSISTENT, INT, "0"}},
     {"HDPuse", {PERSISTENT, INT, "0"}},
 
+    {"LaneMarkingModelEnabled", {PERSISTENT, BOOL, "0"}},
+    {"LaneMarkingDisplayEnabled", {PERSISTENT, BOOL, "0"}},
+    {"LaneMarkingInterventionEnabled", {PERSISTENT, BOOL, "0"}},
+    {"LaneMarkingConfidenceThreshold", {PERSISTENT, INT, "60"}},
+    {"LaneMarkingShowDebugOverlay", {PERSISTENT, BOOL, "0"}},
+
     {"AutoCruiseControl", {PERSISTENT, INT, "0"}},
     {"CruiseEcoControl", {PERSISTENT, INT, "2"}},
     {"CarrotCruiseDecel", {PERSISTENT, INT, "-1"}},

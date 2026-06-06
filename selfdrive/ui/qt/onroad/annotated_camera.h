@@ -32,6 +32,7 @@ protected:
   void initializeGL() override;
   void showEvent(QShowEvent *event) override;
   mat4 calcFrameMatrix() override;
+  void drawLaneMarkingOverlay(QPainter &painter, const UIState &s);
 
   double prev_draw_t = 0;
   FirstOrderFilter fps_filter;

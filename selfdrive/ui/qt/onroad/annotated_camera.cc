@@ -208,6 +208,8 @@ void AnnotatedCameraWidget::paintEvent(QPaintEvent *event) {
     params.putBool("CarrotException", true);
   }
   painter.endNativePainting();
+
+  drawLaneMarkingOverlay(painter, *s);
   //dmon.draw(painter, rect());
   //hud.updateState(*s);
   //hud.draw(painter, rect());
@@ -232,4 +234,29 @@ void AnnotatedCameraWidget::showEvent(QShowEvent *event) {
 
   ui_update_params(uiState());
   prev_draw_t = millis_since_boot();
+}
+
+void AnnotatedCameraWidget::drawLaneMarkingOverlay(QPainter &painter, const UIState &s) {
+  if (!s.scene.lane_marking_display_enabled) {
+    return;
+  }
+
+  const bool debug = s.scene.lane_marking_show_debug_overlay;
+  const int threshold = std::clamp(s.scene.lane_marking_confidence_threshold, 0, 100);
+  const QRect box(UI_BORDER_SIZE, UI_BORDER_SIZE, debug ? 570 : 410, debug ? 148 : 88);
+
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(0, 0, 0, 165));
+  painter.drawRoundedRect(box, 8, 8);
+
+  painter.setPen(QColor(255, 255, 255, 235));
+  painter.setFont(InterFont(32, QFont::DemiBold));
+  painter.drawText(box.adjusted(22, 12, -22, -10), Qt::AlignLeft | Qt::AlignTop, tr("Lane marking shadow"));
+
+  if (debug) {
+    painter.setFont(InterFont(25));
+    painter.setPen(QColor(255, 255, 255, 205));
+    painter.drawText(box.adjusted(22, 64, -22, -10), Qt::AlignLeft | Qt::AlignTop,
+                     tr("threshold %1% | control path disabled").arg(threshold));
+  }
 }
