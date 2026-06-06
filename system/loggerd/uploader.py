@@ -30,12 +30,16 @@ MAX_UPLOAD_SIZES = {
   "qcam": 5*1e6,
 }
 
+AUTO_LOG_UPLOAD_PARAM = "AutoLogUpload"
+AUTO_UPLOAD_FILES = {"rlog", "rlog.zst", "qcamera.ts", "dcamera.hevc"}
+
 allow_sleep = bool(os.getenv("UPLOADER_SLEEP", "1"))
 force_wifi = os.getenv("FORCEWIFI") is not None
 fake_upload = os.getenv("FAKEUPLOAD") is not None
 nas_upload_url  = os.getenv("NAS_UPLOAD_URL",  "https://lunabox.myqnapcloud.com:5128/openpilot")
 nas_upload_user = os.getenv("NAS_UPLOAD_USER", "openpilot")
 nas_upload_pass = os.getenv("NAS_UPLOAD_PASS", "openpilot1200@")
+nas_upload_timeout = float(os.getenv("NAS_UPLOAD_TIMEOUT", "120"))
 
 
 _nas_auth_cache = None
@@ -114,10 +118,9 @@ class Uploader:
 
     self.immediate_folders = ["crash/", "boot/"]
     self.immediate_priority = {
-      "qlog": 0, "qlog.zst": 0,
+      "rlog": 0, "rlog.zst": 0,
       "qcamera.ts": 1,
-      "rlog": 2, "rlog.zst": 2,
-      "fcamera.hevc": 3,
+      "dcamera.hevc": 2,
     }
 
     self.session = requests.Session()
@@ -138,6 +141,9 @@ class Uploader:
         continue
 
       for name in sorted(names, key=lambda n: self.immediate_priority.get(n, 1000)):
+        if name not in AUTO_UPLOAD_FILES:
+          continue
+
         key = os.path.join(logdir, name)
         fn = os.path.join(path, name)
         # skip files already uploaded
@@ -209,7 +215,7 @@ class Uploader:
       try:
         compress = key.endswith('.zst') and not fn.endswith('.zst')
         stream, _ = get_upload_stream(fn, compress)
-        response = self.session.put(url, data=stream, auth=auth, timeout=30)
+        response = self.session.put(url, data=stream, auth=auth, timeout=nas_upload_timeout)
         response.is_nas_upload = True
         return response
       finally:
@@ -312,9 +318,10 @@ def main(exit_event: threading.Event = None) -> None:
   except Exception:
     cloudlog.exception("failed to set core affinity")
 
-  clear_locks(Paths.log_root())
-
   params = Params()
+  if params.get_bool("IsOffroad"):
+    clear_locks(Paths.log_root())
+
   dongle_id = params.get("DongleId")
 
   if dongle_id is None:
@@ -328,8 +335,13 @@ def main(exit_event: threading.Event = None) -> None:
   while not exit_event.is_set():
     sm.update(0)
     offroad = params.get_bool("IsOffroad")
+    if not params.get_bool(AUTO_LOG_UPLOAD_PARAM):
+      if allow_sleep:
+        time.sleep(60 if offroad else 5)
+      continue
+
     network_type = sm['deviceState'].networkType if not force_wifi else NetworkType.wifi
-    if network_type == NetworkType.none:
+    if network_type == NetworkType.none or (not force_wifi and network_type != NetworkType.wifi):
       if allow_sleep:
         time.sleep(60 if offroad else 5)
       continue

@@ -46,6 +46,7 @@ const DEVICE_TOGGLES = [
   { param: "AlwaysOnDM", labelKey: "always_on_dm", defaultLabel: "Always-on DM" },
   { param: "RecordFront", labelKey: "record_front", defaultLabel: "Record and Upload Driver Camera" },
   { param: "RecordAudio", labelKey: "record_audio", defaultLabel: "Record and Upload Microphone Audio" },
+  { param: "AutoLogUpload", labelKey: "auto_log_upload", defaultLabel: "Auto Upload Logs to NAS" },
   { param: "IsMetric", labelKey: "is_metric", defaultLabel: "Use Metric System" },
 ];
 

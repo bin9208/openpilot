@@ -64,6 +64,12 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
       "../assets/offroad/microphone.png",
     },
     {
+      "AutoLogUpload",
+      tr("Auto Upload Logs to NAS"),
+      tr("Automatically upload rlog.zst, qcamera.ts, and dcamera.hevc to the configured NAS over Wi-Fi after each completed driving segment."),
+      "../assets/offroad/icon_wifi_uploading.svg",
+    },
+    {
       "IsMetric",
       tr("Use Metric System"),
       tr("Display speed in km/h instead of mph."),

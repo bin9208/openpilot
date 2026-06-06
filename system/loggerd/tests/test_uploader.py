@@ -52,7 +52,7 @@ class TestUploader(UploaderTestCase):
 
   def gen_files(self, lock=False, xattr: bytes = None, boot=True) -> list[Path]:
     f_paths = []
-    for t in ["qlog", "rlog", "dcamera.hevc", "fcamera.hevc"]:
+    for t in ["qlog", "rlog", "qcamera.ts", "dcamera.hevc", "fcamera.hevc"]:
       f_paths.append(self.make_file_with_data(self.seg_dir, t, 1, lock=lock, upload_xattr=xattr))
 
     if boot:
@@ -61,12 +61,23 @@ class TestUploader(UploaderTestCase):
 
   def gen_order(self, seg1: list[int], seg2: list[int], boot=True) -> list[str]:
     keys = []
-    if boot:
-      keys += [f"boot/{self.seg_format.format(i)}.zst" for i in seg1]
-      keys += [f"boot/{self.seg_format2.format(i)}.zst" for i in seg2]
-    keys += [f"{self.seg_format.format(i)}/qlog.zst" for i in seg1]
-    keys += [f"{self.seg_format2.format(i)}/qlog.zst" for i in seg2]
+    for i in seg1:
+      keys += [
+        f"{self.seg_format.format(i)}/rlog.zst",
+        f"{self.seg_format.format(i)}/qcamera.ts",
+        f"{self.seg_format.format(i)}/dcamera.hevc",
+      ]
+    for i in seg2:
+      keys += [
+        f"{self.seg_format2.format(i)}/rlog.zst",
+        f"{self.seg_format2.format(i)}/qcamera.ts",
+        f"{self.seg_format2.format(i)}/dcamera.hevc",
+      ]
     return keys
+
+  def uploaded_attr_path(self, key: str) -> Path:
+    path = Path(Paths.log_root()) / key
+    return path.with_suffix("") if key.endswith(".zst") else path
 
   def test_upload(self):
     self.gen_files(lock=False)
@@ -82,7 +93,7 @@ class TestUploader(UploaderTestCase):
     assert not len(log_handler.upload_order) < len(exp_order), "Some files failed to upload"
     assert not len(log_handler.upload_order) > len(exp_order), "Some files were uploaded twice"
     for f_path in exp_order:
-      assert os.getxattr((Path(Paths.log_root()) / f_path).with_suffix(""), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not uploaded"
+      assert os.getxattr(self.uploaded_attr_path(f_path), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not uploaded"
 
     assert log_handler.upload_order == exp_order, "Files uploaded in wrong order"
 
@@ -100,7 +111,7 @@ class TestUploader(UploaderTestCase):
     assert not len(log_handler.upload_order) < len(exp_order), "Some files failed to upload"
     assert not len(log_handler.upload_order) > len(exp_order), "Some files were uploaded twice"
     for f_path in exp_order:
-      assert os.getxattr((Path(Paths.log_root()) / f_path).with_suffix(""), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not uploaded"
+      assert os.getxattr(self.uploaded_attr_path(f_path), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not uploaded"
 
     assert log_handler.upload_order == exp_order, "Files uploaded in wrong order"
 
@@ -119,7 +130,7 @@ class TestUploader(UploaderTestCase):
     assert not len(log_handler.upload_ignored) < len(exp_order), "Some files failed to ignore"
     assert not len(log_handler.upload_ignored) > len(exp_order), "Some files were ignored twice"
     for f_path in exp_order:
-      assert os.getxattr((Path(Paths.log_root()) / f_path).with_suffix(""), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not ignored"
+      assert os.getxattr(self.uploaded_attr_path(f_path), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not ignored"
 
     assert log_handler.upload_ignored == exp_order, "Files ignored in wrong order"
 
@@ -144,7 +155,7 @@ class TestUploader(UploaderTestCase):
     assert not len(log_handler.upload_order) < len(exp_order), "Some files failed to upload"
     assert not len(log_handler.upload_order) > len(exp_order), "Some files were uploaded twice"
     for f_path in exp_order:
-      assert os.getxattr((Path(Paths.log_root()) / f_path).with_suffix(""), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not uploaded"
+      assert os.getxattr(self.uploaded_attr_path(f_path), UPLOAD_ATTR_NAME) == UPLOAD_ATTR_VALUE, "All files not uploaded"
 
     assert log_handler.upload_order == exp_order, "Files uploaded in wrong order"
 

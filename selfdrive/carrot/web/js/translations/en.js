@@ -122,6 +122,7 @@ window.CarrotTranslations.register("en", {
     always_on_dm: "Always-on DM",
     record_front: "Record and Upload Driver Camera",
     record_audio: "Record and Upload Microphone Audio",
+    auto_log_upload: "Auto Upload Logs to NAS",
     record_front_lock: "Record audio",
     is_metric: "Use Metric System",
     enable_adb: "Enable ADB",

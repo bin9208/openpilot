@@ -150,6 +150,16 @@ def webdav_verify_uploads() -> bool:
   return value in {"1", "true", "yes", "on"}
 
 
+def webdav_upload_filenames() -> set[str]:
+  value = (
+    os.environ.get("CARROT_WEBDAV_UPLOAD_FILES")
+    or os.environ.get("NAS_UPLOAD_FILES")
+    or "rlog.zst,qcamera.ts,dcamera.hevc"
+  )
+  names = {name.strip() for name in value.split(",") if name.strip()}
+  return names or {"rlog.zst", "qcamera.ts", "dcamera.hevc"}
+
+
 def resolve_webdav_auth_kind(base_url: str, session: requests.Session | None = None) -> tuple[str, tuple[str, str] | None]:
   credentials = webdav_credentials()
   if not credentials:
@@ -425,6 +435,7 @@ def upload_folder_to_webdav(
   own_client = client is None
   client = client or WebDAVClient()
   base_path = f"routes/{directory}/{remote_path}".strip("/").replace("\\", "/")
+  upload_filenames = webdav_upload_filenames()
 
   try:
     check_cancel()
@@ -439,6 +450,8 @@ def upload_folder_to_webdav(
       client.ensure_dir(remote_dir, check_cancel)
       for filename in files:
         check_cancel()
+        if filename not in upload_filenames:
+          continue
         local_path = os.path.join(root, filename)
         if filename.endswith(".lock") or not os.path.isfile(local_path):
           continue

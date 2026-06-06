@@ -122,6 +122,7 @@ window.CarrotTranslations.register("ko", {
     always_on_dm: "운전자 모니터링 항상 켜기",
     record_front: "운전자 카메라 녹화 및 업로드",
     record_audio: "마이크 오디오 녹음 및 업로드",
+    auto_log_upload: "NAS 자동 로그 업로드",
     record_front_lock: "오디오 녹음",
     is_metric: "미터법 사용",
     enable_adb: "ADB 활성화",

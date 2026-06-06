@@ -78,6 +78,7 @@ class UploaderTestCase:
     self.params = Params()
     self.params.put("IsOffroad", "1")
     self.params.put("DongleId", "0000000000000000")
+    self.params.put_bool("AutoLogUpload", True)
 
   def make_file_with_data(self, f_dir: str, fn: str, size_mb: float = .1, lock: bool = False,
                           upload_xattr: bytes = None, preserve_xattr: bytes = None) -> Path:
