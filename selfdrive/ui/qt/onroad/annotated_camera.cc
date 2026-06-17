@@ -243,7 +243,7 @@ void AnnotatedCameraWidget::drawLaneMarkingOverlay(QPainter &painter, const UISt
 
   const bool debug = s.scene.lane_marking_show_debug_overlay;
   const int threshold = std::clamp(s.scene.lane_marking_confidence_threshold, 0, 100);
-  const QRect box(UI_BORDER_SIZE, UI_BORDER_SIZE, debug ? 570 : 410, debug ? 148 : 88);
+  const QRect box(UI_BORDER_SIZE, UI_BORDER_SIZE, debug ? 760 : 650, debug ? 148 : 112);
 
   painter.setPen(Qt::NoPen);
   painter.setBrush(QColor(0, 0, 0, 165));
@@ -253,10 +253,29 @@ void AnnotatedCameraWidget::drawLaneMarkingOverlay(QPainter &painter, const UISt
   painter.setFont(InterFont(32, QFont::DemiBold));
   painter.drawText(box.adjusted(22, 12, -22, -10), Qt::AlignLeft | Qt::AlignTop, tr("Lane marking shadow"));
 
+  QString state_text = tr("waiting for lane marking");
+  bool cut_in_assist = false;
+  SubMaster &sm = *(s.sm);
+  if (sm.alive("laneMarkingState") && sm.valid("laneMarkingState")) {
+    const auto lane_marking = sm["laneMarkingState"].getLaneMarkingState();
+    cut_in_assist = lane_marking.getCutInAssist();
+    if (lane_marking.getValid() && !lane_marking.getInferenceSkipped()) {
+      state_text = QString("L %1 %2% | R %3 %4%")
+                     .arg(QString::fromUtf8(lane_marking.getLeftLabel().cStr()))
+                     .arg(qRound(lane_marking.getLeftConfidence() * 100.0f))
+                     .arg(QString::fromUtf8(lane_marking.getRightLabel().cStr()))
+                     .arg(qRound(lane_marking.getRightConfidence() * 100.0f));
+    }
+  }
+
+  painter.setFont(InterFont(24));
+  painter.setPen(QColor(255, 255, 255, 210));
+  painter.drawText(box.adjusted(22, 52, -22, -10), Qt::AlignLeft | Qt::AlignTop, state_text);
+
   if (debug) {
     painter.setFont(InterFont(25));
     painter.setPen(QColor(255, 255, 255, 205));
-    painter.drawText(box.adjusted(22, 64, -22, -10), Qt::AlignLeft | Qt::AlignTop,
-                     tr("threshold %1% | control path disabled").arg(threshold));
+    painter.drawText(box.adjusted(22, 92, -22, -10), Qt::AlignLeft | Qt::AlignTop,
+                     tr("threshold %1% | cut-in assist %2").arg(threshold).arg(cut_in_assist ? tr("on") : tr("off")));
   }
 }

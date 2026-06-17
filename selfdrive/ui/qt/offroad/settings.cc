@@ -99,6 +99,12 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
       tr("Show debug details for the lane marking shadow overlay."),
       "../assets/offroad/icon_metric.png",
     },
+    {
+      "SideVisionModelEnabled",
+      tr("Side Vision Shadow"),
+      tr("Run driver-camera side ROI detection in shadow mode and log it with BSD/radar evidence. This does not change lane-change control."),
+      "../assets/offroad/icon_warning.png",
+    },
   };
 
 
@@ -730,6 +736,7 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   latLongToggles->addItem(new CValueControl("LaneChangeBsd", tr("LaneChange Bsd"), tr("-1:ignore bsd, 0:BSD detect, 1: block steer torque"), -1, 1, 1));
   latLongToggles->addItem(new CValueControl("LaneLineCheck", tr("LaneChange LineCheck"), tr("0:Color+Type, 1:Type only, 2:Type+torque override solid"), 0, 2, 1));
   latLongToggles->addItem(new CValueControl("LaneMarkingConfidenceThreshold", tr("LaneMarking confidence(60%)"), tr("white_dashed allow_candidate threshold for shadow logs only"), 50, 100, 5));
+  latLongToggles->addItem(new CValueControl("SideVisionConfidenceThreshold", tr("SideVision confidence(60%)"), tr("driver-camera ROI threshold for shadow logs only"), 40, 95, 5));
   latLongToggles->addItem(new CValueControl("CustomSR", tr("LAT: SteerRatiox0.1(0)"), tr("Custom SteerRatio"), 0, 300, 1));
   latLongToggles->addItem(new CValueControl("SteerRatioRate", tr("LAT: SteerRatioRatex0.01(100)"), tr("SteerRatio apply rate"), 30, 170, 1));
   latLongToggles->addItem(new CValueControl("PathOffset", tr("LAT: PathOffset"), tr("(-)left, (+)right"), -150, 150, 1));

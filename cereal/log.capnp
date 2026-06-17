@@ -2683,8 +2683,8 @@ struct Event {
     carrotMan @107 :Custom.CarrotMan;
     yoloObjectData @108 :Custom.YoloObjectData;
     yoloDetection @109 :Custom.YoloDetection;
-    customReserved3 @110 :Custom.CustomReserved3;
-    customReserved4 @111 :Custom.CustomReserved4;
+    laneMarkingState @110 :Custom.LaneMarkingState;
+    sideVisionState @111 :Custom.SideVisionState;
     customReserved5 @112 :Custom.CustomReserved5;
     customReserved6 @113 :Custom.CustomReserved6;
     customReserved7 @114 :Custom.CustomReserved7;

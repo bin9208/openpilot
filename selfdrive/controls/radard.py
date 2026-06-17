@@ -32,6 +32,17 @@ CUT_IN_MAX_DIST = 50.0
 CUT_IN_CLOSE_DIST = 30.0
 CUT_IN_MIN_TRACK_AGE = 0.30
 CUT_IN_MIN_TRACK_AGE_CLOSE = 0.15
+LANE_MARKING_MIN_WIDTH = 2.3
+LANE_MARKING_MAX_WIDTH = 4.8
+LANE_MARKING_ALLOW_LABELS = frozenset({"white_dashed"})
+LANE_MARKING_BLOCK_LABELS = frozenset({
+  "road_edge_or_barrier",
+  "white_solid",
+  "yellow_solid",
+  "yellow_double",
+  "yellow_double_solid",
+  "yellow_double_dashed",
+})
 
 VISION_MIN_X_STD = 1.5
 VISION_MIN_Y_STD = 0.45
@@ -521,6 +532,11 @@ class RadarD:
     self.radar_lat_factor = 0.0
 
     self.radar_detected = False
+    self.lane_line_available = False
+    self.lane_marking_intervention_enabled = False
+    self.lane_marking_cut_in_available = False
+    self.lane_marking_threshold = 0.60
+    self.lane_marking_state: dict[str, Any] = {"valid": False}
 
     self._corner_lat_hist = {
       "L": deque(maxlen=10),
@@ -538,6 +554,10 @@ class RadarD:
     self.radar_lat_factor = self.params.get_float("RadarLatFactor") * 0.01
     self.radar_reaction_factor = self.params.get_float("RadarReactionFactor") * 0.01
     self.detect_cut_in = self.radar_lat_factor > 0
+    self.lane_marking_intervention_enabled = self.params.get_bool("LaneMarkingInterventionEnabled")
+    self.lane_marking_threshold = clamp(self.params.get_int("LaneMarkingConfidenceThreshold") * 0.01, 0.0, 1.0)
+    self.lane_marking_state = self._read_lane_marking_state(sm)
+    self.lane_marking_cut_in_available = self.lane_marking_intervention_enabled and self.lane_marking_state.get("valid", False)
 
     leads_v3 = sm['modelV2'].leadsV3
     if sm.recv_frame['carState'] != self.last_v_ego_frame:
@@ -612,6 +632,10 @@ class RadarD:
       self.radar_state.leadTwo, _ = self.get_lead(sm['carState'], md, alive_tracks, 1, leads_v3[1], model_v_ego, self.lead_prob_filters[1].x, low_speed_override=False)
 
       self.lane_line_available = self._lane_lines_available(md)
+      self.lane_marking_cut_in_available = (
+        self.lane_marking_intervention_enabled and
+        self.lane_marking_state.get("valid", False)
+      )
       self.compute_leads(self.v_ego, alive_tracks, md, self.lead_prob_filters[0].x)
       if self.leadTwo is not None:
         self.radar_state.leadTwo = self.leadTwo
@@ -672,6 +696,53 @@ class RadarD:
 
     return lead_dict, radar
 
+  def _read_lane_marking_state(self, sm: messaging.SubMaster) -> dict[str, Any]:
+    empty = {"valid": False}
+    if not self.lane_marking_intervention_enabled or "laneMarkingState" not in sm.data:
+      return empty
+    if not sm.alive.get("laneMarkingState", False) or not sm.valid.get("laneMarkingState", False):
+      return empty
+
+    state = sm["laneMarkingState"]
+    lane_width = float(state.laneWidth)
+    valid = (
+      bool(state.valid) and
+      not bool(state.inferenceSkipped) and
+      LANE_MARKING_MIN_WIDTH < lane_width < LANE_MARKING_MAX_WIDTH
+    )
+    if not valid:
+      return empty
+
+    def side_state(side: str) -> dict[str, Any]:
+      if side == "left":
+        label = str(state.leftLabel)
+        confidence = float(state.leftConfidence)
+        block = bool(state.leftBlock)
+        allow = bool(state.leftNoBlock)
+      else:
+        label = str(state.rightLabel)
+        confidence = float(state.rightConfidence)
+        block = bool(state.rightBlock)
+        allow = bool(state.rightNoBlock)
+      return {
+        "label": label,
+        "confidence": confidence,
+        "block": block or (label in LANE_MARKING_BLOCK_LABELS and confidence >= self.lane_marking_threshold),
+        "allow": allow or (label in LANE_MARKING_ALLOW_LABELS and confidence >= self.lane_marking_threshold),
+      }
+
+    return {
+      "valid": True,
+      "lane_width": lane_width,
+      "left": side_state("left"),
+      "right": side_state("right"),
+    }
+
+  def _lane_marking_side(self, side: str) -> dict[str, Any]:
+    if not self.lane_marking_state.get("valid", False):
+      return {"label": "unknown", "confidence": 0.0, "block": False, "allow": False}
+    return self.lane_marking_state.get(side, {"label": "unknown", "confidence": 0.0, "block": False, "allow": False})
+
   def _lane_lines_available(self, md) -> bool:
     if len(md.laneLineProbs) <= 2 or len(md.laneLines) <= 2:
       return False
@@ -684,8 +755,8 @@ class RadarD:
     lane_width = abs(float(md.laneLines[2].y[0]) - float(md.laneLines[1].y[0]))
     return left_prob > 0.35 and right_prob > 0.35 and 2.3 < lane_width < 4.8
 
-  def _cut_in_candidate(self, c: Track) -> bool:
-    if not self.lane_line_available:
+  def _cut_in_candidate(self, c: Track, side: str) -> bool:
+    if not (self.lane_line_available or self.lane_marking_cut_in_available):
       return False
     if not (3.0 < c.dRel < CUT_IN_MAX_DIST and c.vLead > 4.0):
       return False
@@ -702,8 +773,27 @@ class RadarD:
     lane_future = max(c.in_lane_prob_future, c.in_lane_prob_future_expanded * 0.65)
     moving_toward_center = abs(c.dPath_future) < abs(c.dPath) - (0.05 if close else 0.12)
     lane_evidence_growing = lane_future > lane_now + 0.04
-    center_entering = max(c.in_lane_prob, c.in_lane_prob_future) > (0.02 if close else 0.06)
-    touching_our_lane = max(lane_now, lane_future) > (0.08 if close else 0.14)
+    center_entering_threshold = 0.02 if close else 0.06
+    touching_threshold = 0.08 if close else 0.14
+    if self.lane_marking_cut_in_available and not self.lane_line_available:
+      center_entering_threshold += 0.03
+      touching_threshold += 0.06
+
+    center_entering = max(c.in_lane_prob, c.in_lane_prob_future) > center_entering_threshold
+    touching_our_lane = max(lane_now, lane_future) > touching_threshold
+
+    if self.lane_marking_cut_in_available:
+      marking = self._lane_marking_side(side)
+      if marking["block"]:
+        crossing_solid = (
+          moving_toward_center and
+          (lane_future > lane_now + (0.07 if close else 0.10) or max(c.in_lane_prob, c.in_lane_prob_future) > (0.12 if close else 0.18))
+        )
+        if not (touching_our_lane and crossing_solid):
+          return False
+      elif not marking["allow"] and not self.lane_line_available:
+        if not (touching_our_lane and moving_toward_center and (lane_evidence_growing or center_entering)):
+          return False
 
     if close:
       return touching_our_lane and (moving_toward_center or lane_evidence_growing or center_entering)
@@ -723,9 +813,14 @@ class RadarD:
     
     left_list, right_list, center_list, cutin_list = [], [], [], []
 
-    def maybe_add_cut_in(c: Track):
-      if self._cut_in_candidate(c):
-        confirm_frames = max(1, int((0.10 if c.dRel < CUT_IN_CLOSE_DIST else 0.20) / DT_MDL))
+    def maybe_add_cut_in(c: Track, side: str):
+      if self._cut_in_candidate(c, side):
+        confirm_time = 0.10 if c.dRel < CUT_IN_CLOSE_DIST else 0.20
+        if self.lane_marking_cut_in_available and not self.lane_line_available:
+          confirm_time += 0.10
+        if self.lane_marking_cut_in_available and self._lane_marking_side(side)["block"]:
+          confirm_time += 0.10
+        confirm_frames = max(1, int(confirm_time / DT_MDL))
         if c.cut_in_count >= confirm_frames:
           cutin_list.append(c.get_CutInState(v_ego, 0.03, float(-lead_msg.y[0])))
         c.cut_in_count += 3 if c.dRel < CUT_IN_CLOSE_DIST else 2
@@ -742,11 +837,11 @@ class RadarD:
       # left/right
       elif y_rel_neg < 0: #left_lane_y:
         ld = c.get_RadarState(0, 0)
-        maybe_add_cut_in(c)
+        maybe_add_cut_in(c, "left")
         left_list.append(ld)
       else:
         ld = c.get_RadarState(0, 0)
-        maybe_add_cut_in(c)
+        maybe_add_cut_in(c, "right")
         right_list.append(ld)
 
       c.cut_in_count = max(c.cut_in_count - 1, 0)
@@ -956,7 +1051,13 @@ def main() -> None:
   cloudlog.info("radard got CarParams")
 
   # *** setup messaging
-  sm = messaging.SubMaster(['modelV2', 'carState', 'liveTracks'], poll='modelV2')
+  sm = messaging.SubMaster(
+    ['modelV2', 'carState', 'liveTracks', 'laneMarkingState'],
+    poll='modelV2',
+    ignore_alive=['laneMarkingState'],
+    ignore_avg_freq=['laneMarkingState'],
+    ignore_valid=['laneMarkingState'],
+  )
   #sm = messaging.SubMaster(['modelV2', 'carState', 'liveTracks'])
   pm = messaging.PubMaster(['radarState'])
 

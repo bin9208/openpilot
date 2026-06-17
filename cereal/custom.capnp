@@ -70,10 +70,63 @@ struct YoloObjectData @0xaedffd8f31e7b55d {
   roundTripMs @12 :UInt32;   # full pipeline: frame sent → result received on comma3
 }
 
-struct CustomReserved3 @0xda96579883444c35 {
+struct LaneMarkingState @0xda96579883444c35 {
+  frameId @0 :UInt64;
+  timestampEof @1 :UInt64;
+  modelExecutionTimeMs @2 :Float32;
+  valid @3 :Bool;
+  leftLabel @4 :Text;
+  rightLabel @5 :Text;
+  leftConfidence @6 :Float32;
+  rightConfidence @7 :Float32;
+  leftDecision @8 :Text;
+  rightDecision @9 :Text;
+  leftBoundaryY @10 :Float32;
+  rightBoundaryY @11 :Float32;
+  laneWidth @12 :Float32;
+  leftBlock @13 :Bool;
+  rightBlock @14 :Bool;
+  leftNoBlock @15 :Bool;
+  rightNoBlock @16 :Bool;
+  cutInAssist @17 :Bool;
+  inferenceSkipped @18 :Bool;
 }
 
-struct CustomReserved4 @0x80ae746ee2596b11 {
+struct SideVisionState @0x80ae746ee2596b11 {
+  frameId @0 :UInt64;
+  timestampEof @1 :UInt64;
+  roadFrameId @2 :UInt64;
+  valid @3 :Bool;
+  modelExecutionTimeMs @4 :Float32;
+  inferenceSkipped @5 :Bool;
+
+  leftCameraProb @6 :Float32;
+  rightCameraProb @7 :Float32;
+  leftCameraDetected @8 :Bool;
+  rightCameraDetected @9 :Bool;
+
+  leftBsd @10 :Bool;
+  rightBsd @11 :Bool;
+  leftRadarDetected @12 :Bool;
+  rightRadarDetected @13 :Bool;
+  leftRadarDRel @14 :Float32;
+  rightRadarDRel @15 :Float32;
+  leftCornerLongDist @16 :Float32;
+  rightCornerLongDist @17 :Float32;
+  leftCornerLatDist @18 :Float32;
+  rightCornerLatDist @19 :Float32;
+
+  leftBlocked @20 :Bool;
+  rightBlocked @21 :Bool;
+  leftReason @22 :Text;
+  rightReason @23 :Text;
+  source @24 :Text;
+  leftRoadCameraDetected @25 :Bool;
+  rightRoadCameraDetected @26 :Bool;
+  leftRoadCameraDRel @27 :Float32;
+  rightRoadCameraDRel @28 :Float32;
+  leftRoadCameraProb @29 :Float32;
+  rightRoadCameraProb @30 :Float32;
 }
 
 struct CustomReserved5 @0xa5cd762cd951a455 {

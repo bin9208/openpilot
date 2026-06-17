@@ -888,10 +888,33 @@ private:
     float lane_line_probs[4];
     float road_edge_stds[2];
     QPolygonF lane_line_vertices[4];
-    QPolygonF lane_line_vertices_for_double;
+    QPolygonF lane_line_vertices_for_double[4];
     QPolygonF road_edge_vertices[2];
     int  left_lane_line = 0;
     int  right_lane_line = 0;
+    bool lane_marking_valid = false;
+    float lane_marking_threshold = 0.60f;
+    std::string lane_marking_labels[4];
+    float lane_marking_confidences[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    static bool is_lane_marking_double(const std::string &label) {
+        return label == "yellow_double_solid" || label == "yellow_double_dashed" || label == "yellow_double";
+    }
+
+    bool has_lane_marking_color(int i) const {
+        return lane_marking_valid && i >= 1 && i <= 2 && lane_marking_confidences[i] >= lane_marking_threshold;
+    }
+
+    NVGcolor lane_marking_color(int i, int alpha, NVGcolor fallback) const {
+        if (!has_lane_marking_color(i)) return fallback;
+
+        const std::string &label = lane_marking_labels[i];
+        if (label == "white_dashed") return COLOR_GREEN_ALPHA(alpha);
+        if (label == "white_solid") return COLOR_RED_ALPHA(alpha);
+        if (label == "yellow_solid" || is_lane_marking_double(label)) return COLOR_YELLOW_ALPHA(alpha);
+        if (label == "road_edge_or_barrier") return COLOR_ORANGE_ALPHA(alpha);
+        return fallback;
+    }
 
 protected:
     bool make_data(const UIState* s) {
@@ -904,13 +927,27 @@ protected:
         int max_idx = get_path_length_idx(model_lane_lines[0], s->max_distance);
         left_lane_line = sm["carState"].getCarState().getLeftLaneLine();
         right_lane_line = sm["carState"].getCarState().getRightLaneLine();
+        lane_marking_valid = false;
+        lane_marking_threshold = std::clamp(s->scene.lane_marking_confidence_threshold, 0, 100) * 0.01f;
+        std::fill(std::begin(lane_marking_labels), std::end(lane_marking_labels), "");
+        std::fill(std::begin(lane_marking_confidences), std::end(lane_marking_confidences), 0.0f);
+        if (s->scene.lane_marking_display_enabled && sm.alive("laneMarkingState") && sm.valid("laneMarkingState")) {
+            const auto lane_marking = sm["laneMarkingState"].getLaneMarkingState();
+            lane_marking_valid = lane_marking.getValid() && !lane_marking.getInferenceSkipped();
+            if (lane_marking_valid) {
+                lane_marking_labels[1] = lane_marking.getLeftLabel().cStr();
+                lane_marking_labels[2] = lane_marking.getRightLabel().cStr();
+                lane_marking_confidences[1] = lane_marking.getLeftConfidence();
+                lane_marking_confidences[2] = lane_marking.getRightConfidence();
+            }
+        }
         for (int i = 0; i < std::size(lane_line_vertices); i++) {
             lane_line_probs[i] = model_lane_line_probs[i];
             float line_width = 0.025;
             if (i == 1 && left_lane_line >= 20) line_width = 0.05;
             update_line_data(s, model_lane_lines[i], line_width, 0.0, 0.0, &lane_line_vertices[i], max_idx);
-            if (i == 1) {
-              update_line_data(s, model_lane_lines[i], line_width, 0.0, 0.0, &lane_line_vertices_for_double, max_idx, true, -0.3);
+            if (i == 1 || i == 2) {
+              update_line_data(s, model_lane_lines[i], line_width, 0.0, 0.0, &lane_line_vertices_for_double[i], max_idx, true, i == 1 ? -0.3 : 0.3);
             }
             //update_line_data(s, model_lane_lines[i], line_width * lane_line_probs[i], 0.0, 0.0, &lane_line_vertices[i], max_idx);
             //if (i == 1) {
@@ -944,6 +981,7 @@ public:
         NVGcolor color;
         for (int i = 0; i < std::size(lane_line_vertices); ++i) {
           int alpha = (lane_line_probs[i] > 0.3) ? 220 : 0;
+          if (has_lane_marking_color(i)) alpha = 220;
           int stroke = 0.0;
           if (i == 1) {
             color = (left_lane_line >= 20) ? COLOR_YELLOW_ALPHA(alpha) : COLOR_WHITE_ALPHA(alpha);
@@ -951,9 +989,10 @@ public:
           }
           else if (i == 2) color = (right_lane_line >= 20) ? COLOR_YELLOW_ALPHA(alpha) : COLOR_WHITE_ALPHA(alpha);
           else color = COLOR_WHITE_ALPHA(alpha);
+          color = lane_marking_color(i, alpha, color);
           ui_draw_line(s, lane_line_vertices[i], &color, nullptr, stroke);
-          if ((i == 1) && (left_lane_line%10 == 4)) {
-            ui_draw_line(s, lane_line_vertices_for_double, &color, nullptr, stroke);
+          if (((i == 1) && (left_lane_line%10 == 4)) || ((i == 1 || i == 2) && has_lane_marking_color(i) && is_lane_marking_double(lane_marking_labels[i]))) {
+            ui_draw_line(s, lane_line_vertices_for_double[i], &color, nullptr, stroke);
           }
         }
         if(show_lane_info > 1) drawRoadEdge(s);
