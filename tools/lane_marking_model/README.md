@@ -1,10 +1,12 @@
 # fcamera Lane Marking Classifier Pipeline
 
-This pipeline builds an offline fcamera-based lane marking classifier for openpilot shadow-mode validation. It uses `fcamera.hevc` for crop extraction, keeps original `labels.csv` untouched, and expects corrected/trusted labels from `C:\tmp\lane_marking_labels_full\corrected_labels.csv`.
+This pipeline builds an offline fcamera-based lane marking classifier for openpilot shadow-mode validation. It can scan `fcamera.hevc` directly, keeps original `labels.csv` untouched, and writes rebuilt artifacts outside the repo.
 
 ## Files
 
 - `config_fcamera.json`: fcamera configuration, crop size 224, output root `C:\tmp\lane_marking_model_pipeline_fcamera`.
+- `config_fcamera_full_rebuild.json`: full rebuild configuration for `E:\comma_backup` and `E:\media`, output root `C:\tmp\lane_marking_full_rebuild_20260617`.
+- `tools/lane_marking_labeler/build_trusted_labels.py`: promotes high-confidence pseudo-labels into `corrected_labels.csv` for unattended rebuilds.
 - `prepare_dataset.py`: creates the fcamera/qcamera manifest and segment-level train/val/test split.
 - `extract_crops.py`: extracts lane marking crops from `fcamera.hevc` while using qcamera/log timing metadata for alignment.
 - `train.py`: trains the classifier and writes outputs under the configured output directory.
@@ -15,6 +17,18 @@ This pipeline builds an offline fcamera-based lane marking classifier for openpi
 - `visualize_qcamera.py`: backward-compatible wrapper for older qcamera command lines.
 
 ## Commands
+
+```bash
+python tools/lane_marking_labeler/auto_label_qcamera.py --camera fcamera --root E:\comma_backup --root E:\media --out-dir C:\tmp\lane_marking_full_rebuild_20260617\labels --sample-sec 2.0 --preview-per-label 12
+python tools/lane_marking_labeler/build_trusted_labels.py --labels C:\tmp\lane_marking_full_rebuild_20260617\labels\labels.csv --out C:\tmp\lane_marking_full_rebuild_20260617\labels\corrected_labels.csv --max-per-class 7000
+python tools/lane_marking_model/prepare_dataset.py --config tools/lane_marking_model/config_fcamera_full_rebuild.json
+python tools/lane_marking_model/extract_crops.py --config tools/lane_marking_model/config_fcamera_full_rebuild.json --workers 8
+python tools/lane_marking_model/train.py --config tools/lane_marking_model/config_fcamera_full_rebuild.json
+python tools/lane_marking_model/evaluate.py --config tools/lane_marking_model/config_fcamera_full_rebuild.json
+python tools/lane_marking_model/export_model.py --config tools/lane_marking_model/config_fcamera_full_rebuild.json
+```
+
+Legacy run:
 
 ```bash
 python tools/lane_marking_model/prepare_dataset.py --config tools/lane_marking_model/config_fcamera.json
@@ -64,10 +78,12 @@ Compared with the qcamera baseline:
 ## Decision Rules
 
 - `white_dashed` with confidence greater than or equal to `LaneMarkingConfidenceThreshold` and temporal consistency becomes `allow_candidate`.
-- `white_solid`, `yellow_solid`, `yellow_double`, and `road_edge_or_barrier` become `block`.
+- `white_solid`, `yellow_solid`, `yellow_double_solid`, `yellow_double_dashed`, legacy `yellow_double`, and `road_edge_or_barrier` become `block`.
 - `unknown` or low confidence becomes `uncertain_or_block`.
 
-`allow_candidate` is a shadow-mode label only. It is not a lane-change permission command, and this pipeline must not write `lane_change_allowed` or modify openpilot control behavior.
+`allow_candidate` is a shadow-mode label only. This model is a lane-change blocking aid: dashed predictions must not be treated as a positive permission command, and the pipeline must not write `lane_change_allowed` or modify openpilot control behavior.
+
+For cut-in work, consume the detected lane boundary as a geometric reference only. A vehicle crossing some configured percentage over the detected boundary can be marked as entering the ego lane, but low confidence or missing boundary evidence should fall back to the existing model path rather than forcing a positive cut-in decision.
 
 ## Runtime Model Policy
 

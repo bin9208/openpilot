@@ -114,8 +114,46 @@ def map_frame_idx(qcamera_frame_idx, q_indices, road_indices, q_cnt, f_cnt):
     ratio_idx = int(round(qcamera_frame_idx * (f_cnt - 1) / max(1, q_cnt - 1)))
     return ratio_idx, -1.0
 
+def find_video_and_log(segment, seg_df, camera, data_roots):
+    source_video = ""
+    source_camera = ""
+    if "source_video" in seg_df.columns:
+        values = [str(v) for v in seg_df["source_video"].dropna().unique() if str(v)]
+        source_video = values[0] if values else ""
+    if "source_camera" in seg_df.columns:
+        values = [str(v) for v in seg_df["source_camera"].dropna().unique() if str(v)]
+        source_camera = values[0] if values else ""
+
+    if source_video:
+        video_path = pathlib.Path(source_video)
+        if video_path.exists():
+            log_path = video_path.with_name("rlog.zst")
+            if not log_path.exists():
+                log_path = video_path.with_name("qlog.zst")
+            return video_path, log_path if log_path.exists() else None, source_camera or camera
+
+    target_name = "fcamera.hevc" if camera == "fcamera" else "qcamera.ts"
+    for root_str in data_roots:
+        root = pathlib.Path(root_str)
+        candidates = []
+        direct = root / segment / target_name
+        if direct.exists():
+            candidates.append(direct)
+        elif root.exists():
+            candidates.extend(root.rglob(str(pathlib.Path(segment) / target_name)))
+            if not candidates:
+                candidates.extend(p for p in root.rglob(target_name) if p.parent.name == segment)
+        for cand_video in candidates:
+            cand_log = cand_video.with_name("rlog.zst")
+            if not cand_log.exists():
+                cand_log = cand_video.with_name("qlog.zst")
+            if cand_video.exists() and cand_log.exists():
+                return cand_video, cand_log, camera
+
+    return None, None, source_camera or camera
+
 def process_segment(args_tuple):
-    segment, seg_df_dict, crops_dir_str, crop_size, camera, target_x_evals, projection_debug_dir_str = args_tuple
+    segment, seg_df_dict, crops_dir_str, crop_size, camera, target_x_evals, projection_debug_dir_str, data_roots = args_tuple
 
     import pathlib
     import cv2
@@ -154,21 +192,7 @@ def process_segment(args_tuple):
 
     seg_df = pd.DataFrame(seg_df_dict)
 
-    # Try both data directory paths
-    data_roots = [pathlib.Path(r"E:\comma_backup\2026-06-03"), pathlib.Path(r"E:\media\0\realdata")]
-    video_path = None
-    log_path = None
-
-    for root in data_roots:
-        cand_video = root / segment / ("fcamera.hevc" if camera == "fcamera" else "qcamera.ts")
-        cand_log = root / segment / "rlog.zst"
-        if not cand_log.exists():
-            cand_log = root / segment / "qlog.zst"
-
-        if cand_video.exists() and cand_log.exists():
-            video_path = cand_video
-            log_path = cand_log
-            break
+    video_path, log_path, label_source_camera = find_video_and_log(segment, seg_df, camera, data_roots)
 
     if video_path is None or log_path is None:
         return [], []
@@ -212,12 +236,19 @@ def process_segment(args_tuple):
     local_mappings = []
 
     for _, row in seg_df.iterrows():
-        q_idx = int(row["frame_idx"])
-        f_idx, diff_ms = map_frame_idx(q_idx, q_indices, road_indices, q_cnt, f_cnt)
+        source_camera = str(row.get("source_camera", "") or label_source_camera or "")
+        source_idx = int(row["frame_idx"])
+        if camera == "fcamera" and source_camera == "fcamera":
+            f_idx = source_idx
+            diff_ms = 0.0
+        else:
+            f_idx, diff_ms = map_frame_idx(source_idx, q_indices, road_indices, q_cnt, f_cnt)
 
         local_mappings.append({
             "segment": segment,
-            "qcamera_frame_idx": q_idx,
+            "source_camera": source_camera,
+            "source_frame_idx": source_idx,
+            "qcamera_frame_idx": source_idx if source_camera != "fcamera" else -1,
             "fcamera_frame_idx": f_idx,
             "timestamp_diff_ms": diff_ms
         })
@@ -327,6 +358,8 @@ def process_segment(args_tuple):
             local_metadata.append({
                 "crop_path": str(target_dir / crop_name),
                 "segment": segment,
+                "source_video": str(video_path),
+                "source_camera": label_source_camera,
                 "frame_idx": target_idx,
                 "side": side,
                 "x_eval": x_eval,
@@ -429,6 +462,7 @@ def main():
     crops_dir = pathlib.Path(config["crops_dir"])
     crop_size = config["crop_size"]
     camera = config.get("camera", "qcamera")
+    data_roots = config.get("data_roots", [r"E:\comma_backup\2026-06-03", r"E:\media\0\realdata"])
 
     # Determine target_x_evals
     if "target_x_evals" in config:
@@ -459,7 +493,8 @@ def main():
             crop_size,
             camera,
             target_x_evals,
-            str(projection_debug_dir)
+            str(projection_debug_dir),
+            data_roots
         ))
 
     all_metadata = []

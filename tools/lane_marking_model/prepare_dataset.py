@@ -33,6 +33,24 @@ def check_video_properties(path):
     cap.release()
     return f"{w}x{h}", fps
 
+def configured_data_roots(config):
+    roots = config.get("data_roots")
+    if not roots:
+        roots = [r"E:\comma_backup\2026-06-03", r"E:\media\0\realdata"]
+    return [pathlib.Path(root) for root in roots]
+
+def index_segment_files(data_roots, camera):
+    video_name = "fcamera.hevc" if camera == "fcamera" else "qcamera.ts"
+    index = {}
+    for root in data_roots:
+        if root.is_file() and root.name == video_name:
+            index[root.parent.name] = root.parent
+        elif root.exists():
+            for video in root.rglob(video_name):
+                if video.exists() and video.stat().st_size > 0:
+                    index.setdefault(video.parent.name, video.parent)
+    return index
+
 def get_log_frame_counts(log_path, log):
     try:
         raw = log_path.read_bytes()
@@ -72,6 +90,12 @@ def main():
 
     print(f"Reading labels from {corrected_csv}...")
     df = pd.read_csv(corrected_csv)
+    if "corrected_label" not in df.columns and "label" in df.columns:
+        df["corrected_label"] = df["label"]
+
+    legacy_label_map = config.get("legacy_label_map", {})
+    if legacy_label_map:
+        df["corrected_label"] = df["corrected_label"].replace(legacy_label_map)
 
     valid_classes = set(config["classes"])
     df = df[df["corrected_label"].isin(valid_classes)].copy()
@@ -86,7 +110,9 @@ def main():
     log = capnp.load(str(schema_root / "log.capnp"))
 
     # 1. Manifest creation
-    data_roots = [pathlib.Path(r"E:\comma_backup\2026-06-03"), pathlib.Path(r"E:\media\0\realdata")]
+    camera = config.get("camera", "fcamera")
+    data_roots = configured_data_roots(config)
+    segment_index = index_segment_files(data_roots, camera)
     manifest_rows = []
     fcamera_found_count = 0
 
@@ -96,12 +122,26 @@ def main():
         fcamera_path = None
         log_path = None
 
-        for root in data_roots:
-            cand_q = root / seg / "qcamera.ts"
-            cand_f = root / seg / "fcamera.hevc"
-            cand_log = root / seg / "rlog.zst"
+        source_video = ""
+        seg_rows = df[df["segment"] == seg]
+        if "source_video" in seg_rows.columns:
+            source_values = [str(v) for v in seg_rows["source_video"].dropna().unique() if str(v)]
+            source_video = source_values[0] if source_values else ""
+
+        segment_dir = None
+        if source_video:
+            source_path = pathlib.Path(source_video)
+            if source_path.exists():
+                segment_dir = source_path.parent
+        if segment_dir is None:
+            segment_dir = segment_index.get(seg)
+
+        if segment_dir is not None:
+            cand_q = segment_dir / "qcamera.ts"
+            cand_f = segment_dir / "fcamera.hevc"
+            cand_log = segment_dir / "rlog.zst"
             if not cand_log.exists():
-                cand_log = root / seg / "qlog.zst"
+                cand_log = segment_dir / "qlog.zst"
 
             if cand_q.exists():
                 qcamera_path = cand_q
@@ -137,6 +177,7 @@ def main():
 
         manifest_rows.append({
             "segment_id": seg,
+            "source_video": source_video,
             "qcamera_path": str(qcamera_path) if qcamera_path else "",
             "fcamera_path": str(fcamera_path) if fcamera_path else "",
             "log_path": str(log_path) if log_path else "",
@@ -158,6 +199,7 @@ def main():
     # 2. Manifest Summary
     success_rate = fcamera_found_count / num_segments if num_segments > 0 else 0.0
     summary = {
+        "data_roots": [str(root) for root in data_roots],
         "total_segments_in_labels": num_segments,
         "fcamera_found_count": fcamera_found_count,
         "matching_success_rate": success_rate,

@@ -22,7 +22,10 @@ LABEL_UNKNOWN = "unknown"
 LABEL_WHITE_DASHED = "white_dashed"
 LABEL_WHITE_SOLID = "white_solid"
 LABEL_YELLOW_SOLID = "yellow_solid"
+LABEL_YELLOW_DOUBLE_SOLID = "yellow_double_solid"
+LABEL_YELLOW_DOUBLE_DASHED = "yellow_double_dashed"
 LABEL_ROAD_EDGE = "road_edge_or_barrier"
+YELLOW_BLOCK_LABELS = {LABEL_YELLOW_SOLID, LABEL_YELLOW_DOUBLE_SOLID, LABEL_YELLOW_DOUBLE_DASHED}
 
 
 @dataclass
@@ -74,17 +77,17 @@ def prepare_capnp_schema(repo_root: Path) -> Path:
   return schema_root
 
 
-def load_log_context(qcamera: Path, log_mode: str, repo_root: Path) -> LogContext | None:
+def load_log_context(video_path: Path, log_mode: str, repo_root: Path) -> LogContext | None:
   if log_mode == "off":
     return None
 
   log_path: Path | None = None
   if log_mode in ("auto", "rlog"):
-    candidate = qcamera.with_name("rlog.zst")
+    candidate = video_path.with_name("rlog.zst")
     if candidate.exists() and candidate.stat().st_size > 0:
       log_path = candidate
   if log_path is None and log_mode in ("auto", "qlog"):
-    candidate = qcamera.with_name("qlog.zst")
+    candidate = video_path.with_name("qlog.zst")
     if candidate.exists() and candidate.stat().st_size > 0:
       log_path = candidate
   if log_path is None:
@@ -171,7 +174,7 @@ def context_for_side(context: LogContext | None, side: str, frame_idx: int, fram
 def apply_context_gate(cand: LaneCandidate, v_ego: float | None, model_prob: float | None,
                        lane_line: int | None, min_speed_ms: float, min_model_prob: float) -> LaneCandidate:
   # Non-zero CAN lane type/color is stronger than the image heuristic when present.
-  if lane_line is not None and lane_line >= 20:
+  if lane_line is not None and lane_line >= 20 and cand.label not in YELLOW_BLOCK_LABELS:
     cand.label = LABEL_YELLOW_SOLID
     cand.color = "yellow"
     cand.pattern = "solid"
@@ -194,7 +197,7 @@ def apply_context_gate(cand: LaneCandidate, v_ego: float | None, model_prob: flo
   if model_prob is not None and model_prob < min_model_prob:
     # Keep very strong yellow detections because centerlines can be visible even when the
     # generic lane-line probability is unstable. Otherwise, send weak cases to review.
-    if not (cand.label == LABEL_YELLOW_SOLID and cand.confidence >= 0.90):
+    if not (cand.label in YELLOW_BLOCK_LABELS and cand.confidence >= 0.90):
       cand.label = LABEL_UNKNOWN
       cand.pattern = "uncertain"
       cand.confidence = min(cand.confidence, 0.35)
@@ -202,13 +205,14 @@ def apply_context_gate(cand: LaneCandidate, v_ego: float | None, model_prob: flo
   return cand
 
 
-def iter_qcamera_paths(roots: Iterable[Path]) -> list[Path]:
+def iter_video_paths(roots: Iterable[Path], camera: str) -> list[Path]:
+  filename = "fcamera.hevc" if camera == "fcamera" else "qcamera.ts"
   paths: list[Path] = []
   for root in roots:
-    if root.is_file() and root.name == "qcamera.ts":
+    if root.is_file() and root.name == filename:
       paths.append(root)
     elif root.exists():
-      paths.extend(root.rglob("qcamera.ts"))
+      paths.extend(root.rglob(filename))
   return sorted(p for p in paths if p.exists() and p.stat().st_size > 0)
 
 
@@ -310,6 +314,54 @@ def detect_line_segments(combined_mask: np.ndarray, frame: np.ndarray) -> list[t
   return segments
 
 
+def line_occupancy(mask: np.ndarray, slope: float, intercept: float,
+                   y_top: int, y_bottom: int, band: int) -> np.ndarray:
+  h, w = mask.shape[:2]
+  y_values = np.arange(max(0, y_top), min(h, y_bottom))
+  x_values = (slope * y_values + intercept).astype(np.int32)
+  valid = (0 <= x_values) & (x_values < w)
+  y_values = y_values[valid]
+  x_values = x_values[valid]
+  occupied = []
+  for y, x in zip(y_values, x_values, strict=False):
+    xl = max(0, x - band)
+    xr = min(w, x + band + 1)
+    occupied.append(np.count_nonzero(mask[y, xl:xr]) >= 2)
+  return np.array(occupied, dtype=bool)
+
+
+def count_parallel_yellow_lines(side_segments: list[tuple[float, float, int, int, int, int, float, float, float, float]],
+                                grouped: list[tuple[float, float, int, int, int, int, float, float, float, float]],
+                                seed_slope: float, seed_intercept: float, y_eval: int,
+                                y_top: int, y_bottom: int, band: int, width: int,
+                                yellow: np.ndarray) -> int:
+  grouped_ids = {(item[2], item[3], item[4], item[5]) for item in grouped}
+  min_gap = max(8.0, width * 0.012)
+  max_gap = max(28.0, width * 0.075)
+  count = 0
+
+  for item in side_segments:
+    _, _, x1, y1, x2, y2, slope, intercept, length, _ = item
+    if (x1, y1, x2, y2) in grouped_ids:
+      continue
+    if abs(slope - seed_slope) > 0.30:
+      continue
+
+    gap = abs((slope * y_eval + intercept) - (seed_slope * y_eval + seed_intercept))
+    if gap < min_gap or gap > max_gap:
+      continue
+
+    occupied = line_occupancy(yellow, slope, intercept, y_top, y_bottom, band)
+    if occupied.size == 0:
+      continue
+    yellow_ratio = float(np.mean(occupied))
+    longest_on, _, _ = run_lengths(occupied)
+    if yellow_ratio >= 0.055 and longest_on >= max(14, int(occupied.size * 0.08)) and length > 20:
+      count += 1
+
+  return count
+
+
 def classify_side(frame: np.ndarray, side: str, segments: list[tuple[int, int, int, int, float, float]],
                   white: np.ndarray, yellow: np.ndarray, brightness: float) -> LaneCandidate:
   h, w = frame.shape[:2]
@@ -399,10 +451,20 @@ def classify_side(frame: np.ndarray, side: str, segments: list[tuple[int, int, i
   avg_length = float(np.mean(lengths))
 
   if color == "yellow":
-    pattern = "solid"
-    label = LABEL_YELLOW_SOLID
-    confidence = min(0.98, 0.45 + yellow_ratio * 1.7 + min(max_length / 130.0, 0.25))
-    reason = "yellow_mask"
+    parallel_yellow_count = count_parallel_yellow_lines(
+      side_segments, grouped, slope, intercept, y_eval, y_top, y_bottom, band, w, yellow
+    )
+    looks_dashed = transitions >= 6 and gap_ratio > 0.18 and longest_run_ratio < 0.45
+    if parallel_yellow_count > 0:
+      pattern = "double_dashed" if looks_dashed else "double_solid"
+      label = LABEL_YELLOW_DOUBLE_DASHED if looks_dashed else LABEL_YELLOW_DOUBLE_SOLID
+      confidence = min(0.99, 0.50 + yellow_ratio * 1.75 + min(max_length / 130.0, 0.25) + 0.06)
+      reason = f"yellow_double_parallel={parallel_yellow_count},transitions={transitions}"
+    else:
+      pattern = "solid"
+      label = LABEL_YELLOW_SOLID
+      confidence = min(0.98, 0.45 + yellow_ratio * 1.7 + min(max_length / 130.0, 0.25))
+      reason = "yellow_mask"
   elif color == "white":
     solid_score = 0.0
     solid_score += min(max_length / 150.0, 1.0) * 0.35
@@ -472,6 +534,8 @@ def draw_overlay(frame: np.ndarray, candidates: Iterable[LaneCandidate]) -> np.n
       color = (0, 0, 255)
     elif cand.label == LABEL_WHITE_DASHED:
       color = (255, 180, 0)
+    elif cand.label in (LABEL_YELLOW_DOUBLE_SOLID, LABEL_YELLOW_DOUBLE_DASHED):
+      color = (0, 180, 255)
     elif cand.label in (LABEL_WHITE_SOLID, LABEL_ROAD_EDGE):
       color = (255, 255, 255)
     y1, y2 = int(h * 0.43), int(h * 0.96)
@@ -486,7 +550,7 @@ def draw_overlay(frame: np.ndarray, candidates: Iterable[LaneCandidate]) -> np.n
   return out
 
 
-def update_preview(preview_dir: Path, frame: np.ndarray, qcamera: Path, frame_idx: int,
+def update_preview(preview_dir: Path, frame: np.ndarray, video_path: Path, frame_idx: int,
                    candidates: Iterable[LaneCandidate], preview_counts: Counter,
                    max_preview_per_label: int) -> None:
   if max_preview_per_label <= 0:
@@ -500,7 +564,7 @@ def update_preview(preview_dir: Path, frame: np.ndarray, qcamera: Path, frame_id
     preview_counts[key] += 1
     label_dir = preview_dir / key
     label_dir.mkdir(parents=True, exist_ok=True)
-    safe_segment = qcamera.parent.name.replace(":", "_").replace("\\", "_").replace("/", "_")
+    safe_segment = video_path.parent.name.replace(":", "_").replace("\\", "_").replace("/", "_")
     out = draw_overlay(frame, candidate_list)
     cv2.imwrite(str(label_dir / f"{safe_segment}_f{frame_idx:05d}.jpg"), out)
 
@@ -520,13 +584,15 @@ def dominant_segment_label(labels: list[dict[str, str]], side: str, min_conf: fl
   return label, share, len(good)
 
 
-def process_video(qcamera: Path, sample_sec: float, min_conf: float,
+def process_video(video_path: Path, camera: str, sample_sec: float, min_conf: float,
                   min_speed_ms: float, min_model_prob: float, log_mode: str, repo_root: Path,
                   preview_dir: Path, preview_counts: Counter, max_preview_per_label: int) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-  cap = cv2.VideoCapture(str(qcamera))
+  cap = cv2.VideoCapture(str(video_path))
   if not cap.isOpened():
     return [], [{
-      "qcamera": str(qcamera),
+      "qcamera": str(video_path),
+      "source_video": str(video_path),
+      "source_camera": camera,
       "side": "both",
       "dominant_label": LABEL_UNKNOWN,
       "dominant_share": "0.000",
@@ -535,29 +601,31 @@ def process_video(qcamera: Path, sample_sec: float, min_conf: float,
       "status": "video_open_failed",
     }]
 
-  context = load_log_context(qcamera, log_mode, repo_root)
+  context = load_log_context(video_path, log_mode, repo_root)
   fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
   frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+  context_frame_count = frame_count
+  if context_frame_count <= 1 and context is not None:
+    context_frame_count = max(len(context.left_model_probs), len(context.right_model_probs), 1)
   step = max(1, int(round(fps * sample_sec)))
 
   rows: list[dict[str, str]] = []
-  for frame_idx in range(0, frame_count, step):
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ok, frame = cap.read()
-    if not ok or frame is None:
-      continue
+
+  def append_frame_rows(frame: np.ndarray, frame_idx: int) -> None:
     time_sec = frame_idx / fps
     left, right = label_frame(frame)
     enriched: list[tuple[LaneCandidate, float | None, float | None, int | None]] = []
     for cand in (left, right):
-      v_ego, model_prob, lane_line = context_for_side(context, cand.side, frame_idx, frame_count)
+      v_ego, model_prob, lane_line = context_for_side(context, cand.side, frame_idx, context_frame_count)
       cand = apply_context_gate(cand, v_ego, model_prob, lane_line, min_speed_ms, min_model_prob)
       enriched.append((cand, v_ego, model_prob, lane_line))
     for cand, v_ego, model_prob, lane_line in enriched:
       rows.append({
-        "qcamera": str(qcamera),
+        "qcamera": str(video_path),
+        "source_video": str(video_path),
+        "source_camera": camera,
         "log_source": context.source if context is not None else "",
-        "segment": qcamera.parent.name,
+        "segment": video_path.parent.name,
         "frame_idx": str(frame_idx),
         "time_sec": f"{time_sec:.3f}",
         "side": cand.side,
@@ -580,15 +648,37 @@ def process_video(qcamera: Path, sample_sec: float, min_conf: float,
         "can_lane_line": "" if lane_line is None else str(int(lane_line)),
         "reason": cand.reason,
       })
-    update_preview(preview_dir, frame, qcamera, frame_idx, [item[0] for item in enriched],
+    update_preview(preview_dir, frame, video_path, frame_idx, [item[0] for item in enriched],
                    preview_counts, max_preview_per_label)
+
+  if frame_count > 0:
+    for frame_idx in range(0, frame_count, step):
+      cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+      ok, frame = cap.read()
+      if not ok or frame is None:
+        continue
+      append_frame_rows(frame, frame_idx)
+  else:
+    frame_idx = 0
+    while True:
+      ok, frame = cap.read()
+      if not ok or frame is None:
+        break
+      if frame_idx % step == 0:
+        append_frame_rows(frame, frame_idx)
+      frame_idx += 1
+    frame_count = frame_idx
+
+  cap.release()
 
   segment_rows = []
   for side in ("left", "right"):
     dominant, share, high_conf = dominant_segment_label(rows, side, min_conf)
     segment_rows.append({
-      "qcamera": str(qcamera),
-      "segment": qcamera.parent.name,
+      "qcamera": str(video_path),
+      "source_video": str(video_path),
+      "source_camera": camera,
+      "segment": video_path.parent.name,
       "side": side,
       "dominant_label": dominant,
       "dominant_share": f"{share:.3f}",
@@ -608,22 +698,23 @@ def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> 
 
 
 def main() -> int:
-  parser = argparse.ArgumentParser(description="Pseudo-label qcamera lane markings for lane-change blocking.")
-  parser.add_argument("--root", action="append", required=True, help="Directory or qcamera.ts path. Can be passed multiple times.")
+  parser = argparse.ArgumentParser(description="Pseudo-label camera lane markings for lane-change blocking.")
+  parser.add_argument("--root", action="append", required=True, help="Directory or camera video path. Can be passed multiple times.")
+  parser.add_argument("--camera", choices=["qcamera", "fcamera"], default="qcamera", help="Video stream to scan.")
   parser.add_argument("--out-dir", required=True, help="Directory for labels.csv, segment_labels.csv, and previews.")
   parser.add_argument("--sample-sec", type=float, default=1.0, help="Frame sampling interval in seconds.")
   parser.add_argument("--min-conf", type=float, default=0.55, help="Confidence threshold for segment dominant labels.")
   parser.add_argument("--min-speed-ms", type=float, default=5.0, help="Below this speed, labels are forced to unknown.")
   parser.add_argument("--min-model-prob", type=float, default=0.25, help="Below this model lane probability, labels are forced to unknown.")
   parser.add_argument("--log-mode", choices=["auto", "rlog", "qlog", "off"], default="auto", help="Use sibling logs for speed/model gates.")
-  parser.add_argument("--max-segments", type=int, default=0, help="Limit processed qcamera files for testing.")
+  parser.add_argument("--max-segments", type=int, default=0, help="Limit processed camera files for testing.")
   parser.add_argument("--preview-per-label", type=int, default=8, help="Max preview images per side/label.")
   args = parser.parse_args()
 
   roots = [Path(p) for p in args.root]
-  qcamera_paths = iter_qcamera_paths(roots)
+  video_paths = iter_video_paths(roots, args.camera)
   if args.max_segments > 0:
-    qcamera_paths = qcamera_paths[:args.max_segments]
+    video_paths = video_paths[:args.max_segments]
 
   out_dir = Path(args.out_dir)
   preview_dir = out_dir / "previews"
@@ -634,22 +725,22 @@ def main() -> int:
   preview_counts: Counter = Counter()
   repo_root = Path(__file__).resolve().parents[2]
 
-  for idx, qcamera in enumerate(qcamera_paths, start=1):
-    print(f"[{idx}/{len(qcamera_paths)}] {qcamera}", flush=True)
-    rows, segment_rows = process_video(qcamera, args.sample_sec, args.min_conf,
+  for idx, video_path in enumerate(video_paths, start=1):
+    print(f"[{idx}/{len(video_paths)}] {video_path}", flush=True)
+    rows, segment_rows = process_video(video_path, args.camera, args.sample_sec, args.min_conf,
                                        args.min_speed_ms, args.min_model_prob, args.log_mode, repo_root,
                                        preview_dir, preview_counts, args.preview_per_label)
     all_rows.extend(rows)
     all_segment_rows.extend(segment_rows)
 
   label_fields = [
-    "qcamera", "log_source", "segment", "frame_idx", "time_sec", "side", "label", "color", "pattern",
+    "qcamera", "source_video", "source_camera", "log_source", "segment", "frame_idx", "time_sec", "side", "label", "color", "pattern",
     "confidence", "visibility", "occupied_ratio", "longest_run_ratio", "gap_ratio",
     "x_eval", "slope", "segment_count", "avg_segment_length", "max_segment_length",
     "brightness", "v_ego", "model_lane_prob", "can_lane_line", "reason",
   ]
   segment_fields = [
-    "qcamera", "segment", "side", "dominant_label", "dominant_share",
+    "qcamera", "source_video", "source_camera", "segment", "side", "dominant_label", "dominant_share",
     "high_conf_samples", "sample_count", "status",
   ]
   write_csv(out_dir / "labels.csv", all_rows, label_fields)
@@ -660,7 +751,9 @@ def main() -> int:
   segment_counts = Counter(row["dominant_label"] for row in all_segment_rows)
   summary = {
     "roots": [str(r) for r in roots],
-    "qcamera_count": len(qcamera_paths),
+    "camera": args.camera,
+    "qcamera_count": len(video_paths),
+    "video_count": len(video_paths),
     "sample_sec": args.sample_sec,
     "min_conf": args.min_conf,
     "min_speed_ms": args.min_speed_ms,

@@ -24,6 +24,8 @@ LABELS = [
   "white_dashed",
   "white_solid",
   "yellow_solid",
+  "yellow_double_solid",
+  "yellow_double_dashed",
   "road_edge_or_barrier",
   "unknown",
 ]
@@ -257,7 +259,7 @@ HTML = r"""<!doctype html>
     </section>
   </main>
   <script>
-    const LABELS = ["white_dashed", "white_solid", "yellow_solid", "road_edge_or_barrier", "unknown"];
+    const LABELS = ["white_dashed", "white_solid", "yellow_solid", "yellow_double_solid", "yellow_double_dashed", "road_edge_or_barrier", "unknown"];
     let offset = 0;
     let selectedId = null;
     let currentItems = [];
@@ -391,7 +393,7 @@ HTML = r"""<!doctype html>
         if (e.key === "ArrowLeft") nextPage(-1);
         if (selectedId !== null && e.key === "k") correct(selectedId, "keep");
         if (selectedId !== null && e.key === "x") correct(selectedId, "exclude");
-        if (selectedId !== null && /^[1-5]$/.test(e.key)) correct(selectedId, "keep", LABELS[Number(e.key) - 1]);
+        if (selectedId !== null && /^[1-7]$/.test(e.key)) correct(selectedId, "keep", LABELS[Number(e.key) - 1]);
       });
       loadItems();
     });
@@ -469,7 +471,7 @@ def parse_int(row: dict[str, str], key: str, default: int = 0) -> int:
 
 
 def image_color(label: str) -> tuple[int, int, int]:
-  if label == "yellow_solid":
+  if label in ("yellow_solid", "yellow_double_solid", "yellow_double_dashed"):
     return (0, 230, 255)
   if label == "white_dashed":
     return (255, 170, 0)

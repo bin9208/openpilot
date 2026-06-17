@@ -61,10 +61,10 @@ def rate_limit(x, x_last, lo, hi):
   return float(np.clip(x, x_last + lo, x_last + hi))
 
 def get_angle_control_steer_rate_limit(v_ego: float) -> float:
-  return float(np.interp(v_ego, [1.0, 4.0, 8.0, 12.0, 22.0], [2.0, 2.5, 4.0, 3.5, 3.0]))
+  return float(np.interp(v_ego, [1.0, 4.0, 8.0, 12.0, 22.0], [1.5, 1.8, 4.0, 3.5, 3.0]))
 
 def get_low_speed_angle_torque_factor(v_ego: float) -> float:
-  return float(np.interp(max(float(v_ego), 0.0), [0.0, 1.5, 3.0, 4.5], [0.65, 0.65, 0.90, 1.0]))
+  return float(np.interp(max(float(v_ego), 0.0), [0.0, 1.0, 4.0, 6.0], [0.60, 0.60, 0.85, 1.0]))
 
 def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      last_sw_deg: float,

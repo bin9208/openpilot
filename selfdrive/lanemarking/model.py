@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -13,10 +14,19 @@ CLASS_NAMES = (
   "white_dashed",
   "white_solid",
   "yellow_solid",
+  "yellow_double_solid",
+  "yellow_double_dashed",
 )
 
 ALLOW_LABEL = "white_dashed"
-BLOCK_LABELS = frozenset({"road_edge_or_barrier", "white_solid", "yellow_solid", "yellow_double"})
+BLOCK_LABELS = frozenset({
+  "road_edge_or_barrier",
+  "white_solid",
+  "yellow_solid",
+  "yellow_double",
+  "yellow_double_solid",
+  "yellow_double_dashed",
+})
 UNKNOWN_LABEL = "unknown"
 
 DECISION_ALLOW_CANDIDATE = "allow_candidate"
@@ -97,6 +107,13 @@ class LaneMarkingTorchScriptModel:
     torch = importlib.import_module("torch")
     model = torch.jit.load(str(self.model_path), map_location="cpu")
     model.eval()
+
+    class_names_path = self.model_path.with_suffix(".classes.json")
+    if class_names_path.exists():
+      with class_names_path.open("r", encoding="utf-8") as f:
+        class_names = json.load(f)
+      if isinstance(class_names, list) and all(isinstance(cls, str) for cls in class_names):
+        self.class_names = tuple(class_names)
 
     self.torch = torch
     self.model = model

@@ -1,0 +1,49 @@
+{
+  "corrected_labels_csv": "C:\\tmp\\lane_marking_full_rebuild_20260617\\labels\\corrected_labels.csv",
+  "camera": "fcamera",
+  "data_roots": [
+    "E:\\comma_backup",
+    "E:\\media"
+  ],
+  "output_dir": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model",
+  "crops_dir": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\crops",
+  "checkpoints_dir": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\checkpoints",
+  "misclassified_dir": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\outputs\\misclassified",
+  "false_allow_dir": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\outputs\\false_allow_cases",
+  "split_metadata_csv": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\split_metadata.csv",
+  "split_check_json": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\split_check.json",
+  "crop_metadata_csv": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\crop_metadata.csv",
+  "manifest_csv": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\manifest.csv",
+  "manifest_json": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\manifest_summary.json",
+  "frame_mapping_csv": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\frame_mapping.csv",
+  "projection_debug_dir": "C:\\tmp\\lane_marking_full_rebuild_20260617\\model\\projection_debug",
+  "runtime_model_path": "selfdrive/lanemarking/models/lane_marking_fcamera.torchscript",
+  "runtime_classes": [
+    "road_edge_or_barrier",
+    "white_dashed",
+    "white_solid",
+    "yellow_solid",
+    "yellow_double_solid",
+    "yellow_double_dashed"
+  ],
+  "classes": [
+    "road_edge_or_barrier",
+    "white_dashed",
+    "white_solid",
+    "yellow_solid",
+    "yellow_double_solid",
+    "yellow_double_dashed"
+  ],
+  "legacy_label_map": {
+    "yellow_double": "yellow_double_solid"
+  },
+  "crop_size": 224,
+  "target_x_evals": [12.0, 20.0, 28.0],
+  "model_arch": "resnet18",
+  "pretrained": false,
+  "cache_dataset_in_memory": false,
+  "batch_size": 128,
+  "epochs": 8,
+  "learning_rate": 0.001,
+  "num_workers": 4
+}

@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import numpy as np
 import matplotlib.pyplot as plt
-from train import get_model
+from train import get_model, make_image_folder
 
 def resolve_config_path(config_arg):
     config_path = pathlib.Path(config_arg)
@@ -62,7 +62,7 @@ def main():
     num_classes = len(class_to_idx)
 
     # Initialize model and load weights
-    model = get_model(model_arch, num_classes)
+    model = get_model(model_arch, num_classes, pretrained=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     model = model.to(device)
     model.eval()
@@ -78,11 +78,11 @@ def main():
         print(f"Error: Test folder not found at {test_dir}. Please run extract_crops.py first!")
         return
 
-    test_dataset = datasets.ImageFolder(str(test_dir), transform=val_transform)
+    class_names = [idx_to_class[i] for i in range(num_classes)]
+    test_dataset = make_image_folder(test_dir, class_names, transform=val_transform)
     test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=0)
 
     # Class names in order of indices
-    class_names = [idx_to_class[i] for i in range(num_classes)]
     print(f"Evaluation classes: {class_names}")
 
     # Accumulate predictions and probabilities

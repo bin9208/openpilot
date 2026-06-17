@@ -56,7 +56,7 @@ def main():
     crop_size = config["crop_size"]
 
     print(f"Loading model weights from {checkpoint_path}...")
-    model = get_model(model_arch, num_classes)
+    model = get_model(model_arch, num_classes, pretrained=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -125,6 +125,12 @@ def main():
         runtime_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(torchscript_path, runtime_path)
         print(f"  --> Runtime TorchScript model copied to {runtime_path}")
+        idx_to_class = {int(k): v for k, v in checkpoint["idx_to_class"].items()}
+        class_names = [idx_to_class[i] for i in range(num_classes)]
+        runtime_classes_path = runtime_path.with_suffix(".classes.json")
+        with runtime_classes_path.open("w", encoding="utf-8") as f:
+            json.dump(class_names, f, indent=2)
+        print(f"  --> Runtime class order copied to {runtime_classes_path}")
 
     if onnx_path and onnx_path.exists():
         try:

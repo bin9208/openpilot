@@ -17,20 +17,53 @@ def resolve_config_path(config_arg):
         return config_path
     return pathlib.Path(__file__).parent / config_path
 
-def get_model(model_name, num_classes):
+class ConfiguredImageFolder(datasets.ImageFolder):
+    def __init__(self, root, classes=None, **kwargs):
+        self.configured_classes = list(classes) if classes else None
+        super().__init__(root, **kwargs)
+
+    def find_classes(self, directory):
+        if self.configured_classes is None:
+            return super().find_classes(directory)
+        return self.configured_classes, {cls: idx for idx, cls in enumerate(self.configured_classes)}
+
+
+def make_image_folder(root, classes, transform=None):
+    root = pathlib.Path(root)
+    for cls in classes:
+        (root / cls).mkdir(parents=True, exist_ok=True)
+    try:
+        return ConfiguredImageFolder(str(root), classes=classes, transform=transform, allow_empty=True)
+    except TypeError:
+        return ConfiguredImageFolder(str(root), classes=classes, transform=transform)
+
+
+def get_model(model_name, num_classes, pretrained=True):
     if model_name.lower() == "resnet18":
-        try:
-            weights = models.ResNet18_Weights.DEFAULT
-            model = models.resnet18(weights=weights)
-        except AttributeError:
-            model = models.resnet18(pretrained=True)
+        if pretrained:
+            try:
+                weights = models.ResNet18_Weights.DEFAULT
+                model = models.resnet18(weights=weights)
+            except AttributeError:
+                model = models.resnet18(pretrained=True)
+        else:
+            try:
+                model = models.resnet18(weights=None)
+            except TypeError:
+                model = models.resnet18(pretrained=False)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     elif model_name.lower() == "mobilenet_v3_small":
-        try:
-            weights = models.MobileNet_V3_Small_Weights.DEFAULT
-            model = models.mobilenet_v3_small(weights=weights)
-        except AttributeError:
-            model = models.mobilenet_v3_small(pretrained=True)
+        if pretrained:
+            try:
+                weights = models.MobileNet_V3_Small_Weights.DEFAULT
+                model = models.mobilenet_v3_small(weights=weights)
+            except AttributeError:
+                model = models.mobilenet_v3_small(pretrained=True)
+        else:
+            try:
+                model = models.mobilenet_v3_small(weights=None)
+            except TypeError:
+                model = models.mobilenet_v3_small(pretrained=False)
         model.classifier[3] = nn.Linear(model.classifier[3].in_features, num_classes)
     else:
         raise ValueError(f"Unsupported model architecture: {model_name}")
@@ -93,37 +126,53 @@ def main():
     learning_rate = config["learning_rate"]
     classes = config["classes"]
     num_classes = len(classes)
+    pretrained = bool(config.get("pretrained", True))
+    cache_dataset_in_memory = bool(config.get("cache_dataset_in_memory", True))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Set up transforms (operating on tensors)
-    train_transform = transforms.Compose([
-        transforms.RandomRotation(10),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    val_transform = transforms.Compose([
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
+    if cache_dataset_in_memory:
+        train_transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        val_transform = transforms.Compose([
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+    else:
+        train_transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        val_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
     train_dir = crops_dir / "train"
     val_dir = crops_dir / "val"
 
     # Load datasets
-    train_folder = datasets.ImageFolder(str(train_dir))
-    val_folder = datasets.ImageFolder(str(val_dir))
+    train_folder = make_image_folder(train_dir, classes)
+    val_folder = make_image_folder(val_dir, classes)
 
-    train_dataset = InMemoryDataset(train_folder, transform=train_transform)
-    val_dataset = InMemoryDataset(val_folder, transform=val_transform)
+    if cache_dataset_in_memory:
+        train_dataset = InMemoryDataset(train_folder, transform=train_transform)
+        val_dataset = InMemoryDataset(val_folder, transform=val_transform)
+    else:
+        train_dataset = make_image_folder(train_dir, classes, transform=train_transform)
+        val_dataset = make_image_folder(val_dir, classes, transform=val_transform)
 
     print(f"Dataset class-to-index mapping: {train_dataset.class_to_idx}")
     class_mapping = {idx: name for name, idx in train_dataset.class_to_idx.items()}
 
     # Compute class weights for loss balancing
     targets = np.array(train_dataset.targets)
-    class_counts = np.bincount(targets)
+    class_counts = np.bincount(targets, minlength=num_classes)
     total_samples = len(targets)
     class_weights = []
     for count in class_counts:
@@ -143,7 +192,7 @@ def main():
 
     # Initialize model
     print(f"Initializing {model_arch}...")
-    model = get_model(model_arch, num_classes)
+    model = get_model(model_arch, num_classes, pretrained=pretrained)
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)

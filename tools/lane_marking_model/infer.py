@@ -140,7 +140,7 @@ def main():
         num_classes = len(class_to_idx)
 
         # Initialize model
-        model = get_model(model_arch, num_classes)
+        model = get_model(model_arch, num_classes, pretrained=False)
         model.load_state_dict(checkpoint["model_state_dict"])
         model = model.to(device)
         model.eval()
