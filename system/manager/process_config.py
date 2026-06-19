@@ -90,6 +90,9 @@ def lane_marking_shadow(started: bool, params: Params, CP: car.CarParams) -> boo
 def side_vision_shadow(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and params.get_bool("SideVisionModelEnabled")
 
+def traffic_light_stopline_shadow(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return started and params.get_bool("TrafficLightStopLineModelEnabled")
+
 procs = [
   DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid"),
 
@@ -136,6 +139,7 @@ procs = [
   PythonProcess("yolod", "selfdrive.yolo_integration.yolod", only_onroad),
   PythonProcess("lanemarkingd", "selfdrive.lanemarking.lanemarkingd", lane_marking_shadow),
   PythonProcess("sidevisiond", "selfdrive.sidevision.sidevisiond", side_vision_shadow),
+  PythonProcess("traffic_light_stoplined", "selfdrive.traffic_light_stopline.traffic_light_stoplined", traffic_light_stopline_shadow),
   PythonProcess("hardwared", "system.hardware.hardwared", always_run),
   PythonProcess("tombstoned", "system.tombstoned", always_run, enabled=not PC),
   PythonProcess("updated", "system.updated.updated", enable_updated, enabled=not PC),

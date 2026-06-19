@@ -129,7 +129,39 @@ struct SideVisionState @0x80ae746ee2596b11 {
   rightRoadCameraProb @30 :Float32;
 }
 
-struct CustomReserved5 @0xa5cd762cd951a455 {
+struct TrafficLightStopLineState @0xa5cd762cd951a455 {
+  frameId @0 :UInt64;
+  timestampEof @1 :UInt64;
+  valid @2 :Bool;
+  inferenceSkipped @3 :Bool;
+  modelLoaded @4 :Bool;
+  modelRuntime @5 :Text;
+  modelExecutionTimeMs @6 :Float32;
+  processingWidth @7 :UInt16;
+
+  trafficState @8 :Text;
+  trafficConfidence @9 :Float32;
+  trafficRedProb @10 :Float32;
+  trafficGreenProb @11 :Float32;
+  trafficYellowProb @12 :Float32;
+  trafficLeftProb @13 :Float32;
+  trafficNoSignalProb @14 :Float32;
+  trafficCandidateCount @15 :UInt16;
+  trafficCandidateX @16 :Float32;
+  trafficCandidateY @17 :Float32;
+  trafficCandidateW @18 :Float32;
+  trafficCandidateH @19 :Float32;
+
+  stopLineState @20 :Text;
+  stopLineConfidence @21 :Float32;
+  stopLineScore @22 :Float32;
+  crosswalkScore @23 :Float32;
+  stopLineYNorm @24 :Float32;
+  stopLineWidthNorm @25 :Float32;
+  stopLineStripeCount @26 :UInt16;
+  leadBlocked @27 :Bool;
+  darkOrGlare @28 :Bool;
+  source @29 :Text;
 }
 
 struct CustomReserved6 @0xf98d843bfd7004a3 {

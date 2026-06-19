@@ -2685,7 +2685,7 @@ struct Event {
     yoloDetection @109 :Custom.YoloDetection;
     laneMarkingState @110 :Custom.LaneMarkingState;
     sideVisionState @111 :Custom.SideVisionState;
-    customReserved5 @112 :Custom.CustomReserved5;
+    trafficLightStopLineState @112 :Custom.TrafficLightStopLineState;
     customReserved6 @113 :Custom.CustomReserved6;
     customReserved7 @114 :Custom.CustomReserved7;
     customReserved8 @115 :Custom.CustomReserved8;

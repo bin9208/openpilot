@@ -172,6 +172,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneMarkingShowDebugOverlay", {PERSISTENT, BOOL, "0"}},
     {"SideVisionModelEnabled", {PERSISTENT, BOOL, "0"}},
     {"SideVisionConfidenceThreshold", {PERSISTENT, INT, "60"}},
+    {"TrafficLightStopLineModelEnabled", {PERSISTENT, BOOL, "0"}},
 
     {"AutoCruiseControl", {PERSISTENT, INT, "0"}},
     {"CruiseEcoControl", {PERSISTENT, INT, "2"}},

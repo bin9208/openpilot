@@ -85,6 +85,7 @@ _services: dict[str, tuple] = {
   "yoloObjectData": (True, 0.),
   "laneMarkingState": (True, 5., 5),
   "sideVisionState": (True, 5., 5),
+  "trafficLightStopLineState": (True, 5., 5),
   "navInstructionCarrot": (True, 1., 10),
 
   # debug
