@@ -41,6 +41,9 @@ LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS = 0.24
 LANELESS_CURVE_MPC_SMOOTH_SECONDS = 0.08
 LANELESS_LOW_SPEED_MPC_ENTER = 9.5
 LANELESS_LOW_SPEED_MPC_EXIT = 10.5
+# When MPC curvature is used in laneless mode, lag adjustment already handles delay compensation.
+# Use light smoothing only to reduce jitter without adding significant extra delay.
+LANELESS_EXTRA_SMOOTH_SECONDS = 0.10
 
 
 def get_model_y_std_1s(model_v2) -> float:
@@ -215,7 +218,10 @@ class Controls:
             get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2),
           )
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances)
-        new_desired_curvature = smooth_value(curvature, self.desired_curvature, mpc_smooth_seconds)
+        if laneless_mode:
+          new_desired_curvature = smooth_value(curvature, self.desired_curvature, LANELESS_EXTRA_SMOOTH_SECONDS)
+        else:      
+          new_desired_curvature = smooth_value(curvature, self.desired_curvature, mpc_smooth_seconds)
     else:      
       smooth_seconds = get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2)
       new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, smooth_seconds)

@@ -42,7 +42,11 @@ def _threshold_from_params(params) -> float:
   return _normalize_threshold(params.get("SideVisionConfidenceThreshold", return_default=True))
 
 
-def _rgb_from_vipc(np, cv2, vision_buf):
+def _nv12_planes_valid(yuv_img, width: int, height: int) -> bool:
+  return yuv_img.shape[0] >= height + height // 2 and yuv_img.shape[1] >= width
+
+
+def _yuv_from_vipc(np, vision_buf):
   width = int(getattr(vision_buf, "width", 0))
   height = int(getattr(vision_buf, "height", 0))
   stride = int(getattr(vision_buf, "stride", width))
@@ -55,17 +59,43 @@ def _rgb_from_vipc(np, cv2, vision_buf):
     return None
 
   yuv_img = yuv.reshape((yuv.size // stride, stride))
-  return cv2.cvtColor(yuv_img[:height * 3 // 2, :width], cv2.COLOR_YUV2RGB_NV12)
+  if not _nv12_planes_valid(yuv_img, width, height):
+    return None
+  return yuv_img, width, height
 
 
-def _crop_roi(np, img, roi_norm: tuple[float, float, float, float]):
-  h, w = img.shape[:2]
+def _sample_roi_gray(np, yuv_img, width: int, height: int, roi_norm: tuple[float, float, float, float], size: tuple[int, int] = (96, 96)):
+  out_h, out_w = size
   x0, y0, x1, y1 = roi_norm
-  u0 = int(max(0, min(w - 1, round(x0 * w))))
-  v0 = int(max(0, min(h - 1, round(y0 * h))))
-  u1 = int(max(u0 + 1, min(w, round(x1 * w))))
-  v1 = int(max(v0 + 1, min(h, round(y1 * h))))
-  return np.ascontiguousarray(img[v0:v1, u0:u1])
+  u0 = int(max(0, min(width - 1, round(x0 * width))))
+  v0 = int(max(0, min(height - 1, round(y0 * height))))
+  u1 = int(max(u0 + 1, min(width, round(x1 * width))))
+  v1 = int(max(v0 + 1, min(height, round(y1 * height))))
+  if u1 <= u0 or v1 <= v0:
+    return np.zeros((out_h, out_w), dtype=np.uint8)
+
+  ys = np.linspace(v0, v1 - 1, out_h).astype(np.int32)
+  xs = np.linspace(u0, u1 - 1, out_w).astype(np.int32)
+  return yuv_img[ys[:, None], xs[None, :]]
+
+
+def _box_blur3(np, gray):
+  padded = np.pad(gray.astype(np.float32), 1, mode="edge")
+  blurred = (
+    padded[:-2, :-2] + padded[:-2, 1:-1] + padded[:-2, 2:] +
+    padded[1:-1, :-2] + padded[1:-1, 1:-1] + padded[1:-1, 2:] +
+    padded[2:, :-2] + padded[2:, 1:-1] + padded[2:, 2:]
+  ) / 9.0
+  return blurred.astype(np.uint8)
+
+
+def _edge_density(np, gray):
+  grad_x = np.abs(np.diff(gray.astype(np.int16), axis=1))
+  grad_y = np.abs(np.diff(gray.astype(np.int16), axis=0))
+  edges = np.zeros_like(gray, dtype=np.bool_)
+  edges[:, 1:] |= grad_x > 35
+  edges[1:, :] |= grad_y > 35
+  return float(np.mean(edges))
 
 
 @dataclass
@@ -81,27 +111,24 @@ class RoiOccupancyTracker:
     self.background = None
     self.hold_count = 0
 
-  def update(self, np, cv2, rgb_roi, threshold: float) -> SideScore:
-    if rgb_roi.size == 0:
+  def update(self, np, gray_roi, threshold: float) -> SideScore:
+    if gray_roi.size == 0:
       self.hold_count = max(0, self.hold_count - 1)
       return SideScore()
 
-    gray = cv2.cvtColor(rgb_roi, cv2.COLOR_RGB2GRAY)
-    gray = cv2.resize(gray, (96, 96), interpolation=cv2.INTER_AREA)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    gray = _box_blur3(np, gray_roi)
 
     if self.background is None or self.prev_gray is None:
       self.background = gray.astype(np.float32)
       self.prev_gray = gray
       return SideScore(reason="warming")
 
-    diff_prev = cv2.absdiff(gray, self.prev_gray)
-    diff_bg = cv2.absdiff(gray, cv2.convertScaleAbs(self.background))
-    edges = cv2.Canny(gray, 45, 130)
-
+    diff_prev = np.abs(gray.astype(np.int16) - self.prev_gray.astype(np.int16)).astype(np.uint8)
+    background_u8 = np.clip(self.background, 0, 255).astype(np.uint8)
+    diff_bg = np.abs(gray.astype(np.int16) - background_u8.astype(np.int16)).astype(np.uint8)
     motion = float(np.mean(diff_prev) / 255.0)
     background_delta = float(np.mean(diff_bg) / 255.0)
-    edge_density = float(np.mean(edges > 0))
+    edge_density = _edge_density(np, gray)
     contrast = float(np.std(gray) / 80.0)
 
     # Broad ROI objectness. This is tuned to be useful for shadow logs:
@@ -292,7 +319,6 @@ def _side_vision_msg(
 
 
 def main() -> None:
-  import cv2
   import numpy as np
   from cereal import messaging
   from msgq.visionipc import VisionIpcClient, VisionStreamType
@@ -344,8 +370,8 @@ def main() -> None:
       road_frame_id = int(sm["roadCameraState"].frameId) if sm.seen["roadCameraState"] else 0
 
       start_t = time.monotonic()
-      rgb = _rgb_from_vipc(np, cv2, vision_buf)
-      if rgb is None:
+      yuv_frame = _yuv_from_vipc(np, vision_buf)
+      if yuv_frame is None:
         pm.send("sideVisionState", _side_vision_msg(
           messaging,
           frame_id=frame_id,
@@ -358,11 +384,12 @@ def main() -> None:
           inference_skipped=True,
         ))
         continue
+      yuv_img, width, height = yuv_frame
 
-      left_roi = _crop_roi(np, rgb, LEFT_ROI)
-      right_roi = _crop_roi(np, rgb, RIGHT_ROI)
-      left_score = left_tracker.update(np, cv2, left_roi, threshold)
-      right_score = right_tracker.update(np, cv2, right_roi, threshold)
+      left_roi = _sample_roi_gray(np, yuv_img, width, height, LEFT_ROI)
+      right_roi = _sample_roi_gray(np, yuv_img, width, height, RIGHT_ROI)
+      left_score = left_tracker.update(np, left_roi, threshold)
+      right_score = right_tracker.update(np, right_roi, threshold)
       exec_ms = (time.monotonic() - start_t) * 1000.0
 
       pm.send("sideVisionState", _side_vision_msg(
@@ -386,18 +413,21 @@ def main() -> None:
 
 
 def run_roi_smoke_test() -> int:
-  import cv2
   import numpy as np
 
   tracker = RoiOccupancyTracker()
   threshold = DEFAULT_THRESHOLD
-  blank = np.zeros((160, 160, 3), dtype=np.uint8)
+  blank = np.zeros((160, 160), dtype=np.uint8)
   textured = blank.copy()
-  cv2.rectangle(textured, (35, 30), (130, 135), (210, 210, 210), -1)
-  cv2.line(textured, (35, 30), (130, 135), (20, 20, 20), 4)
+  textured[30:135, 35:130] = 210
+  for offset in range(-2, 3):
+    ys = np.arange(30, 136)
+    xs = 35 + ((ys - 30) * (130 - 35) // (135 - 30)) + offset
+    valid = (xs >= 0) & (xs < textured.shape[1])
+    textured[ys[valid], xs[valid]] = 20
 
-  tracker.update(np, cv2, blank, threshold)
-  score = tracker.update(np, cv2, textured, threshold)
+  tracker.update(np, blank, threshold)
+  score = tracker.update(np, textured, threshold)
   print(f"prob={score.prob:.3f} detected={score.detected} reason={score.reason}")
   return 0
 

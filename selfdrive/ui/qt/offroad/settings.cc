@@ -75,36 +75,6 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
       tr("Display speed in km/h instead of mph."),
       "../assets/offroad/icon_metric.png",
     },
-    {
-      "LaneMarkingModelEnabled",
-      tr("Lane Marking Shadow Model"),
-      tr("Run the fcamera lane marking model in shadow mode only. This does not change steering, acceleration, braking, or lane change control."),
-      "../assets/offroad/icon_warning.png",
-    },
-    {
-      "LaneMarkingDisplayEnabled",
-      tr("Lane Marking Display"),
-      tr("Show the lane marking shadow overlay on the onroad UI."),
-      "../assets/offroad/icon_metric.png",
-    },
-    {
-      "LaneMarkingInterventionEnabled",
-      tr("Lane Marking Intervention Placeholder"),
-      tr("Reserved for future lane-change gating. In this build it is a no-op and cannot allow or block lane changes."),
-      "../assets/offroad/icon_warning.png",
-    },
-    {
-      "LaneMarkingShowDebugOverlay",
-      tr("Lane Marking Debug Overlay"),
-      tr("Show debug details for the lane marking shadow overlay."),
-      "../assets/offroad/icon_metric.png",
-    },
-    {
-      "SideVisionModelEnabled",
-      tr("Side Vision Shadow"),
-      tr("Run driver-camera side ROI detection in shadow mode and log it with BSD/radar evidence. This does not change lane-change control."),
-      "../assets/offroad/icon_warning.png",
-    },
   };
 
 
@@ -774,16 +744,33 @@ CarrotPanel::CarrotPanel(QWidget* parent) : QWidget(parent) {
   //latLongToggles->addItem(new CValueControl("CruiseMinVals", "DECEL:(120)", "Sets the deceleration rate.(x0.01m/s^2)", 50, 250, 5));
 
   dispToggles = new ListWidget(this);
-  dispToggles->addItem(new CValueControl("ShowDebugUI", tr("Debug Info"), "", 0, 2, 1));
-  dispToggles->addItem(new CValueControl("ShowTpms", tr("Tpms Info"), "", 0, 3, 1));
-  dispToggles->addItem(new CValueControl("ShowDateTime", tr("Time Info"), tr("0:None,1:Time/Date,2:Time,3:Date"), 0, 3, 1));
-  dispToggles->addItem(new CValueControl("ShowPathEnd", tr("Path End"), tr("0:None,1:Display"), 0, 1, 1));
-  dispToggles->addItem(new CValueControl("ShowDeviceState", tr("Device State"), tr("0:None,1:Display"), 0, 1, 1));
-  dispToggles->addItem(new CValueControl("ShowLaneInfo", tr("Lane Info"), tr("-1:None, 0:Path, 1:Path+Lane, 2: Path+Lane+RoadEdge"), -1, 2, 1));
-  dispToggles->addItem(new CValueControl("ShowRadarInfo", tr("Radar Info"), tr("0:None,1:Display,2:RelPos,3:Stopped Car"), 0, 3, 1));
-  dispToggles->addItem(new CValueControl("ShowRouteInfo", tr("Route Info"), tr("0:None,1:Display"), 0, 1, 1));
-  dispToggles->addItem(new CValueControl("ShowPlotMode", tr("Debug plot"), "", 0, 10, 1));
-  dispToggles->addItem(new CValueControl("ShowCustomBrightness", tr("Brightness ratio"), "", 0, 100, 10));
+
+  // Lane Marking model & process controls
+  ListWidget* laneMarkGroup = new ListWidget(this);
+  laneMarkGroup->addItem(new CValueControl("LaneMarkingModelEnabled", tr("Lane Marking Shadow Model"), tr("0:Off(shadow-only), 1:On(full)"), 0, 1, 1));
+  laneMarkGroup->addItem(new CValueControl("LaneMarkingDisplayEnabled", tr("Lane Marking Display"), tr("0:Off, 1:On(show overlay on UI)"), 0, 1, 1));
+  laneMarkGroup->addItem(new CValueControl("LaneMarkingInterventionEnabled", tr("Lane Marking Intervention"), tr("0:Off, 1:On(cut-in assist)"), 0, 1, 1));
+  laneMarkGroup->addItem(new CValueControl("LaneMarkingShowDebugOverlay", tr("Lane Marking Debug Overlay"), tr("0:Off, 1:On"), 0, 1, 1));
+  dispToggles->addItem(laneMarkGroup);
+
+  // Side Vision model control
+  ListWidget* sideVisionGroup = new ListWidget(this);
+  sideVisionGroup->addItem(new CValueControl("SideVisionModelEnabled", tr("Side Vision Shadow"), tr("0:Off(shadow-only), 1:On(full)"), 0, 1, 1));
+  dispToggles->addItem(sideVisionGroup);
+
+  // General display info toggles
+  ListWidget* generalDisp = new ListWidget(this);
+  generalDisp->addItem(new CValueControl("ShowDebugUI", tr("Debug Info"), "", 0, 2, 1));
+  generalDisp->addItem(new CValueControl("ShowTpms", tr("Tpms Info"), "", 0, 3, 1));
+  generalDisp->addItem(new CValueControl("ShowDateTime", tr("Time Info"), tr("0:None,1:Time/Date,2:Time,3:Date"), 0, 3, 1));
+  generalDisp->addItem(new CValueControl("ShowPathEnd", tr("Path End"), tr("0:None,1:Display"), 0, 1, 1));
+  generalDisp->addItem(new CValueControl("ShowDeviceState", tr("Device State"), tr("0:None,1:Display"), 0, 1, 1));
+  generalDisp->addItem(new CValueControl("ShowLaneInfo", tr("Lane Info"), tr("-1:None, 0:Path, 1:Path+Lane, 2: Path+Lane+RoadEdge"), -1, 2, 1));
+  generalDisp->addItem(new CValueControl("ShowRadarInfo", tr("Radar Info"), tr("0:None,1:Display,2:RelPos,3:Stopped Car"), 0, 3, 1));
+  generalDisp->addItem(new CValueControl("ShowRouteInfo", tr("Route Info"), tr("0:None,1:Display"), 0, 1, 1));
+  generalDisp->addItem(new CValueControl("ShowPlotMode", tr("Debug plot"), "", 0, 10, 1));
+  generalDisp->addItem(new CValueControl("ShowCustomBrightness", tr("Brightness ratio"), "", 0, 100, 10));
+  dispToggles->addItem(generalDisp);
   //dispToggles->addItem(new CValueControl("ShowHudMode", "Display Mode", "0:Frog,1:APilot,2:Bottom,3:Top,4:Left,5:Left-Bottom", 0, 5, 1));
   //dispToggles->addItem(new CValueControl("ShowSteerRotate", "Handle rotate", "0:None,1:Rotate", 0, 1, 1));
   //dispToggles->addItem(new CValueControl("ShowAccelRpm", "Accel meter", "0:None,1:Display,1:Accel+RPM", 0, 2, 1));

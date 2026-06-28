@@ -32,8 +32,8 @@ from openpilot.selfdrive.lanemarking.model import (
   DECISION_UNCERTAIN_OR_BLOCK,
   LANE_MARKING_MODEL_PATH,
   LaneMarkingPrediction,
-  LaneMarkingTorchScriptModel,
   TemporalConsistencyFilter,
+  create_lane_marking_model,
   normalize_threshold,
 )
 
@@ -42,31 +42,11 @@ def _threshold_from_params(params) -> float:
   return normalize_threshold(params.get("LaneMarkingConfidenceThreshold", return_default=True))
 
 
-def _crop_and_pad(np, img, u_start: int, v_start: int, crop_size: int):
-  h, w = img.shape[:2]
-  u_end = u_start + crop_size
-  v_end = v_start + crop_size
-
-  u_start_clamped = max(0, u_start)
-  u_end_clamped = min(w, u_end)
-  v_start_clamped = max(0, v_start)
-  v_end_clamped = min(h, v_end)
-
-  if u_start_clamped >= u_end_clamped or v_start_clamped >= v_end_clamped:
-    return np.zeros((crop_size, crop_size, 3), dtype=np.uint8)
-
-  patch = img[v_start_clamped:v_end_clamped, u_start_clamped:u_end_clamped]
-  if patch.shape[0] == crop_size and patch.shape[1] == crop_size:
-    return patch
-
-  out = np.zeros((crop_size, crop_size, 3), dtype=np.uint8)
-  dst_y = max(0, -v_start)
-  dst_x = max(0, -u_start)
-  out[dst_y:dst_y + patch.shape[0], dst_x:dst_x + patch.shape[1]] = patch
-  return out
+def _nv12_planes_valid(yuv_img, width: int, height: int) -> bool:
+  return yuv_img.shape[0] >= height + height // 2 and yuv_img.shape[1] >= width
 
 
-def _rgb_from_vipc(np, cv2, vision_buf):
+def _yuv_from_vipc(np, vision_buf):
   width = int(getattr(vision_buf, "width", 0))
   height = int(getattr(vision_buf, "height", 0))
   stride = int(getattr(vision_buf, "stride", width))
@@ -79,7 +59,41 @@ def _rgb_from_vipc(np, cv2, vision_buf):
     return None
 
   yuv_img = yuv.reshape((yuv.size // stride, stride))
-  return cv2.cvtColor(yuv_img[:height * 3 // 2, :width], cv2.COLOR_YUV2RGB_NV12)
+  if not _nv12_planes_valid(yuv_img, width, height):
+    return None
+  return yuv_img, width, height
+
+
+def _yuv_to_rgb(np, y, u, v):
+  c = y - 16
+  d = u - 128
+  e = v - 128
+  r = (298 * c + 409 * e + 128) >> 8
+  g = (298 * c - 100 * d - 208 * e + 128) >> 8
+  b = (298 * c + 516 * d + 128) >> 8
+  return np.clip(np.stack((r, g, b), axis=2), 0, 255).astype(np.uint8)
+
+
+def _crop_and_pad_nv12_rgb(np, yuv_img, width: int, height: int, u_start: int, v_start: int, crop_size: int):
+  xs = np.arange(u_start, u_start + crop_size, dtype=np.int32)
+  ys = np.arange(v_start, v_start + crop_size, dtype=np.int32)
+  xx, yy = np.meshgrid(xs, ys)
+  valid = (xx >= 0) & (xx < width) & (yy >= 0) & (yy < height)
+
+  y = np.full((crop_size, crop_size), 16, dtype=np.int32)
+  u = np.full((crop_size, crop_size), 128, dtype=np.int32)
+  v = np.full((crop_size, crop_size), 128, dtype=np.int32)
+  if not np.any(valid):
+    return _yuv_to_rgb(np, y, u, v)
+
+  src_x = xx[valid]
+  src_y = yy[valid]
+  uv_x = (src_x // 2) * 2
+  uv_y = height + src_y // 2
+  y[valid] = yuv_img[src_y, src_x].astype(np.int32)
+  u[valid] = yuv_img[uv_y, uv_x].astype(np.int32)
+  v[valid] = yuv_img[uv_y, uv_x + 1].astype(np.int32)
+  return _yuv_to_rgb(np, y, u, v)
 
 
 def _project_lane_point(np, lane_line, x_eval: float, view_from_calib, intrinsic) -> tuple[float, float, float] | None:
@@ -102,13 +116,12 @@ def _project_lane_point(np, lane_line, x_eval: float, view_from_calib, intrinsic
   return u, v, y_eval
 
 
-def _preprocess_crops(np, torch, crops: list[Any]):
+def _preprocess_crops(np, crops: list[Any]):
   arr = np.stack(crops).astype(np.float32) / 255.0
   mean = np.asarray(IMAGE_MEAN, dtype=np.float32).reshape((1, 1, 1, 3))
   std = np.asarray(IMAGE_STD, dtype=np.float32).reshape((1, 1, 1, 3))
   arr = (arr - mean) / std
-  arr = np.ascontiguousarray(arr.transpose(0, 3, 1, 2))
-  return torch.from_numpy(arr)
+  return np.ascontiguousarray(arr.transpose(0, 3, 1, 2))
 
 
 def _aggregate_side(
@@ -140,11 +153,17 @@ def _aggregate_side(
   return LaneMarkingPrediction(best.label, best.confidence, {}, DECISION_UNCERTAIN_OR_BLOCK, False)
 
 
-def _prediction_from_probs(class_names: tuple[str, ...], probs) -> LaneMarkingPrediction:
-  confidence, predicted_idx = probs.max(0)
-  idx = int(predicted_idx.item())
+def _softmax(np, logits):
+  logits = logits.astype(np.float32)
+  logits = logits - np.max(logits, axis=1, keepdims=True)
+  exp_logits = np.exp(logits)
+  return exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
+
+
+def _prediction_from_probs(np, class_names: tuple[str, ...], probs) -> LaneMarkingPrediction:
+  idx = int(np.argmax(probs))
   label = class_names[idx] if idx < len(class_names) else "unknown"
-  conf = float(confidence.item())
+  conf = float(probs[idx])
   return LaneMarkingPrediction(label, conf, {}, DECISION_UNCERTAIN_OR_BLOCK, False)
 
 
@@ -190,16 +209,20 @@ def _lane_marking_msg(
   return dat
 
 
-def run_smoke_test(model_path: Path = LANE_MARKING_MODEL_PATH) -> int:
-  model = LaneMarkingTorchScriptModel(model_path=model_path)
+def run_smoke_test(model_path: Path = LANE_MARKING_MODEL_PATH, backend: str | None = None) -> int:
+  import numpy as np
+
+  kwargs = {"model_path": model_path} if backend in ("torch", "torchscript") else {}
+  model = create_lane_marking_model(backend=backend, **kwargs)
   model.load()
 
-  assert model.torch is not None
-  dummy_input = model.torch.zeros((1, 3, 224, 224), dtype=model.torch.float32)
-  prediction = model.predict_tensor(dummy_input, threshold=0.60)
+  dummy_input = np.zeros((1, 3, 224, 224), dtype=np.float32)
+  probs = _softmax(np, model.predict_logits(dummy_input))
+  prediction = _prediction_from_probs(np, model.class_names, probs[0])
 
   print(json.dumps({
-    "model_path": str(model_path),
+    "backend": model.runtime,
+    "model_path": str(model.model_path),
     "label": prediction.label,
     "confidence": prediction.confidence,
     "decision": prediction.decision,
@@ -210,7 +233,6 @@ def run_smoke_test(model_path: Path = LANE_MARKING_MODEL_PATH) -> int:
 
 def main() -> None:
   import numpy as np
-  import cv2
   from cereal import messaging
   from msgq.visionipc import VisionIpcClient, VisionStreamType
   from openpilot.common.params import Params
@@ -220,7 +242,7 @@ def main() -> None:
   params = Params()
   pm = messaging.PubMaster(["laneMarkingState"])
   sm = messaging.SubMaster(["modelV2", "liveCalibration", "roadCameraState", "deviceState"], poll="roadCameraState")
-  model: LaneMarkingTorchScriptModel | None = None
+  model = None
   temporal_filters = {
     "left": TemporalConsistencyFilter(required_frames=3),
     "right": TemporalConsistencyFilter(required_frames=3),
@@ -240,10 +262,10 @@ def main() -> None:
         continue
 
       if model is None:
-        model = LaneMarkingTorchScriptModel()
+        model = create_lane_marking_model()
         try:
           model.load()
-          cloudlog.info("lanemarkingd loaded model: %s", model.model_path)
+          cloudlog.info("lanemarkingd loaded %s model: %s", model.runtime, model.model_path)
         except Exception:
           if not load_error_logged:
             cloudlog.exception("lanemarkingd model load failed; staying disabled/log-only")
@@ -293,9 +315,10 @@ def main() -> None:
         ))
         continue
 
-      rgb = _rgb_from_vipc(np, cv2, vision_buf)
-      if rgb is None:
+      yuv_frame = _yuv_from_vipc(np, vision_buf)
+      if yuv_frame is None:
         continue
+      yuv_img, width, height = yuv_frame
 
       model_data = sm["modelV2"]
       live_calib = sm["liveCalibration"]
@@ -320,9 +343,11 @@ def main() -> None:
           u_proj, v_proj, y_eval = projected
           if abs(x_eval - 20.0) < 0.1:
             side_boundary_y[side] = y_eval
-          crops.append(_crop_and_pad(
+          crops.append(_crop_and_pad_nv12_rgb(
             np,
-            rgb,
+            yuv_img,
+            width,
+            height,
             int(round(u_proj - CROP_SIZE / 2)),
             int(round(v_proj - CROP_SIZE / 2)),
             CROP_SIZE,
@@ -340,18 +365,14 @@ def main() -> None:
         ))
         continue
 
-      assert model.torch is not None
-      assert model.model is not None
       start_t = time.monotonic()
-      input_tensor = _preprocess_crops(np, model.torch, crops)
-      with model.torch.no_grad():
-        logits = model.model(input_tensor)
-        probs_batch = model.torch.softmax(logits, dim=1)
+      input_array = _preprocess_crops(np, crops)
+      probs_batch = _softmax(np, model.predict_logits(input_array))
       exec_ms = (time.monotonic() - start_t) * 1000.0
 
       side_predictions = {"left": [], "right": []}
       for probs, (side, _x_eval, _y_eval) in zip(probs_batch, crop_meta):
-        side_predictions[side].append(_prediction_from_probs(model.class_names, probs))
+        side_predictions[side].append(_prediction_from_probs(np, model.class_names, probs))
 
       left_prediction = _aggregate_side(side_predictions["left"], threshold, temporal_filters["left"])
       right_prediction = _aggregate_side(side_predictions["right"], threshold, temporal_filters["right"])
@@ -382,8 +403,9 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Lane marking shadow-mode runtime")
   parser.add_argument("--smoke-test", action="store_true", help="Load the runtime model and run one dummy inference.")
   parser.add_argument("--model", type=Path, default=LANE_MARKING_MODEL_PATH, help="Runtime TorchScript model path.")
+  parser.add_argument("--backend", choices=("tinygrad", "torchscript"), default=None, help="Runtime backend override.")
   args = parser.parse_args()
 
   if args.smoke_test:
-    raise SystemExit(run_smoke_test(args.model))
+    raise SystemExit(run_smoke_test(args.model, args.backend))
   main()
