@@ -30,8 +30,8 @@ RADAR_TO_CAMERA = 1.52  # RADAR is ~ 1.5m ahead from center of mesh frame
 CUT_IN_VEHICLE_HALF_WIDTH = 0.9
 CUT_IN_MAX_DIST = 50.0
 CUT_IN_CLOSE_DIST = 30.0
-CUT_IN_MIN_TRACK_AGE = 0.30
-CUT_IN_MIN_TRACK_AGE_CLOSE = 0.15
+CUT_IN_MIN_TRACK_AGE = 0.20
+CUT_IN_MIN_TRACK_AGE_CLOSE = 0.10
 LANE_MARKING_MIN_WIDTH = 2.3
 LANE_MARKING_MAX_WIDTH = 4.8
 LANE_MARKING_ALLOW_LABELS = frozenset({"white_dashed"})
@@ -755,9 +755,11 @@ class RadarD:
     lane_width = abs(float(md.laneLines[2].y[0]) - float(md.laneLines[1].y[0]))
     return left_prob > 0.35 and right_prob > 0.35 and 2.3 < lane_width < 4.8
 
-  def _cut_in_candidate(self, c: Track, side: str) -> bool:
-    if not (self.lane_line_available or self.lane_marking_cut_in_available):
-      return False
+ def _cut_in_candidate(self, c: Track, side: str) -> bool:
+    # 레인 라인 또는 레인 마킹 상태가 없더라도, 비전 모델의 in_lane_prob 정보를 활용해 끼어들기 후보 판별 허용
+    # if not (self.lane_line_available or self.lane_marking_cut_in_available):
+    #   return False
+    
     if not (3.0 < c.dRel < CUT_IN_MAX_DIST and c.vLead > 4.0):
       return False
 
@@ -775,9 +777,11 @@ class RadarD:
     lane_evidence_growing = lane_future > lane_now + 0.04
     center_entering_threshold = 0.02 if close else 0.06
     touching_threshold = 0.08 if close else 0.14
-    if self.lane_marking_cut_in_available and not self.lane_line_available:
-      center_entering_threshold += 0.03
-      touching_threshold += 0.06
+    
+    # 레인 마킹 상태가 없거나 불완전할 때 임계값을 높여 반응을 느리게 하는 로직 제거
+    # if self.lane_marking_cut_in_available and not self.lane_line_available:
+    #   center_entering_threshold += 0.03
+    #   touching_threshold += 0.06
 
     center_entering = max(c.in_lane_prob, c.in_lane_prob_future) > center_entering_threshold
     touching_our_lane = max(lane_now, lane_future) > touching_threshold
@@ -813,13 +817,15 @@ class RadarD:
     
     left_list, right_list, center_list, cutin_list = [], [], [], []
 
-    def maybe_add_cut_in(c: Track, side: str):
+   def maybe_add_cut_in(c: Track, side: str):
       if self._cut_in_candidate(c, side):
-        confirm_time = 0.10 if c.dRel < CUT_IN_CLOSE_DIST else 0.20
-        if self.lane_marking_cut_in_available and not self.lane_line_available:
-          confirm_time += 0.10
-        if self.lane_marking_cut_in_available and self._lane_marking_side(side)["block"]:
-          confirm_time += 0.10
+        # 반응성 개선을 위해 확인 시간 단축 (가까이서: 0.05초 -> 1프레임, بعيد: 0.15초 -> 3프레임)
+        confirm_time = 0.05 if c.dRel < CUT_IN_CLOSE_DIST else 0.15
+        # 레인 마킹 상태 불완전 시 발생하는 불필요한 지연 제거
+        # if self.lane_marking_cut_in_available and not self.lane_line_available:
+        #   confirm_time += 0.10
+        # if self.lane_marking_cut_in_available and self._lane_marking_side(side)["block"]:
+        #   confirm_time += 0.10
         confirm_frames = max(1, int(confirm_time / DT_MDL))
         if c.cut_in_count >= confirm_frames:
           cutin_list.append(c.get_CutInState(v_ego, 0.03, float(-lead_msg.y[0])))
