@@ -159,6 +159,8 @@ class CarInterface(CarInterfaceBase):
     ret.steerLimitTimer = 0.4
     if ret.flags & HyundaiFlags.ANGLE_CONTROL:
       ret.steerControlType = SteerControlType.angle
+      if candidate == CAR.HYUNDAI_IONIQ_5_PE:
+        ret.steerActuatorDelay = 0.15
     else:
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
