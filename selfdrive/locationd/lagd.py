@@ -349,9 +349,21 @@ def retrieve_initial_lag(params: Params, CP: car.CarParams):
         if last_CP.carFingerprint != CP.carFingerprint:
           raise Exception("Car model mismatch")
 
+        steering_model_matches = (last_CP.steerControlType == CP.steerControlType and
+                                  last_CP.steerRatio == CP.steerRatio and
+                                  last_CP.steerActuatorDelay == CP.steerActuatorDelay)
+        if not steering_model_matches:
+          params.remove("LiveDelay")
+          return None
+
         lag, valid_blocks, status = ld.lateralDelayEstimate, ld.validBlocks, ld.status
-        assert valid_blocks <= BLOCK_NUM, "Invalid number of valid blocks"
-        assert status != log.LiveDelayData.Status.invalid, "Lag estimate is invalid"
+        if valid_blocks > BLOCK_NUM:
+          raise ValueError("Invalid number of valid blocks")
+        if status == log.LiveDelayData.Status.invalid:
+          raise ValueError("Lag estimate is invalid")
+        if valid_blocks <= 0:
+          params.remove("LiveDelay")
+          return None
         return lag, valid_blocks
     except Exception as e:
       cloudlog.error(f"Failed to retrieve initial lag: {e}")

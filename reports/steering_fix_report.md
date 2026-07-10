@@ -5,7 +5,7 @@
 - 로그: 총 329개 발견, 정상 파싱 328개 (`rlog` 164개, `qlog` 164개), 손상/lock 파일 1개
 - 영상: 총 660개 발견, 첫 프레임 디코딩 성공 656개, lock/빈 파일 4개
 - rlog 기준 구간: 2.71시간, latActive 유효 구간 1.91시간
-- 결론: 코드 steerRatio 14.26이 liveParameters 평균 16.17와 맞지 않았고, 고속 차선유지 응답 지연은 평균 0.13s로 기존 `steerActuatorDelay=0.10`보다 컸다.
+- 결론: 코드 steerRatio 14.26이 liveParameters 평균 16.17와 맞지 않았고, 고속 차선유지 응답 지연은 평균 0.13s로 기존 `steerActuatorDelay=0.10`보다 컸다. 또한 이전 조향 모델에서 완료된 `LiveDelay`가 그대로 복원되어 새 delay prior와 재학습이 실제 제어 경로에 반영되지 않는 캐시 문제가 있었다.
 
 ## 분석한 로그 목록
 - 전체 로그 파일 수: 329
@@ -52,6 +52,8 @@
 3. 모델 경로/차선 인식 문제: 일부 구간에서 보조 원인. 49개 로그에서 path instability가 있었지만 대표 고속 문제 구간은 lane_visible=1.0, mpc_valid=1.0이었다.
 4. driver override 오판/CAN/panda safety 문제: 기각. carState.canValid invalid 0회, panda fault 0회, calibration bad 0회였다.
 5. controller torque/rate 제한: 부분 보류. 저속 대조향 구간에서는 제한이 보였지만 40km/h 이상 차선유지 구간의 controller clip p95 평균은 작았다.
+6. 이전 조향 모델의 `LiveDelay` 캐시 재사용: 채택. 2차 스캔에서 읽힌 `liveDelay` 32,674개는 모두 `estimated`, `calPerc=100`, `validBlocks=50`이었고 `lateralDelay` 평균은 0.289s였다. 기존 코드는 fingerprint만 같으면 이 값을 계속 복원하므로 steerRatio와 actuator delay를 수정해도 새 기본값과 재학습이 시작되지 않았다.
+7. 사용자 `SteerActuatorDelay` 고정값: 운영상 마스킹 가능성. `controlsd`와 `modeld`는 이 값이 0이 아니면 `liveDelay` 대신 고정값을 사용한다. Params 코드 기본값은 0이지만 `carrot_settings.json`의 설정 초기화 기본값은 30(0.30s)이므로, 실차 검증에서는 반드시 0(LiveDelay 모드)인지 확인해야 한다. 이 값은 주행 로그 메시지에 직접 기록되지 않아 기존 로그만으로 현재 장치 값을 확정할 수 없다.
 
 ## 튜닝안 비교
 | 안 | steerRatio | steerActuatorDelay | 판단 |
@@ -63,6 +65,8 @@
 ## 채택한 수정
 - `opendbc_repo/opendbc/car/hyundai/values.py`: `HYUNDAI_IONIQ_5_PE` CarSpecs steerRatio를 14.26에서 16.2로 변경.
 - `opendbc_repo/opendbc/car/hyundai/interface.py`: angle-control 경로에서 `HYUNDAI_IONIQ_5_PE`만 `steerActuatorDelay=0.15`로 보정.
+- `selfdrive/locationd/lagd.py`: 이전 route의 제어 방식(angle/torque), steerRatio 또는 steerActuatorDelay가 현재 CarParams와 다르면 기존 `LiveDelay`를 폐기하고 현재 기본값에서 재학습한다. 유효 블록이 0이거나 범위를 벗어나거나 상태가 invalid인 캐시도 명시적 예외로 폐기하되, 동일 조향 모델에서 수집된 부분/완료 학습은 유지한다.
+- `selfdrive/locationd/test/test_lagd.py`: 제어 방식/비율/지연 변경, 미학습·손상 캐시, 부분 학습 유지, 완료 학습 유지, 실제 Param 삭제, 현재 기본 지연 출력을 회귀 테스트로 고정했다.
 
 ## 수정 전/후 비교
 | 지표 | 수정 전 | 수정 후 | 변화 |
@@ -71,6 +75,9 @@
 | 40km/h 이상 actuator delay 절대 오차 | 0.052s | 0.018s | 66.3% 감소 |
 | 로그 재시뮬레이션 controller clip p95 | 0.000deg | 0.000deg | 거의 동일 |
 | 전체 active 샘플 수 | 663992 | 663992 | 동일 로그 재사용 |
+| 조향 방식/비율/지연 변경 후 이전 `LiveDelay` 0.289s 복원 | 복원됨 | 폐기 후 현재 기본값 0.35s 사용 | 새 delay prior와 재학습이 첫 주행부터 적용됨 |
+| 유효 블록 0인 `LiveDelay` 0.30s 복원 | 복원됨 | 폐기됨 | 오래된 fallback 고착 제거 |
+| 동일 모델의 부분/완료 학습 | 복원됨 | 계속 복원됨 | 정상 warm-start 유지 |
 
 ## 실행한 검증
 - WSL 전체 로그 인벤토리: 989개 관련 파일 발견.
@@ -80,30 +87,53 @@
 - `python3 -m py_compile opendbc_repo/opendbc/car/hyundai/values.py opendbc_repo/opendbc/car/hyundai/interface.py`: 통과.
 - `python3 -m compileall -q opendbc_repo/opendbc/car/hyundai`: 통과.
 - `CAR.HYUNDAI_IONIQ_5_PE.config.specs.steerRatio`: 16.2 확인.
-- LSP: `basedpyright-langserver` 미설치로 실행하지 못함.
-- pytest/process replay: WSL Python에 `pytest`, `setproctitle`, `usb1`, `crcmod`가 없어 실행하지 못함.
+- WSL `.venv` 의존성 동기화 후 `pytest 8.3.5`, `ruff 0.11.5`, `basedpyright 1.39.9`, SCons 4.9.1을 사용했다.
+- red 검증 1: 구현 전 캐시 회귀 테스트는 비율 변경, 지연 변경, 유효 블록 0에서 `3 failed, 3 passed`였다.
+- red 검증 2: 제어 방식 angle→torque 변경 사례를 추가한 직후 `1 failed, 6 passed`로 기존 누락을 재현했다.
+- `python -m pytest selfdrive/locationd/test/test_lagd.py selfdrive/locationd/test/test_calibrationd.py -q`: 최종 `16 passed`.
+- `python -O -m pytest -W ignore::pytest.PytestConfigWarning selfdrive/locationd/test/test_lagd.py -q`: 최적화 모드 `9 passed`; 손상 캐시 검증이 assert 제거 후에도 유지됨을 확인했다.
+- `ruff check selfdrive/locationd/lagd.py selfdrive/locationd/test/test_lagd.py`: 통과.
+- `basedpyright --level error selfdrive/locationd/test/test_lagd.py`: `0 errors, 0 warnings`.
+- `python -m py_compile selfdrive/locationd/lagd.py selfdrive/locationd/test/test_lagd.py`: 통과.
+- `git diff --check` 및 LF 줄바꿈 검사: 통과.
+- `scons -j32 selfdrive/pandad/pandad_api_impl.so`: WSL 네이티브 Python 모듈 빌드 통과.
+- locationd 전체 테스트 수집: 관련 테스트 13개는 통과했으나 작업 범위 밖의 기존 `selfdrive/controls/radard.py:758` 들여쓰기/혼합 줄바꿈 손상으로 `test_locationd_scenarios.py` 수집이 중단됐다.
+- process replay: 공식 `CONFIGS`에 `lagd`가 없어 직접 replay 대상이 아니며, runner import도 위 `radard.py` 오류에서 중단됐다. 대신 실제 Params와 Cap'n Proto 직렬화, `retrieve_initial_lag`, `LateralLagEstimator`를 함께 사용하는 9개 캐시 시나리오로 해당 경로를 검증했다.
+- `basedpyright --level error selfdrive/locationd/lagd.py`: 변경 줄이 아닌 기존 ndarray/Cap'n Proto 타입 선언 줄에서 13개 오류가 남아 있다.
+- 기본 warning 레벨의 basedpyright는 Cap'n Proto/Params 타입 스텁 부재로 새 테스트에도 unknown-type 경고를 내므로 error 레벨을 품질 게이트로 사용했다.
 
 ## 리뷰 지적사항 처리
 - comment-checker가 새 코드 주석을 지적했고, 해당 주석은 보고서로 충분하다고 판단해 코드에서 제거했다.
-- LSP 미설치 지적은 환경 의존성 문제로 보고서에 남겼다.
+- 회귀 테스트의 Given/When/Then 주석은 테스트 의도를 고정하는 BDD 주석이라 유지했다.
+- 캐시 검증에 `assert`를 쓰면 최적화 모드에서 사라진다는 리뷰는 반영해 명시적 `ValueError` 검사로 변경했고 `python -O` 테스트를 추가했다.
+- 일부 리뷰 에이전트가 Windows Python 또는 WSL 시스템 Python으로 pytest/Ruff/basedpyright를 실행해 실패한 지적은 반영하지 않았다. 사용자 요구 환경인 WSL 저장소 `.venv`의 정확한 실행 파일로 다시 실행한 결과는 각각 16 passed, Ruff 통과, error-level basedpyright 0건이다.
+- `SteerActuatorDelay=30`을 코드에서 자동으로 0으로 덮어쓰라는 지적은 반영하지 않았다. 이 값은 명시적 사용자 override이므로 무단 변경은 다른 차량과 의도적 수동 튜닝에 위험하다. 대신 보고서 위험성과 실차 체크리스트 첫 항목에서 0(LiveDelay 모드)을 필수 조건으로 지정했다.
+- 작업 트리의 다른 수정·삭제를 정리하라는 지적은 반영하지 않았다. 사용자 변경을 되돌리지 않고 이번 세 파일만 정확한 경로로 스테이징해 커밋한다.
+- `lagd.py`가 250줄을 넘는 기존 모듈이라는 지적은 확인했으나, 안전 중요 제어 코드의 광범위 분리는 이번 좁은 캐시 동작 수정의 검증 범위를 크게 확장하므로 별도 작업으로 남겼다.
+- 전체 locationd/process replay 차단 원인인 `radard.py`는 이번 작업 이전부터 존재하는 별도 변경이며 사용자 작업을 되돌리지 않는 원칙에 따라 수정하지 않았다.
 
 ## 남은 위험성
 - 실차 EPS 응답은 온도, 타이어, 노면, MDPS 상태에 따라 로그 평균과 다를 수 있다.
 - 0.15s delay는 평균 lag에 맞춘 값이므로 일부 구간에서 조향 선행감이 늘 수 있다.
-- process replay와 pytest가 의존성 부족으로 실행되지 않아 CI/정식 개발 환경에서 추가 검증이 필요하다.
+- 업데이트 후 첫 주행은 이전 `LiveDelay`가 의도적으로 초기화되어 총 지연 기본값 0.35s로 시작한다. 충분한 고속 유효 데이터가 쌓이면 새 추정값으로 전환된다.
+- 장치의 `SteerActuatorDelay`가 0이 아니면 고정 지연이 우선하여 `LiveDelay` 재학습 효과가 제어 경로에서 보이지 않는다.
 - 원본 로그에는 저속 대조향 구간이 포함되어 있어 주차/교차로 저속 조향과 HDA 차선유지 튜닝을 분리해서 해석해야 한다.
 
 ## 실차 테스트 체크리스트
-1. 40-80km/h 직선: 조향이 좌우로 잔진동하지 않고 차선 중앙을 유지하는지 확인.
-2. 완만한 커브 진입: 기존보다 조향 시작이 늦지 않고 바깥쪽으로 밀리지 않는지 확인.
-3. 커브 탈출: 조향 복귀가 과하게 빠르거나 안쪽으로 감기지 않는지 확인.
-4. 운전자 손토크 개입: steeringPressed 이후 assist 복귀가 자연스럽고 운전자 의도를 방해하지 않는지 확인.
-5. 20km/h 이하 큰 조향: EPS fault, steerFaultTemporary, LKAS 해제/재개가 없는지 확인.
-6. 10분 이상 반복 주행: `liveParameters.steerRatio`, `angleOffsetDeg`, `stiffnessFactor`, `steerFaultTemporary`, panda faults 기록.
+1. 출발 전 `SteerActuatorDelay=0`인지 확인해 고정 지연 대신 LiveDelay를 사용한다.
+2. 업데이트 첫 주행 시작 직후: `liveDelay.status=unestimated`, `validBlocks=0`, `lateralDelay` 약 0.35s인지 확인.
+3. 40-80km/h 직선: 조향이 좌우로 잔진동하지 않고 차선 중앙을 유지하는지 확인.
+4. 완만한 커브 진입: 기존보다 조향 시작이 늦지 않고 바깥쪽으로 밀리지 않는지 확인.
+5. 커브 탈출: 조향 복귀가 과하게 빠르거나 안쪽으로 감기지 않는지 확인.
+6. 운전자 손토크 개입: steeringPressed 이후 assist 복귀가 자연스럽고 운전자 의도를 방해하지 않는지 확인.
+7. 20km/h 이하 큰 조향: EPS fault, steerFaultTemporary, LKAS 해제/재개가 없는지 확인.
+8. 10분 이상 반복 주행: `liveDelay`, `liveParameters.steerRatio`, `angleOffsetDeg`, `stiffnessFactor`, `steerFaultTemporary`, panda faults 기록.
 
 ## 롤백 방법
 - 커밋 후에는 `git revert <이번 커밋 해시>`를 사용한다.
 - 수동 롤백은 `values.py`의 Ioniq 5 PE steerRatio를 14.26으로 되돌리고, `interface.py`의 Ioniq 5 PE `steerActuatorDelay=0.15` 분기를 제거한다.
+- 2차 수정만 수동 롤백하려면 `lagd.py`의 steering model 일치 검사와 `valid_blocks <= 0` 분기를 제거하고 `test_lagd.py`를 함께 되돌린다.
+- 코드 롤백 뒤에는 새 조향 모델에서 저장된 캐시가 재사용되지 않도록 장치에서 `python3 -c 'from openpilot.common.params import Params; Params().remove("LiveDelay")'`를 한 번 실행한다.
 
 ## 부록 A: 분석한 로그 파일
 | kind | ok | path | 주요 패턴 |
