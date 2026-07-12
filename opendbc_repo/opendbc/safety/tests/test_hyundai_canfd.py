@@ -16,9 +16,9 @@ class TestHyundaiCanfdBase(HyundaiButtonBase, common.PandaCarSafetyTest, common.
   STANDSTILL_THRESHOLD = 12  # 0.375 kph
   FWD_BLACKLISTED_ADDRS = {2: [0x50, 0x2a4]}
 
-  MAX_RATE_UP = 2
-  MAX_RATE_DOWN = 3
-  MAX_TORQUE = 270
+  MAX_RATE_UP = 10
+  MAX_RATE_DOWN = 10
+  MAX_TORQUE = 512
 
   MAX_RT_DELTA = 112
   RT_INTERVAL = 250000
@@ -103,6 +103,18 @@ class TestHyundaiCanfdLFASteeringBase(TestHyundaiCanfdBase):
     self.safety = libsafety_py.libsafety
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.SAFETY_PARAM)
     self.safety.init_tests()
+
+  def test_angle_control_full_torque_field(self):
+    msg = self.packer.make_can_msg_panda("LFA", self.STEER_BUS, {
+      "TORQUE_REQUEST": 0,
+      "STEER_REQ": 0,
+      "LKAS_ANGLE_ACTIVE": 2,
+      "LKAS_ANGLE_MAX_TORQUE": 250,
+    })
+
+    self.assertEqual(250, msg[0].data[12])
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self._tx(msg))
 
 
 @parameterized_class([

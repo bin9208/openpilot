@@ -21,8 +21,12 @@ MAX_ANGLE = 85
 MAX_ANGLE_FRAMES = 89
 MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 ANGLE_CONTROL_DEFAULT_MAX_TORQUE = 250
-ANGLE_CONTROL_MAX_TORQUE = 255
+ANGLE_CONTROL_MAX_TORQUE = 250
 ANGLE_CONTROL_RECOVERY_MIN_FRAC = 0.55
+ANGLE_COMMAND_ACCEL_LIMIT = 0.05
+ANGLE_COMMAND_DECEL_LIMIT = 0.10
+ANGLE_COMMAND_LARGE_ERROR = 8.0
+ANGLE_COMMAND_LARGE_ERROR_ACCEL = 0.35
 
 vibrate_intervals = [
   (0.0, 0.5),
@@ -63,18 +67,74 @@ def rate_limit(x, x_last, lo, hi):
 def get_angle_control_steer_rate_limit(v_ego: float) -> float:
   return float(np.interp(v_ego, [1.0, 4.0, 8.0, 12.0, 22.0], [1.5, 1.8, 4.0, 3.5, 3.0]))
 
-def get_low_speed_angle_torque_factor(v_ego: float) -> float:
-  return float(np.interp(max(float(v_ego), 0.0), [0.0, 1.0, 4.0, 6.0], [0.60, 0.60, 0.85, 1.0]))
+def get_angle_control_max_torque(custom_steer_max: int, min_torque: int, force_full_torque: bool) -> int:
+  if force_full_torque:
+    return ANGLE_CONTROL_MAX_TORQUE
+  requested = custom_steer_max if custom_steer_max > 0 else ANGLE_CONTROL_DEFAULT_MAX_TORQUE
+  return int(np.clip(requested, min_torque, ANGLE_CONTROL_MAX_TORQUE))
+
+def smooth_angle_command_rate(target_angle: float, last_angle: float, last_rate: float,
+                              v_ego: float, max_rate: float) -> tuple[float, float]:
+  last_angle = float(last_angle) if np.isfinite(last_angle) else 0.0
+  if not np.isfinite(target_angle) or not np.isfinite(max_rate) or max_rate <= 0.0:
+    return last_angle, 0.0
+
+  target_angle = float(target_angle)
+  last_rate = float(last_rate) if np.isfinite(last_rate) else 0.0
+  v_ego = float(v_ego) if np.isfinite(v_ego) else 0.0
+  max_rate = float(max_rate)
+  error = target_angle - last_angle
+  if abs(error) <= 0.01:
+    return target_angle, 0.0
+
+  smoothing = float(np.clip((6.0 - max(v_ego, 0.0)) / 2.0, 0.0, 1.0))
+  accel_limit = max_rate * (1.0 - smoothing) + ANGLE_COMMAND_ACCEL_LIMIT * smoothing
+  decel_limit = max_rate * 2.0 * (1.0 - smoothing) + ANGLE_COMMAND_DECEL_LIMIT * smoothing
+  if abs(error) > ANGLE_COMMAND_LARGE_ERROR:
+    accel_limit = max(accel_limit, ANGLE_COMMAND_LARGE_ERROR_ACCEL)
+
+  stopping_rate = np.sqrt(max(0.0, 2.0 * decel_limit * abs(error)))
+  target_rate = np.sign(error) * min(max_rate, stopping_rate)
+  reversing = target_rate * last_rate < 0.0
+  slowing = reversing or abs(target_rate) < abs(last_rate)
+  rate_delta = decel_limit if slowing else accel_limit
+  command_rate = rate_limit(target_rate, last_rate, -rate_delta, rate_delta)
+  command_angle = last_angle + command_rate
+
+  if (target_angle - last_angle) * (target_angle - command_angle) <= 0.0:
+    return target_angle, target_angle - last_angle
+  return command_angle, command_rate
 
 def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      last_sw_deg: float,
+                                     last_sw_rate_deg_per_tick: float,
                                      v_ego: float,
                                      steering_sw_deg: float,
                                      lat_active: bool,
                                      wheelbase_m: float,
                                      steer_ratio: float,
-                                     steer_sw_max_deg: float) -> float:
+                                     steer_sw_max_deg: float) -> tuple[float, float]:
   max_lat_accel = 5.0   # m/s^2
+
+  measured_valid = bool(np.isfinite(steering_sw_deg))
+  measured_sw = float(steering_sw_deg) if measured_valid else 0.0
+  last_sw_deg = float(last_sw_deg) if np.isfinite(last_sw_deg) else measured_sw
+  last_sw_rate_deg_per_tick = float(last_sw_rate_deg_per_tick) if np.isfinite(last_sw_rate_deg_per_tick) else 0.0
+  if not np.isfinite(steer_sw_max_deg) or steer_sw_max_deg <= 0.0:
+    return measured_sw, 0.0
+
+  steer_sw_max_deg = float(steer_sw_max_deg)
+  measured_sw = float(np.clip(measured_sw, -steer_sw_max_deg, steer_sw_max_deg))
+  last_sw_deg = float(np.clip(last_sw_deg, -steer_sw_max_deg, steer_sw_max_deg))
+  if not measured_valid:
+    return last_sw_deg, 0.0
+  if not lat_active:
+    return measured_sw, 0.0
+
+  if (not np.isfinite(desired_sw_deg) or not np.isfinite(v_ego) or
+      not np.isfinite(wheelbase_m) or wheelbase_m <= 0.0 or
+      not np.isfinite(steer_ratio) or steer_ratio <= 0.0):
+    return measured_sw, 0.0
 
   v = max(float(v_ego), 1.0)
   max_lat_jerk = float(np.interp(v, [5.0, 12.0, 22.0], [12.0, 9.0, 6.5]))
@@ -87,9 +147,6 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   if unwinding:
     max_lat_jerk *= 2.0
     max_sw_rate_deg_per_tick *= 1.5
-
-  target_rw = target_sw / steer_ratio
-  last_rw   = float(last_sw_deg) / steer_ratio
 
   # --- accel limit ---
   rw_max_rad = np.arctan((max_lat_accel * wheelbase_m) / (v * v))
@@ -105,19 +162,25 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
     max_drw_per_tick_deg,
     max_sw_rate_deg_per_tick / steer_ratio
   )
-  
-  # --- rate limit ---
-  cmd_rw = rate_limit(target_rw, last_rw, -max_drw_per_tick_deg, max_drw_per_tick_deg)
+
+  max_sw_rate_deg_per_tick = max_drw_per_tick_deg * steer_ratio
+  cmd_sw, cmd_sw_rate = smooth_angle_command_rate(
+    target_sw,
+    last_sw_deg,
+    last_sw_rate_deg_per_tick,
+    v,
+    max_sw_rate_deg_per_tick,
+  )
+  cmd_rw = cmd_sw / steer_ratio
 
   # --- accel clip ---
   cmd_rw = float(np.clip(cmd_rw, -rw_max, rw_max))
 
-  if not lat_active:
-    cmd_rw = float(steering_sw_deg) / steer_ratio
+  cmd_sw = float(np.clip(cmd_rw * steer_ratio, -steer_sw_max_deg, steer_sw_max_deg))
+  if not np.isclose(cmd_sw, last_sw_deg + cmd_sw_rate):
+    cmd_sw_rate = cmd_sw - last_sw_deg
+  return cmd_sw, cmd_sw_rate
 
-  cmd_sw = cmd_rw * steer_ratio
-  return float(np.clip(cmd_sw, -steer_sw_max_deg, steer_sw_max_deg))
-  
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -150,6 +213,7 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
+    self.apply_angle_rate_last = 0.0
     self.lkas_max_torque = 0
     self.angle_max_torque = ANGLE_CONTROL_DEFAULT_MAX_TORQUE
     self.prev_abs_angle_error = 0.0
@@ -186,8 +250,11 @@ class CarController(CarControllerBase):
       if steerMax > 0:
         self.params.STEER_MAX = steerMax
       if self.CP.flags & HyundaiFlags.ANGLE_CONTROL:
-        angle_max_torque = steerMax if steerMax > 0 else ANGLE_CONTROL_DEFAULT_MAX_TORQUE
-        self.angle_max_torque = int(np.clip(angle_max_torque, self.params.ANGLE_MIN_TORQUE, ANGLE_CONTROL_MAX_TORQUE))
+        self.angle_max_torque = get_angle_control_max_torque(
+          steerMax,
+          self.params.ANGLE_MIN_TORQUE,
+          self.car_fingerprint == CAR.HYUNDAI_IONIQ_5_PE,
+        )
       longitudinal_accel_min = params.get_int("LongitudinalAccelMin")
       if longitudinal_accel_min > 0:
         self.longitudinal_accel_min = -float(np.clip(longitudinal_accel_min, 100, 600)) * 0.01
@@ -249,12 +316,13 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw, 
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
-    apply_angle = apply_steer_angle_limits_physics(
+    apply_angle, self.apply_angle_rate_last = apply_steer_angle_limits_physics(
       actuators.steeringAngleDeg,
       self.apply_angle_last,
+      self.apply_angle_rate_last,
       CS.out.vEgoRaw,
       CS.out.steeringAngleDeg,
-      CC.latActive,
+      CC.latActive and not CS.out.steeringPressed,
       self.CP.wheelbase,
       self.CP.steerRatio,
       self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
@@ -282,8 +350,6 @@ class CarController(CarControllerBase):
 
     else:
       target_torque = self.angle_max_torque
-      if angle_control:
-        target_torque *= get_low_speed_angle_torque_factor(CS.out.vEgoRaw)
 
       max_steering_tq = self.params.STEER_DRIVER_ALLOWANCE * 0.7
       rate_ratio = max(20, max_steering_tq - abs(CS.out.steeringTorque)) / max_steering_tq
@@ -730,4 +796,3 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-

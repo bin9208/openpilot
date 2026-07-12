@@ -1,5 +1,7 @@
 #include "can_common_declarations.h"
 
+bool safety_tx_buffered_for_fwd = false;
+
 uint8_t calculate_checksum(const uint8_t *dat, uint32_t len) {
   uint8_t checksum = 0U;
   for (uint32_t i = 0U; i < len; i++) {

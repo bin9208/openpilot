@@ -32,6 +32,7 @@ CUT_IN_MAX_DIST = 50.0
 CUT_IN_CLOSE_DIST = 30.0
 CUT_IN_MIN_TRACK_AGE = 0.20
 CUT_IN_MIN_TRACK_AGE_CLOSE = 0.10
+CUT_IN_PREDICTION_HORIZON_MAX = 1.0
 LANE_MARKING_MIN_WIDTH = 2.3
 LANE_MARKING_MAX_WIDTH = 4.8
 LANE_MARKING_ALLOW_LABELS = frozenset({"white_dashed"})
@@ -58,6 +59,10 @@ def clamp(x: float, lo: float, hi: float) -> float:
   return float(np.clip(x, lo, hi))
 
 
+def get_cut_in_prediction_horizon(radar_lat_factor_param: float) -> float:
+  return clamp(float(radar_lat_factor_param) * 0.01, 0.0, CUT_IN_PREDICTION_HORIZON_MAX)
+
+
 class Track:
   def __init__(self, identifier: int):
     self.identifier = identifier
@@ -67,6 +72,7 @@ class Track:
     self.is_stopped_car_count = 0
     self.selected_count = 0
     self.cut_in_count = 0
+    self.cut_in_center_count = 0
     self.measured = False
     self.score = 0.0
     self.in_lane_prob = 0.0
@@ -100,7 +106,7 @@ class Track:
       self._vLead_filt_init = False
 
     self.yRel_future = self.yRel + self.yvLead * radar_lat_factor
-    self.dRel_future = self.dRel + self.vLead * radar_lat_factor
+    self.dRel_future = self.dRel + self.vRel * radar_lat_factor
     if ready:
       self.d_path(md)
 
@@ -551,7 +557,7 @@ class RadarD:
 
     self.enable_radar_tracks = self.params.get_int("EnableRadarTracks")
     self.enable_corner_radar = self.params.get_int("EnableCornerRadar")
-    self.radar_lat_factor = self.params.get_float("RadarLatFactor") * 0.01
+    self.radar_lat_factor = get_cut_in_prediction_horizon(self.params.get_float("RadarLatFactor"))
     self.radar_reaction_factor = self.params.get_float("RadarReactionFactor") * 0.01
     self.detect_cut_in = self.radar_lat_factor > 0
     self.lane_marking_intervention_enabled = self.params.get_bool("LaneMarkingInterventionEnabled")
@@ -641,6 +647,10 @@ class RadarD:
         self.radar_state.leadTwo = self.leadTwo
       if self.enable_radar_tracks >= 3:
         self._pick_lead_one_from_state()
+    else:
+      self._reset_cut_in_confirmation(self.tracks)
+      self.radar_state.leadsCutIn = []
+      self.leadCutIn = {'status': False}
 
   def publish(self, pm: messaging.PubMaster):
     assert self.radar_state is not None
@@ -755,11 +765,7 @@ class RadarD:
     lane_width = abs(float(md.laneLines[2].y[0]) - float(md.laneLines[1].y[0]))
     return left_prob > 0.35 and right_prob > 0.35 and 2.3 < lane_width < 4.8
 
- def _cut_in_candidate(self, c: Track, side: str) -> bool:
-    # 레인 라인 또는 레인 마킹 상태가 없더라도, 비전 모델의 in_lane_prob 정보를 활용해 끼어들기 후보 판별 허용
-    # if not (self.lane_line_available or self.lane_marking_cut_in_available):
-    #   return False
-    
+  def _cut_in_candidate(self, c: Track, side: str) -> bool:
     if not (3.0 < c.dRel < CUT_IN_MAX_DIST and c.vLead > 4.0):
       return False
 
@@ -776,15 +782,29 @@ class RadarD:
     moving_toward_center = abs(c.dPath_future) < abs(c.dPath) - (0.05 if close else 0.12)
     lane_evidence_growing = lane_future > lane_now + 0.04
     center_entering_threshold = 0.02 if close else 0.06
-    touching_threshold = 0.08 if close else 0.14
-    
-    # 레인 마킹 상태가 없거나 불완전할 때 임계값을 높여 반응을 느리게 하는 로직 제거
-    # if self.lane_marking_cut_in_available and not self.lane_line_available:
-    #   center_entering_threshold += 0.03
-    #   touching_threshold += 0.06
 
     center_entering = max(c.in_lane_prob, c.in_lane_prob_future) > center_entering_threshold
-    touching_our_lane = max(lane_now, lane_future) > touching_threshold
+    base_overlap = max(c.in_lane_prob, c.in_lane_prob_future)
+    expanded_overlap = max(c.in_lane_prob_expanded, c.in_lane_prob_future_expanded)
+    strong_expanded_approach = (
+      moving_toward_center and lane_evidence_growing and
+      expanded_overlap > (0.28 if close else 0.32)
+    )
+    touching_our_lane = self._direct_cut_in_overlap(c, close) or strong_expanded_approach
+
+    if not (self.lane_line_available or self.lane_marking_cut_in_available):
+      boundary_overlap = min(abs(c.dPath), abs(c.dPath_future)) < 1.8
+      strong_overlap = base_overlap > (0.12 if close else 0.16)
+      close_boundary_entry = close and abs(c.dPath) < 1.6 and c.in_lane_prob > 0.18
+      model_boundary_entry = (
+        boundary_overlap and strong_overlap and
+        (moving_toward_center or lane_evidence_growing or close_boundary_entry)
+      )
+      expanded_boundary_entry = (
+        min(abs(c.dPath), abs(c.dPath_future)) < 2.1 and strong_expanded_approach
+      )
+      if not (model_boundary_entry or expanded_boundary_entry):
+        return False
 
     if self.lane_marking_cut_in_available:
       marking = self._lane_marking_side(side)
@@ -803,38 +823,75 @@ class RadarD:
       return touching_our_lane and (moving_toward_center or lane_evidence_growing or center_entering)
     return touching_our_lane and (moving_toward_center or lane_evidence_growing)
 
+  def _update_cut_in_confirmation(self, c: Track, candidate: bool, close: bool) -> bool:
+    confirm_frames = 2 if close else 3
+    if not candidate:
+      c.cut_in_count = 0
+      c.cut_in_center_count = 0
+      return False
+
+    c.cut_in_center_count = 0
+    c.cut_in_count = min(c.cut_in_count + 1, confirm_frames)
+    return c.cut_in_count >= confirm_frames
+
+  def _direct_cut_in_overlap(self, c: Track, close: bool) -> bool:
+    base_overlap = max(c.in_lane_prob, c.in_lane_prob_future)
+    if close:
+      return base_overlap > 0.08
+    return c.in_lane_prob > 0.25 and base_overlap > 0.28
+
+  def _confirmed_cut_in_ready(self, c: Track, candidate: bool, close: bool) -> bool:
+    confirmed = self._update_cut_in_confirmation(c, candidate, close)
+    return confirmed and self._direct_cut_in_overlap(c, close)
+
+  def _consume_cut_in_center_entry(self, c: Track, candidate: bool) -> bool:
+    if not candidate or c.cut_in_count <= 0 or c.in_lane_prob <= 0.3:
+      c.cut_in_count = 0
+      c.cut_in_center_count = 0
+      return False
+
+    c.cut_in_center_count += 1
+    if c.cut_in_center_count < 2:
+      return False
+
+    c.cut_in_count = 0
+    c.cut_in_center_count = 0
+    return True
+
+  @staticmethod
+  def _reset_cut_in_confirmation(tracks: dict[int, Track]) -> None:
+    for track in tracks.values():
+      track.cut_in_count = 0
+      track.cut_in_center_count = 0
+
   def compute_leads(self, v_ego, tracks, md, lead_prob):
     lead_msg = md.leadsV3[0] if (md is not None and len(md.position.x) == 33) else None
     self.leadCutIn = {'status': False}
     if lead_msg is None:
+      self._reset_cut_in_confirmation(tracks)
       # reset
       self.radar_state.leadsLeft = []
       self.radar_state.leadsCenter = []
       self.radar_state.leadsRight = []
+      self.radar_state.leadsCutIn = []
       self.radar_state.leadLeft = {'status': False}
       self.radar_state.leadRight = {'status': False}
       return
     
     left_list, right_list, center_list, cutin_list = [], [], [], []
 
-   def maybe_add_cut_in(c: Track, side: str):
-      if self._cut_in_candidate(c, side):
-        # 반응성 개선을 위해 확인 시간 단축 (가까이서: 0.05초 -> 1프레임, بعيد: 0.15초 -> 3프레임)
-        confirm_time = 0.05 if c.dRel < CUT_IN_CLOSE_DIST else 0.15
-        # 레인 마킹 상태 불완전 시 발생하는 불필요한 지연 제거
-        # if self.lane_marking_cut_in_available and not self.lane_line_available:
-        #   confirm_time += 0.10
-        # if self.lane_marking_cut_in_available and self._lane_marking_side(side)["block"]:
-        #   confirm_time += 0.10
-        confirm_frames = max(1, int(confirm_time / DT_MDL))
-        if c.cut_in_count >= confirm_frames:
-          cutin_list.append(c.get_CutInState(v_ego, 0.03, float(-lead_msg.y[0])))
-        c.cut_in_count += 3 if c.dRel < CUT_IN_CLOSE_DIST else 2
+    def maybe_add_cut_in(c: Track, side: str):
+      candidate = self._cut_in_candidate(c, side)
+      if self._confirmed_cut_in_ready(c, candidate, c.dRel < CUT_IN_CLOSE_DIST):
+        cutin_list.append(c.get_CutInState(v_ego, 0.03, float(-lead_msg.y[0])))
 
     for c in tracks.values():
       y_rel_neg = - c.yRel
       # center
       if c.in_lane_prob > 0.3:
+        side = "left" if y_rel_neg < 0 else "right"
+        if self._consume_cut_in_center_entry(c, self._cut_in_candidate(c, side)):
+          cutin_list.append(c.get_CutInState(v_ego, 0.03, float(-lead_msg.y[0])))
         if c.cnt > 3:
           ld = c.get_RadarState(lead_prob, float(-lead_msg.y[0]))
           ld['modelProb'] = 0.01
@@ -849,8 +906,6 @@ class RadarD:
         ld = c.get_RadarState(0, 0)
         maybe_add_cut_in(c, "right")
         right_list.append(ld)
-
-      c.cut_in_count = max(c.cut_in_count - 1, 0)
 
     self.radar_state.leadsLeft   = left_list
     self.radar_state.leadsRight  = right_list
