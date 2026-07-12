@@ -194,9 +194,9 @@
 - smoothing은 4m/s 이하에서 완전히 적용되고 4~6m/s에서 연속적으로 해제되며 6m/s부터 기존 rate 응답과 사실상 동일하다.
 - 운전자가 `steeringPressed` 상태일 때 토크를 양보하고 해제 후 회복시키는 안전 로직은 유지한다. “250 고정”은 운전자 override와 비활성 상태를 제외한 정상 angle-control 권한을 뜻한다.
 
-### Panda safety 및 테스트 하네스 수정
-- 기존 HDA1 safety는 `steer_torque_cmd_checks()`로 최대 토크, 변화율, 운전자 토크, steer-request 위반을 계산하고도 `tx = false`가 주석 처리돼 비정상 프레임을 통과시켰다. 위반 시 실제 전송을 거부하도록 복구했다.
-- ACC main과 controls가 모두 꺼진 상태에서는 0이 아닌 torque request를 별도로 거부한다. ACC main 기반 always-on lateral 동작은 유지한다.
+### Panda safety 원복 및 테스트 하네스 수정
+- 1차 패치에서는 HDA1 `steer_torque_cmd_checks()` 위반 시 실제 전송을 거부하도록 바꿨으나, 기존 포크 동작과 자동 크루즈 호환성을 우선한다는 사용자 지시에 따라 최종안에서는 `tx=false` 차단을 다시 제거했다.
+- Hyundai CAN-FD 조향 최대값·변화율·운전자 토크·steer-request 위반 계산은 남지만 Panda TX hook은 이를 이유로 프레임을 거부하지 않는다. 조향 제한은 controller가 담당한다.
 - 생산 Panda 코드에 존재하는 `safety_tx_buffered_for_fwd`, `putui`, `memcpy/memset` 선언이 libsafety 하네스에 없어 빌드가 깨지던 문제를 보완했다.
 - 생산 `safety_fwd_hook(CANPacket_t *)`와 기존 Python 테스트 ABI `safety_fwd_hook(bus, addr)` 차이는 테스트 전용 packet 래퍼로 연결했다. 생산 forwarding 코드는 바꾸지 않았다.
 - Ioniq 5 PE와 같은 EV/HDA1 설정에서 실제 `0x12A` 패킷의 `LKAS_ANGLE_MAX_TORQUE=250`을 확인하고 Panda TX hook 통과를 검증했다.
@@ -221,7 +221,7 @@
 - cut-in red: 약한 expanded overlap과 누적 확인 테스트 `2 failed, 2 passed`.
 - cut-in red/green: `vLead` 미래 상대거리, expanded-only 발행, 원거리 overlap, 중앙 진입, 입력 공백과 stale `leadsCutIn` 상태 테스트를 각각 실패부터 재현했다.
 - 집중 회귀: lead, radar cut-in, angle-control 통합 테스트 합계 `24 passed`.
-- Ioniq 5 PE 대응 EV/HDA1 Panda 핵심 안전 테스트: 250 실제 패킷, 절대 토크, 상승/하강률, 실시간 변화율, 운전자 토크, steer-request 관련 `9 passed`.
+- Ioniq 5 PE 대응 EV/HDA1 Panda 핵심 안전 `9 passed`는 1차 TX 차단 패치 검증 결과다. 최종 원복 뒤에는 기존 포크 정책대로 제한 초과 프레임도 통과하므로 해당 거부 테스트는 통과 조건이 아니다.
 - 전체 164개 rlog를 재파싱하고, 13개 이벤트/11개 후보 세그먼트의 모든 영상을 대조한 뒤 최종 `RadarD.update()`를 11개 세그먼트에 재생했다.
 - 정식 process replay: 두 실제 세그먼트에서 Ioniq 5 PE 지문 판별 후 모델 입력과 같은 수의 `radarState`를 각각 `1,201/1,201`, `1,200/1,200` 생성했다. 각 첫 시작 프레임을 제외한 valid 수는 1,200과 1,199였고 `radard` stderr는 비어 있었다.
 - WSL 빌드: longitudinal MPC Cython/공유 라이브러리와 `hyundai_canfd_generated.dbc` 생성에 성공했다.
@@ -230,6 +230,8 @@
 - Ruff: 신규 테스트/검증 도구 전체 통과, 런타임 파일 fatal 규칙 통과. Basedpyright: 신규 테스트와 DBC 생성기 `0 errors`.
 - Hyundai CAN-FD safety 전체 스위트는 `464 passed, 249 skipped, 232 failed`였다. 이 fork의 기존 광범위 TX allowlist, 버튼/브레이크 상태 규칙, buffered forwarding 기대값과 테스트가 서로 달라 전체 green은 아니다.
 - 실제 대상 EV/HDA1 클래스 전체는 `23 passed, 3 skipped, 8 failed`였다. 실패 8건은 조향 제한이 아니라 누락 `opendbc.can.can_define`, 동적 forwarding, wheel-speed 상태, 기존 cruise/button 규칙, 넓어진 TX allowlist 항목이다. 이번 조향 안전 핵심 9개는 별도로 모두 통과했다.
+- 최종 safety 원복은 비-buffered EV/HDA1 제한 초과 토크가 차단되는 `1 failed`를 먼저 재현한 뒤 `1 passed`로 전환했다. Camera-SCC EV+LONG의 제한 초과 토크, `controls_allowed=false` 자동 크루즈 RES 버튼, 250 angle 권한 패킷을 묶은 최종 검증은 `4 passed`다.
+- Camera-SCC buffered forwarding에서는 1차 safety 패치 상태에서도 LFA와 RES 버튼이 이미 통과했다. 따라서 근접 자동 크루즈 불능의 직접 원인이 safety였다고 확정할 수는 없으며, 실차에서 계속 재현되면 `AutoCruiseControl`, `CruiseOnDist`, `activateCruise`, `logCarrot`, `radarState.leadOne`을 다음 로그에서 확인한다.
 
 ### 리뷰 지적사항 처리
 - 비유한수 입력이 CAN 명령까지 전파될 수 있다는 지적은 반영했다. 목표각, 실측각, 마지막 각/각속도, 속도, wheelbase, steerRatio, 최대각을 검사한다. 목표/차량 파라미터 오류는 실측각을, 실측 센서 오류는 마지막 유효 명령을 rate 0으로 hold한다.
@@ -237,15 +239,15 @@
 - 운전자 override 중 smoothing 상태가 남는다는 지적은 반영했다. `steeringPressed` 동안 실측각을 추종하고 command rate를 0으로 초기화한 뒤 0.05deg/tick부터 복귀한다.
 - 중앙 진입 시 과거 side 후보만으로 발행될 수 있다는 지적은 반영했다. 현재 프레임 후보를 다시 계산하고 불일치 즉시 side/center 카운터를 모두 지운다.
 - private helper 테스트만 있다는 지적은 반영했다. 실제 `compute_leads()` side-to-center 발행, 모델 입력 공백 초기화, 실제 Hyundai DBC `0x12A` packing, Panda TX hook을 추가했다.
-- Panda safety 검증 부재 지적은 반영했다. libsafety 빌드를 복구하고 EV/HDA1 핵심 안전 9개를 실행했으며, 전체 suite 실패도 위와 같이 보고한다.
-- 최종 5관점 다중 리뷰 재실행은 장시간 대기로 실차 검증이 늦어져 사용자 지시에 따라 중단했다. 대신 부모 세션에서 변경 diff를 재검토하고 lead/radar/angle 집중 회귀 `24 passed`, 250 패킷 포함 EV/HDA1 핵심 안전 `9 passed`를 다시 확인했다.
+- Panda safety 검증 부재 지적에 따라 libsafety 빌드는 복구했다. 이후 사용자 승인으로 TX 거부를 원복했으며, 비-buffered EV/HDA1 제한 초과 프레임이 다시 통과하는 회귀 테스트를 추가했다.
+- 최종 5관점 다중 리뷰 재실행은 장시간 대기로 실차 검증이 늦어져 사용자 지시에 따라 중단했다. 대신 부모 세션에서 변경 diff와 lead/radar/angle 집중 회귀를 확인했다.
 - 전체 safety suite 232개 실패를 이번 커밋에서 모두 고치지는 않았다. HDA2, longitudinal, 버튼, wheel-speed, broad allowlist와 forwarding 정책을 한꺼번에 바꾸면 Ioniq 5 PE 조향 수정의 검증 범위를 벗어나고 실차 CAN 동작을 크게 바꿀 위험이 있어 별도 safety 정합화 작업으로 남겼다.
 
 ### 남은 위험성과 실차 체크리스트
 - 저속 소리 자체는 로그에 녹음된 EPS 내부 토크 루프 신호가 없어 command acceleration과 방향 반전을 대리 지표로 썼다. 실제 소리 감소와 큰 저속 커브 응답은 실차 확인이 필요하다.
 - 최종 cut-in 로직은 검토 세그먼트에서 활성 프레임을 줄였지만, 커브와 교차로를 완전한 정답 데이터로 라벨링한 것은 아니므로 실차 오탐 여부를 다시 확인해야 한다.
-- Hyundai CAN-FD 전체 safety suite는 green이 아니다. 실제 대상 조향 핵심 검사는 통과했지만, 남은 TX allowlist·버튼·차속·forwarding 불일치는 별도 안전 정합화가 필요하다.
-- Panda safety는 현재 LFA의 torque request를 제한하지만 `LKAS_ANGLE_CMD` 자체의 각도/각속도는 별도 검사하지 않는다. 이번 controller의 유한수·각속도 제한이 1차 방어선이므로 실차에서 panda fault와 command 추이를 함께 기록한다.
+- Hyundai CAN-FD 전체 safety suite는 green이 아니다. 최종 포크 정책은 조향 위반 프레임 통과를 의도하므로 표준 Panda 거부 테스트와도 의도적으로 다르다.
+- 최종안은 Panda에서 LFA torque request 및 `LKAS_ANGLE_CMD`를 거부하지 않는다. controller의 유한수·각속도·250 권한 제한이 1차 방어선이므로 실차에서 panda fault와 command 추이를 함께 기록한다.
 1. 정차~15km/h에서 직선 미세 보정과 완만한 좌우 조향을 각각 2분 이상 반복해 드드득 소리 빈도와 진폭을 비교한다.
 2. 5~15km/h 90도 회전과 유턴에서 목표각 도달이 늦거나 바깥으로 밀리지 않는지 확인한다.
 3. 30km/h 이상에서는 smoothing 전환으로 조향감이 변하지 않는지 확인한다.
@@ -258,7 +260,7 @@
 - 전체 후속 변경은 최종 후속 커밋에 `git revert <후속 커밋>`을 사용한다.
 - 레이더만 수동 롤백하려면 `radard.py`의 fallback/confirmation/horizon 변경과 `test_radard_cut_in.py`를 함께 되돌린다. 단, 인게이지를 막는 두 들여쓰기 복구는 유지해야 한다.
 - 조향만 수동 롤백하려면 `carcontroller.py`의 command-rate 상태/함수와 250 고정 로직을 되돌리고 `test_angle_control.py`를 함께 제거한다.
-- Panda safety만 수동 롤백하려면 `safety_hyundai_canfd.h`의 조향 거부 게이트와 네 개 테스트 하네스/테스트 파일 변경을 함께 되돌린다. 다만 그러면 위반 torque frame이 다시 통과하므로 권장하지 않는다.
+- Panda 조향 TX 거부를 다시 활성화하려면 `safety_hyundai_canfd.h`에서 `steer_torque_cmd_checks()` 위반 시 `tx=false`를 복구하고 관련 표준 safety 테스트를 함께 실행한다.
 
 ## 부록 A: 분석한 로그 파일
 | kind | ok | path | 주요 패턴 |

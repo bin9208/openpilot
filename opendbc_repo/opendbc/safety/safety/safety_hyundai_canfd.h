@@ -564,9 +564,8 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *to_send_const) {
     int desired_torque = (((GET_BYTE(to_send, 6) & 0xFU) << 7U) | (GET_BYTE(to_send, 5) >> 1U)) - 1024U;
     bool steer_req = GET_BIT(to_send, 52U);
 
-    bool steering_violation = steer_torque_cmd_checks(desired_torque, steer_req, HYUNDAI_CANFD_STEERING_LIMITS);
-    if (((!controls_allowed && !acc_main_on) && (desired_torque != 0)) || steering_violation) {
-      tx = false;
+    if (steer_torque_cmd_checks(desired_torque, steer_req, HYUNDAI_CANFD_STEERING_LIMITS)) {
+      //tx = false;
     }
   }
 

@@ -7,7 +7,7 @@ from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerPanda
-from opendbc.safety.tests.hyundai_common import HyundaiButtonBase, HyundaiLongitudinalBase
+from opendbc.safety.tests.hyundai_common import Buttons, HyundaiButtonBase, HyundaiLongitudinalBase
 
 
 class TestHyundaiCanfdBase(HyundaiButtonBase, common.PandaCarSafetyTest, common.DriverTorqueSteeringSafetyTest, common.SteerRequestCutSafetyTest):
@@ -115,6 +115,14 @@ class TestHyundaiCanfdLFASteeringBase(TestHyundaiCanfdBase):
     self.assertEqual(250, msg[0].data[12])
     self.safety.set_controls_allowed(True)
     self.assertTrue(self._tx(msg))
+
+  def test_fork_allows_steering_torque_without_tx_rejection(self):
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_TORQUE + 1)))
+
+  def test_fork_allows_auto_cruise_resume_before_controls_allowed(self):
+    self.safety.set_controls_allowed(False)
+    self.assertTrue(self._tx(self._button_msg(Buttons.RESUME, bus=self.PT_BUS)))
 
 
 @parameterized_class([
