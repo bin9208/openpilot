@@ -15,6 +15,44 @@ MAX_LANE_DISTANCE = 3.7
 MAX_LANE_CENTERING_AWAY = 1.85
 KEEP_MIN_DISTANCE_FROM_LANE = 1.35
 KEEP_MIN_DISTANCE_FROM_EDGELANE = 1.15
+LANELESS_CENTER_LOOKAHEAD_M = 12.0
+LANELESS_CENTER_MAX_OFFSET_M = 0.25
+LANELESS_CENTER_WEIGHT = 0.65
+LANELESS_CENTER_FILTER_TAU = 0.50
+
+
+def get_laneless_center_offset(path_x, path_y, lane_x, left_lane_y, right_lane_y,
+                               left_prob, right_prob, lane_change_multiplier, lanefull_mode):
+  probabilities = np.asarray([left_prob, right_prob], dtype=float)
+  if not np.all(np.isfinite(probabilities)) or lanefull_mode or lane_change_multiplier < 0.9 or min(probabilities) <= 0.55:
+    return 0.0
+
+  path_x = np.asarray(path_x)
+  path_y = np.asarray(path_y)
+  lane_x = np.asarray(lane_x)
+  left_lane_y = np.asarray(left_lane_y)
+  right_lane_y = np.asarray(right_lane_y)
+  if min(len(path_x), len(path_y), len(lane_x), len(left_lane_y), len(right_lane_y)) < 2:
+    return 0.0
+  if len(path_x) != len(path_y) or len(lane_x) != len(left_lane_y) or len(lane_x) != len(right_lane_y):
+    return 0.0
+  if not all(np.all(np.isfinite(values)) for values in (path_x, path_y, lane_x, left_lane_y, right_lane_y)):
+    return 0.0
+  if np.any(np.diff(path_x) <= 0.0) or np.any(np.diff(lane_x) <= 0.0):
+    return 0.0
+
+  lookahead = min(LANELESS_CENTER_LOOKAHEAD_M, float(path_x[-1]), float(lane_x[-1]))
+  lane_width = float(np.interp(lookahead, lane_x, right_lane_y - left_lane_y))
+  if not 2.5 < lane_width < 4.3:
+    return 0.0
+
+  lane_center = 0.5 * float(np.interp(lookahead, lane_x, left_lane_y) +
+                            np.interp(lookahead, lane_x, right_lane_y))
+  model_path = float(np.interp(lookahead, path_x, path_y))
+  confidence = float(np.clip((min(probabilities) - 0.55) / 0.30, 0.0, 1.0))
+  center_error = float(np.clip(lane_center - model_path,
+                               -LANELESS_CENTER_MAX_OFFSET_M, LANELESS_CENTER_MAX_OFFSET_M))
+  return LANELESS_CENTER_WEIGHT * confidence * center_error
 
 def clamp(num, min_value, max_value):
   # weird broken case, do something reasonable
@@ -68,6 +106,7 @@ class LanePlanner:
     self.lane_width_left_filtered = FirstOrderFilter(1.0, 1.0, DT_MDL)
     self.lane_width_right_filtered = FirstOrderFilter(1.0, 1.0, DT_MDL)
     self.lane_offset_filtered = FirstOrderFilter(0.0, 2.0, DT_MDL)
+    self.laneless_center_offset_filtered = FirstOrderFilter(0.0, LANELESS_CENTER_FILTER_TAU, DT_MDL)
 
     self.lanefull_mode = False
     self.d_prob_count = 0
@@ -195,18 +234,12 @@ class LanePlanner:
     else:
       lane_path_y = (l_prob * path_from_left_lane + r_prob * path_from_right_lane) / (l_prob + r_prob + 0.0001)
 
-    use_laneless_center_adjust = False
-    if use_laneless_center_adjust:
-      ## 0.5초 앞의 중심을 보도록함.
-      lane_path_y_center = np.interp(0.5, path_t, lane_path_y)
-      path_xyz_y_center = np.interp(0.5, path_t, path_xyz[:,1])
-      #lane_path_y_center = lane_path_y[0]
-      #path_xyz_y_center = path_xyz[:,1][0]
-      diff_center = (lane_path_y_center - path_xyz_y_center) if not self.lanefull_mode else 0.0
-    else:
-      diff_center = 0.0
-    #print("center = {:.2f}={:.2f}-{:.2f}, lanefull={}".format(diff_center, lane_path_y_center, path_xyz_y_center, self.lanefull_mode))
-    #diff_center = lane_path_y[5] - path_xyz[:,1][5] if not self.lanefull_mode else 0.0
+    laneless_center_offset = get_laneless_center_offset(
+      path_xyz[:, 0], path_xyz[:, 1], self.ll_x, self.lll_y, self.rll_y,
+      self.lll_prob, self.rll_prob, self.lane_change_multiplier, self.lanefull_mode,
+    )
+    self.laneless_center_offset_filtered.update(laneless_center_offset)
+    diff_center = 0.0
     if offset_curve * offset_lane < 0:
       offset_total = np.clip(offset_curve + offset_lane + diff_center, - ADJUST_OFFSET_LIMIT, ADJUST_OFFSET_LIMIT)
     else:
@@ -246,7 +279,9 @@ class LanePlanner:
           path_xyz[:,1] = self.d_prob * lane_path_y_interp + (1.0 - self.d_prob) * path_xyz[:,1]
 
 
-    path_xyz[:, 1] += (CAMERA_OFFSET + self.lane_offset_filtered.x)
+    laneless_center_applied = (self.laneless_center_offset_filtered.x
+                               if not self.lanefull_mode and self.lane_change_multiplier >= 0.9 else 0.0)
+    path_xyz[:, 1] += (CAMERA_OFFSET + self.lane_offset_filtered.x + laneless_center_applied)
 
     self.offset_total = self.lane_offset_filtered.x
 

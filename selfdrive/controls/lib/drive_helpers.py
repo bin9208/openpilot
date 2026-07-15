@@ -26,7 +26,8 @@ def apply_deadzone(error, deadzone):
     error = 0.
   return error
 
-def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, steer_actuator_delay, distances):
+def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, steer_actuator_delay, distances,
+                               curve_transition_psi_scale=1.0):
   if len(psis) != CONTROL_N:
     psis = [0.0]*CONTROL_N
     curvatures = [0.0]*CONTROL_N
@@ -48,14 +49,11 @@ def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, steer_actuator_delay
   distance = max(np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], distances), 0.001)
   #average_curvature_desired = psi / (v_ego * delay)
 
-  # curve -> straight or reverse curve
-  if v_ego > 5 and abs(current_curvature_desired) > 0.002 and \
-     (abs(future_curvature_desired) < 0.001 or np.sign(current_curvature_desired) != np.sign(future_curvature_desired)):
-    psis_damping = 0.2
-  else:
-    psis_damping = 1.0
-  #psi *= psis_damping
-
+  curve_transition = (v_ego > 5 and abs(current_curvature_desired) > 0.002 and
+                      (abs(future_curvature_desired) < 0.001 or
+                       np.sign(current_curvature_desired) != np.sign(future_curvature_desired)))
+  if curve_transition:
+    psi *= float(np.clip(curve_transition_psi_scale, 0.0, 1.0))
 
   average_curvature_desired = psi / distance
   desired_curvature = 2 * average_curvature_desired - current_curvature_desired

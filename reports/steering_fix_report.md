@@ -262,6 +262,144 @@
 - 조향만 수동 롤백하려면 `carcontroller.py`의 command-rate 상태/함수와 250 고정 로직을 되돌리고 `test_angle_control.py`를 함께 제거한다.
 - Panda 조향 TX 거부를 다시 활성화하려면 `safety_hyundai_canfd.h`에서 `steer_torque_cmd_checks()` 위반 시 `tx=false`를 복구하고 관련 표준 safety 테스트를 함께 실행한다.
 
+## 7.14 후속 분석: LD 부분 학습, 커브 안쪽 편향, S자 응답
+
+### 결론
+- 분석 루트는 `/mnt/e/comma_backup/7.14`이며 원본 로그와 영상은 읽기만 했다.
+- 실제 조향 명령 생성 자체의 오차는 작았다. 안정 주행 2,490.06초에서 목표각-전송각 MAE는 0.0637deg인 반면 전송각-실제각 MAE는 0.3410deg였고, 전송각에서 실제각까지 최적 지연은 0.11초였다.
+- S자 문제는 하나의 원인이 아니었다. `LiveDelay` 부분 추정값이 100% 전까지 제어에 적용되지 않는 문제, laneless 가상 smoothing 지연, 커브에서 모델 경로가 차선 중앙보다 평균 0.118m 안쪽을 향하는 문제가 겹쳤다.
+- 전역 직선 오프셋은 평균 -0.0053m로 거의 0이었다. 따라서 SR 또는 영점 오차로 차가 항상 오른쪽이나 왼쪽에 붙는 가설은 기각했다. 방향 편향은 커브 방향에 따라 바뀌는 모델 경로 편향이었다.
+- 최종안은 LD 부분 학습을 재부팅 후에도 보존하고 10% 학습까지 점진적으로 실시간 적용하며, laneless 예측 horizon의 불필요한 지연을 평균 71ms 줄이고, 양쪽 차선 신뢰도가 높을 때 모델 경로를 중앙 쪽으로 제한적으로 보정한다.
+- Ioniq 5 PE angle-control 최대 토크 250, 기존 저속 MDPS smoothing, 운전자 override, Panda safety 코드는 이번 후속 패치에서 변경하지 않았다.
+
+### 분석한 로그 목록
+- 13개 라우트, 130개 세그먼트 디렉터리에서 `rlog.zst` 128개, `qlog.zst` 127개, 전송 중 남은 `rlog.lock` 1개를 발견했다.
+- 정상 파일 255개를 모두 역직렬화했으며 총 11,845,782개 이벤트를 읽었다. `00000b57--f09b881ad0--44/rlog.zst`에서 손상 이벤트 경고 1건이 있었지만 파일 경계 복구 후 나머지 이벤트와 다른 모든 로그를 계속 분석했다.
+- 제어 샘플은 726,431개, 5m/s 초과 latActive 및 운전자 비개입 샘플은 312,313개, 양쪽 차선 유효 샘플은 220,450개, 커브 유효 샘플은 51,901개였다.
+
+| 라우트 | 세그먼트 | 디렉터리 | rlog/qlog | qcamera/fcamera |
+|---|---|---:|---:|---:|
+| `00000b57--f09b881ad0` | 39, 40, 42-59 | 20 | 18/18 | 20/19 |
+| `00000b58--02f2664397` | 1-2 | 2 | 2/2 | 2/2 |
+| `00000b59--f44a3df007` | 0-11 | 12 | 12/12 | 12/12 |
+| `00000b5a--653e046f9a` | 0-1 | 2 | 2/2 | 2/2 |
+| `00000b5b--73698668a7` | 0-9 | 10 | 10/10 | 10/10 |
+| `00000b5c--76db9e6191` | 0 | 1 | 1/1 | 1/1 |
+| `00000b5d--9bab97372b` | 0-16 | 17 | 17/17 | 17/17 |
+| `00000b5e--c45b7b6d9f` | 10-19 | 10 | 10/10 | 10/10 |
+| `00000b60--6fb4f0af79` | 10-26 | 17 | 17/16 | 16/17 |
+| `00000b62--82ff4af0fc` | 3-8 | 6 | 6/6 | 6/6 |
+| `00000b63--75e2228cd0` | 0-18 | 19 | 19/19 | 19/19 |
+| `00000b64--2adc6a045f` | 0-5 | 6 | 6/6 | 6/6 |
+| `00000b65--1ed3b53e83` | 0-7 | 8 | 8/8 | 8/8 |
+
+- `b57--39`는 전송 중 중단되어 로그가 없고 lock 영상만 남았다. `b57--40`은 qlog, `b57--42`는 rlog, `b60--11`은 qlog/qcamera가 없다. 존재하는 모든 정상 로그는 분석 대상에 포함했다.
+
+### 분석한 영상 목록
+- 영상 계열 파일은 총 519개였다. 정상 파일은 `qcamera.ts` 129개, `fcamera.hevc` 129개, `dcamera.hevc` 129개, `ecamera.hevc` 128개이며 전송 중 남은 lock 조각은 카메라별 1개씩 총 4개였다.
+- 정상 영상 515개를 모두 ffprobe해 코덱, 길이, 프레임 스트림을 확인했다. 조향 분석에 직접 쓰는 129개 qcamera 전체는 ffmpeg로 처음부터 끝까지 디코딩하고 프레임 해시를 계산했으며 디코드 오류는 0건이었다.
+- 대표 문제 구간 `b63--11`, `b63--15`, `b64--1`, `b65--2`는 qcamera 접촉시트와 로그를 대조했다. 야간 S자 구간인 `b64--1`, `b65--2`는 fcamera도 추가 디코딩해 차선 형상과 실제 경로를 확인했다.
+- lock 조각 4개는 완성된 컨테이너가 아니어서 영상으로 열리지 않았다. 원본 파일은 삭제하거나 수정하지 않았다.
+
+### 발견한 조향 문제와 재현 구간
+| 세그먼트 | 시간 | 속도 | 목표각/전송각/실제각 | 오차 | 운전자 | 차선 확률 L/R | LD | 판정 |
+|---|---:|---:|---:|---:|---|---:|---:|---|
+| `b63--11` | 25.293s | 42.5km/h | 2.92/2.28/-0.80deg | 3.72deg | 비개입 | 0.79/0.74 | 0%, 0.300s | S자 반전 중 실제 조향이 이전 방향에 남고 saturation |
+| `b63--15` | 14.551s | 22.6km/h | -2.86/-2.47/-1.20deg | -1.66deg | 비개입 | 0.14/0.05 | 0%, 0.300s | 차선 신뢰도 저하 상태의 반대 커브 전환 지연 |
+| `b64--1` | 25.978s | 33.1km/h | -3.49/-2.76/-0.10deg | -3.39deg | 비개입 | 0.18/0.22 | 9%, 추정 0.303s | 부분 추정값이 있어도 적용값은 0.300s로 고정 |
+| `b65--2` | 13.737s | 24.5km/h | 4.26/2.99/-5.30deg | 9.56deg | 비개입 | 0.07/0.03 | 46%, 추정 0.263s | 강한 S자에서 실제각이 반대 방향, saturation |
+
+- 안정된 연속 제어 구간에서 목표각-실제각 절대오차는 평균 0.3829deg, p95 1.2891deg, p99 3.1096deg였다. 목표각-전송각은 평균 0.0637deg, p95 0.2191deg로 controller/CAN 명령 손실이 주원인은 아니었다.
+- 전송각-실제각은 평균 0.3410deg, p95 1.1319deg였고 최적 상관 지연은 0.11초였다. 목표각-실제각 최적 지연은 0.13초였다.
+- 모든 active `lateralPlan`은 `useLaneLines=0`이었다. 즉 실제 주행 경로는 laneless 모델 경로의 영향을 직접 받았다.
+- 고신뢰 차선 커브에서 모델 경로는 12m 앞 차선 중앙보다 커브 안쪽으로 평균 0.118m, 차량 위치는 평균 0.145m 치우쳤다. 영상의 커브 안쪽 붙음과 방향이 일치했다.
+- 최신 라우트 LD는 `b63` 0%, `b64` 최대 26%, `b65` 최대 46%였다. `b65`의 부분 추정은 약 0.263s까지 내려갔지만 기존 제어 적용값은 0.300s였다.
+- SR은 최신 라우트에서 `b63` 약 14.827, `b64` 약 14.948, `b65` 약 14.941로 기준값 근처에 수렴했다. 직선 편향이 거의 0이어서 SR을 다시 공격적으로 변경하지 않았다.
+
+### 원인 가설 검토
+1. `LiveDelay`가 100% 전에는 실제 제어에 반영되지 않고 첫 부분 블록이 재부팅 때 사라진다: 채택. 최신 로그에서 9-46% 추정값과 적용값 불일치가 직접 확인됐다. 기존 schema에는 현재 블록 샘플 수가 없어 `validBlocks=0`인 첫 블록을 복원할 수 없었다.
+2. laneless smoothing과 delay 보정이 S자 반전에서 너무 긴 예측 horizon을 만든다: 채택. 62,312개 lateralPlan replay에서 기존 총 horizon은 평균 0.4127초였다. 코드의 가상 smoothing이 0.10-0.24초인 반면 실제 100Hz `smooth_value`의 등가 지연은 약 0.02초여서 중복 지연이 컸다.
+3. 모델 경로 자체가 커브 안쪽을 선호한다: 채택. 실제 차량이 따라가기 전의 modelV2 path부터 고신뢰 커브에서 평균 0.118m 안쪽 편향이 있었다.
+4. 최대 토크 부족 또는 기존 저속 smoothing이 중고속 S자 문제의 주원인이다: 기각. 목표각에서 CAN 전송각까지 오차가 작았고 대표 구간은 대부분 6m/s 이상이었다. 250 토크 권한과 저속 전용 smoothing은 유지했다.
+5. SR/angleOffset이 한쪽으로 계속 미는 문제다: 기각. 안정 직선 차량 오프셋 평균은 -0.0053m였고 방향 고정 편향이 없었다.
+6. CAN parser 또는 Panda 수신 안전 오류가 조향 명령을 끊는다: 주원인으로 기각. 129개 대표 rlog/qlog 안전 스캔에서 carState 723,733프레임 중 `canValid=false`와 timeout은 0, Panda RX invalid/check invalid/fault와 영구 steer fault는 0이었다.
+
+### 튜닝안 비교와 채택
+| 안 | 평균 총 horizon | S자 미래 곡률 오차 | 경로 MAE | 커브 안쪽 편향 | 판단 |
+|---|---:|---:|---:|---:|---|
+| 보수적 | 0.3716s | 0.003729 | 0.0751m | 0.1023m | 안정적이나 체감 개선 폭이 작아 미채택 |
+| 중간 | 0.3416s | 0.003621 | 0.0570m | 0.0771m | 응답성과 보정 step의 균형이 가장 좋아 채택 |
+| 공격적 | 0.3216s | 0.003783 | 0.0382m | 0.0484m | 중앙 보정 p99 step 8.58mm와 비전환 구간 변화가 커 미채택 |
+
+- 중간안은 laneless 기본 가상 smoothing을 0.10s에서 0.04s, 최대를 0.24s에서 0.16s로 낮추고, 커브에서 직선 또는 반대 커브로 전환할 때 psi 성분을 0.5배로 제한한다.
+- 중앙 보정은 양쪽 raw lane probability가 모두 0.55 초과, 차선 폭 2.5-4.3m, lane change가 아닐 때만 동작한다. 12m 앞 모델 경로-차선 중앙 오차의 65%를 사용하되 최대 0.25m와 0.50초 filter로 제한한다.
+- 차선 신뢰도가 낮거나 geometry가 비유한수, 길이 불일치, 비단조이면 보정 목표를 즉시 0으로 해제한다. lane change와 lanefull에서는 적용 residual도 즉시 제거한다.
+
+### 수정 파일과 주요 diff
+- `cereal/log.capnp`: `LiveDelayData.currentBlockSamples`를 추가했다.
+- `selfdrive/locationd/lagd.py`: 첫 미완료 블록의 평균과 샘플 수를 복원하고, 부분 추정을 10%까지 선형 blend해 실제 `lateralDelay`에 적용한다. cache 주기는 60초에서 15초로 줄였다.
+- `selfdrive/locationd/test/test_lagd.py`: 첫 블록 보존, 2% 부분 적용, 복원, 손상 sample count 및 NaN/범위 밖 delay 폐기 테스트를 추가했다.
+- `selfdrive/controls/controlsd.py`: laneless 가상 smoothing 범위와 불확실성 가중을 낮추고, S자 전환 전용 응답 scale을 적용했다.
+- `selfdrive/controls/lib/drive_helpers.py`: 기본 동작은 유지하면서 laneless 커브 반전에서만 psi scale을 받을 수 있게 했다.
+- `selfdrive/controls/lib/lane_planner_2.py`: 고신뢰 차선 중심을 laneless 모델 경로에 제한적으로 결합했다.
+- `selfdrive/controls/tests/test_laneless_response.py`: tuning 값, 커브 반전 응답, 중앙 보정 및 해제 경계 테스트를 추가했다.
+
+### 수정 전/후 로그 시뮬레이션
+| 지표 | 수정 전 | 수정 후 중간안 | 변화 |
+|---|---:|---:|---:|
+| lateralPlan 총 horizon 평균 | 0.4127s | 0.3416s | 71.1ms 감소 |
+| S자 미래 곡률 오차 평균 | 0.004552 | 0.003621 | 20.5% 감소 |
+| 고신뢰 구간 모델 경로 중앙 MAE | 0.1025m | 0.0570m | 44.4% 감소 |
+| 고신뢰 커브 안쪽 편향 | 0.1340m | 0.0771m | 42.5% 감소 |
+| 중앙 보정 step p99 | 0 | 4.73mm/model tick | 제한 범위 내 증가 |
+| 2% LD, 기본 0.35s/추정 0.25s 예시 | 0.35s 고정 | 0.33s 적용 | 부분 추정 20% 반영 |
+
+- horizon 시뮬레이션은 전체 129개 parseable 세그먼트의 lateralPlan 62,312개와 커브/반전 plan 2,585개를 사용했다.
+- 중앙 보정 시뮬레이션은 고신뢰 eligible sample 165,669개와 커브 sample 34,556개를 사용했다.
+- 실제 차량의 새 궤적을 기록한 결과가 아니라 동일 로그 입력에 새 제어 계산을 적용한 open-loop 비교다. 최종 평가는 실차 로그로 다시 해야 한다.
+
+### CAN/Panda 오류 확인
+- `canErrorCounter`는 누적 카운터라 721,826프레임에서 nonzero였지만 로그별 실제 증가 합은 67회였다. 같은 기간 `canValid=false`와 `canTimeout`은 0이었다.
+- Panda `safetyTxBlocked`도 누적값이므로 nonzero 프레임은 72,715개, 로그별 증가 합은 8,695회였다. 로그에는 차단 CAN 주소가 없으므로 자동 크루즈 버튼인지 조향인지 특정할 수 없다.
+- Panda RX invalid, RX checks invalid, Panda fault는 0이었다. steer temporary fault는 carState 1,779프레임, onroad `steerTempUnavailable`은 1회, 영구 fault는 0이었다.
+- 기존 포크의 Panda safety 정책과 250 토크 controller 로직은 이번 패치에서 수정하지 않았다. TX blocked 증가량은 다음 실차 로그에서 주소 단위 sendcan/CAN 대조가 필요한 별도 위험으로 남긴다.
+
+### 실행한 검증
+- WSL에서 255개 qlog/rlog 전체 파싱, 11,845,782개 이벤트 처리.
+- WSL ffprobe로 정상 영상 515개 전체 검사, qcamera 129개 전체 end-to-end ffmpeg 디코딩 및 프레임 해시 검사.
+- 대표 4개 qcamera와 2개 fcamera 접촉시트/프레임을 로그 신호와 대조.
+- 전체 로그 기반 lateralPlan horizon replay와 laneless 중앙 보정 시뮬레이션을 보수/중간/공격 세 안으로 실행.
+- 실제 `b65--2/rlog.zst` process replay에서 `controlsd`는 carControl/controlsState 각각 5,999개, `plannerd`는 lateralPlan/longitudinalPlan/driverAssistance 각각 1,200개를 생성했고 stderr는 비어 있었다.
+- WSL `.venv/bin/scons`로 Cap'n Proto와 lateral MPC Cython 공유 라이브러리 빌드에 성공했다. CasADi 3.7이 공식 지원 버전 목록과 다르다는 warning은 있었지만 빌드는 완료됐다.
+- 집중 회귀 `pytest -q selfdrive/locationd/test/test_lagd.py selfdrive/controls/tests/test_laneless_response.py`: `26 passed`.
+- 전체 규칙 Ruff: `lagd.py`, `test_lagd.py`, 신규 `test_laneless_response.py` 모두 통과.
+- 기존 누적 lint가 있는 `controlsd.py`, `drive_helpers.py`, `lane_planner_2.py`는 fatal 규칙 `E9,F63,F7,F82`를 통과했다. 전체 규칙 실행은 이번 변경 전부터 있던 미사용/중복 import, 미사용 지역 변수, 기존 공백 합계 18건을 보고해 green이 아니다.
+- 수정한 Python 6개 파일 `py_compile` 통과, 지정한 8개 파일 `git diff --check` 통과.
+
+### 리뷰 지적사항 처리
+- 사용자 지시에 따라 장시간 다중 에이전트 review gate는 실행하지 않았다.
+- 부모 세션 정적 검토에서 비유한수 lane probability/path, mode 전환 residual, 비단조 또는 길이 불일치 geometry를 찾았고 모두 보정 해제 조건과 회귀 테스트로 반영했다.
+- 커브 진입이 더 빨라야 한다는 이유로 공격안을 채택하지 않았다. 전체 plan replay에서 공격안은 중간안보다 horizon은 20ms 짧았지만 S자 미래 곡률 오차가 다시 커지고 중앙 보정 step도 증가했다.
+- 저속 소음 smoothing 제거는 반영하지 않았다. 이번 로그에서 중고속 S자 목표각-전송각 오차가 작아 주원인이 아니었고, 기존 패치가 소음 완화에 쓰이므로 별도의 실차 A/B 없이 제거할 근거가 부족하다.
+
+### 남은 위험성과 실차 테스트 체크리스트
+- 시뮬레이션은 새 출력이 원래 로그의 차량 상태를 바꾸지 않는 open-loop 계산이다. 실제 EPS, 타이어, 노면을 포함한 closed-loop 결과는 사용자가 수집할 다음 로그에서 확인해야 한다.
+- 중앙 보정은 양쪽 차선 확률이 낮았던 `b63--15`, `b64--1`, `b65--2` 순간에는 동작하지 않는다. 이 구간은 horizon/전환 응답 개선이 담당하며, 모델이 차선을 완전히 잃은 상황까지 억지로 차선 중심을 강제하지 않는다.
+- 부분 LD는 NCC, confidence, pose, 비포화 조건을 통과한 추정만 반영한다. 잘못된 추정이 섞여도 10%까지 점진 적용하고 범위를 0.15-1.0초로 제한하지만 실차에서 급변 여부를 확인해야 한다.
+1. `SteerActuatorDelay=0`으로 두고 LiveDelay 모드를 사용한다.
+2. 재부팅 전후 1-9% 학습에서 `currentBlockSamples`, `calPerc`, `lateralDelayEstimate`가 유지되고 `lateralDelay`가 점진적으로 변하는지 확인한다.
+3. `b64/b65`와 비슷한 20-45km/h 야간 연속 S자에서 반대 조향 시작, 실제각 부호 전환, saturation, 차선 이탈을 기록한다.
+4. 완만한 커브에서 안쪽 차선에 붙는 정도와 12m 모델 경로-차선 중앙 오차를 전/후 비교한다.
+5. 직선에서 새 중앙 보정으로 헌팅이 생기지 않는지, lane change 시작 시 보정이 즉시 해제되는지 확인한다.
+6. 차선 한쪽이 흐리거나 합류/분기일 때 중앙 보정이 0으로 해제되고 모델 경로를 방해하지 않는지 확인한다.
+7. `LKAS_ANGLE_MAX_TORQUE=250`, 저속 소음, `steerFaultTemporary`, Panda fault, `safetyTxBlocked` 증가 시점을 함께 기록한다.
+
+### 롤백 방법
+- 전체 후속 변경은 `git revert <7.14 후속 커밋 해시>`로 되돌린다.
+- LD만 수동 롤백하려면 `cereal/log.capnp`, `selfdrive/locationd/lagd.py`, `selfdrive/locationd/test/test_lagd.py`를 함께 되돌리고 장치의 `LiveDelay` Param을 한 번 삭제한다.
+- laneless 응답만 수동 롤백하려면 `controlsd.py`, `drive_helpers.py`, `lane_planner_2.py`, `test_laneless_response.py`를 함께 되돌린다.
+- 이전 schema로 롤백해도 새 `currentBlockSamples` 필드는 무시되지만, 오래된 consumer가 남은 cache를 읽지 않도록 `python3 -c 'from openpilot.common.params import Params; Params().remove("LiveDelay")'`를 실행하는 것이 확실하다.
+
 ## 부록 A: 분석한 로그 파일
 | kind | ok | path | 주요 패턴 |
 |---|---|---|---|

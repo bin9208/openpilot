@@ -31,6 +31,7 @@ MAX_LAT_ACCEL_DIFF = 0.6
 MIN_CONFIDENCE = 0.7
 CORR_BORDER_OFFSET = 5
 LAG_CANDIDATE_CORR_THRESHOLD = 0.9
+PARTIAL_DELAY_FULL_WEIGHT_PERCENT = 10
 
 
 def masked_normalized_cross_correlation(expected_sig: np.ndarray, actual_sig: np.ndarray, mask: np.ndarray, n: int):
@@ -116,11 +117,12 @@ class Points:
 
 
 class BlockAverage:
-  def __init__(self, num_blocks: int, block_size: int, valid_blocks: int, initial_value: float):
+  def __init__(self, num_blocks: int, block_size: int, valid_blocks: int, initial_value: float,
+               current_block_samples: int = 0):
     self.num_blocks = num_blocks
     self.block_size = block_size
     self.block_idx = valid_blocks % num_blocks
-    self.idx = 0
+    self.idx = current_block_samples
 
     self.values = np.tile(initial_value, (num_blocks, 1))
     self.valid_blocks = valid_blocks
@@ -194,10 +196,10 @@ class LateralLagEstimator:
 
     self.reset(self.initial_lag, 0)
 
-  def reset(self, initial_lag: float, valid_blocks: int):
+  def reset(self, initial_lag: float, valid_blocks: int, current_block_samples: int = 0):
     window_len = int(self.window_sec / self.dt)
     self.points = Points(window_len)
-    self.block_avg = BlockAverage(self.block_count, self.block_size, valid_blocks, initial_lag)
+    self.block_avg = BlockAverage(self.block_count, self.block_size, valid_blocks, initial_lag, current_block_samples)
 
   def get_msg(self, valid: bool, debug: bool = False) -> capnp._DynamicStructBuilder:
     msg = messaging.new_message('liveDelay')
@@ -215,8 +217,16 @@ class LateralLagEstimator:
     else:
       liveDelay.status = log.LiveDelayData.Status.unestimated
 
+    learning_samples = self.block_avg.valid_blocks * self.block_size + self.block_avg.idx
     if liveDelay.status == log.LiveDelayData.Status.estimated:
       liveDelay.lateralDelay = min(MAX_LAG, max(MIN_LAG, valid_mean_lag))
+    elif liveDelay.status != log.LiveDelayData.Status.invalid and learning_samples > 0 and \
+         not np.isnan(current_mean_lag) and not np.isnan(current_std) and current_std <= MAX_LAG_STD:
+      full_weight_samples = max(1, self.min_valid_block_count * self.block_size *
+                                PARTIAL_DELAY_FULL_WEIGHT_PERCENT // 100)
+      partial_weight = min(learning_samples / full_weight_samples, 1.0)
+      partial_lag = self.initial_lag + partial_weight * (current_mean_lag - self.initial_lag)
+      liveDelay.lateralDelay = min(MAX_LAG, max(MIN_LAG, partial_lag))
     else:
       liveDelay.lateralDelay = self.initial_lag
 
@@ -228,7 +238,8 @@ class LateralLagEstimator:
       liveDelay.lateralDelayEstimateStd = 0.0
 
     liveDelay.validBlocks = self.block_avg.valid_blocks
-    liveDelay.calPerc = min(100 * (self.block_avg.valid_blocks * self.block_size + self.block_avg.idx) //
+    liveDelay.currentBlockSamples = self.block_avg.idx
+    liveDelay.calPerc = min(100 * learning_samples //
                             (self.min_valid_block_count * self.block_size), 100)
     if debug:
       liveDelay.points = self.block_avg.values.flatten().tolist()
@@ -356,15 +367,20 @@ def retrieve_initial_lag(params: Params, CP: car.CarParams):
           params.remove("LiveDelay")
           return None
 
-        lag, valid_blocks, status = ld.lateralDelayEstimate, ld.validBlocks, ld.status
+        lag, valid_blocks, current_block_samples, status = (ld.lateralDelayEstimate, ld.validBlocks,
+                                                            ld.currentBlockSamples, ld.status)
+        if not np.isfinite(lag) or not MIN_LAG <= lag <= MAX_LAG:
+          raise ValueError("Invalid lag estimate")
         if valid_blocks > BLOCK_NUM:
           raise ValueError("Invalid number of valid blocks")
+        if current_block_samples >= BLOCK_SIZE:
+          raise ValueError("Invalid number of current block samples")
         if status == log.LiveDelayData.Status.invalid:
           raise ValueError("Lag estimate is invalid")
-        if valid_blocks <= 0:
+        if valid_blocks <= 0 and current_block_samples <= 0:
           params.remove("LiveDelay")
           return None
-        return lag, valid_blocks
+        return lag, valid_blocks, current_block_samples
     except Exception as e:
       cloudlog.error(f"Failed to retrieve initial lag: {e}")
       params.remove("LiveDelay")
@@ -385,8 +401,8 @@ def main():
 
   lag_learner = LateralLagEstimator(CP, 1. / SERVICE_LIST['livePose'].frequency)
   if (initial_lag_params := retrieve_initial_lag(params, CP)) is not None:
-    lag, valid_blocks = initial_lag_params
-    lag_learner.reset(lag, valid_blocks)
+    lag, valid_blocks, current_block_samples = initial_lag_params
+    lag_learner.reset(lag, valid_blocks, current_block_samples)
 
   while True:
     sm.update()
@@ -404,5 +420,5 @@ def main():
       lag_msg_dat = lag_msg.to_bytes()
       pm.send('liveDelay', lag_msg_dat)
 
-      if sm.frame % 1200 == 0: # cache every 60 seconds
+      if sm.frame % 300 == 0:  # cache every 15 seconds
         params.put_nonblocking("LiveDelay", lag_msg_dat)

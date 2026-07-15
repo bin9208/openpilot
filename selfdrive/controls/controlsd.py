@@ -36,9 +36,10 @@ LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
-LANELESS_CURVATURE_SMOOTH_SECONDS = 0.10
-LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS = 0.24
+LANELESS_CURVATURE_SMOOTH_SECONDS = 0.04
+LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS = 0.16
 LANELESS_CURVE_MPC_SMOOTH_SECONDS = 0.08
+LANELESS_CURVE_TRANSITION_PSI_SCALE = 0.50
 LANELESS_LOW_SPEED_MPC_ENTER = 9.5
 LANELESS_LOW_SPEED_MPC_EXIT = 10.5
 # When MPC curvature is used in laneless mode, lag adjustment already handles delay compensation.
@@ -58,7 +59,7 @@ def get_laneless_curvature_smooth_seconds(v_ego: float, desired_curvature: float
 
   y_std_1s = get_model_y_std_1s(model_v2)
   uncertainty_factor = float(np.clip((y_std_1s - 0.05) / 0.05, 0.0, 1.0))
-  extra_smooth = speed_factor * straight_factor * (0.06 + 0.08 * uncertainty_factor)
+  extra_smooth = speed_factor * straight_factor * (0.04 + 0.06 * uncertainty_factor)
   return min(LANELESS_HIGH_SPEED_SMOOTH_MAX_SECONDS, LANELESS_CURVATURE_SMOOTH_SECONDS + extra_smooth)
 
 
@@ -217,7 +218,10 @@ class Controls:
             mpc_smooth_seconds,
             get_laneless_curvature_smooth_seconds(CS.vEgo, model_v2.action.desiredCurvature, model_v2),
           )
-        curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances)
+        transition_psi_scale = LANELESS_CURVE_TRANSITION_PSI_SCALE if laneless_mode else 1.0
+        curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures,
+                                               steer_actuator_delay + mpc_smooth_seconds, lat_plan.distances,
+                                               curve_transition_psi_scale=transition_psi_scale)
         if laneless_mode:
           new_desired_curvature = smooth_value(curvature, self.desired_curvature, LANELESS_EXTRA_SMOOTH_SECONDS)
         else:      

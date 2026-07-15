@@ -2362,6 +2362,7 @@ struct LiveDelayData {
   lateralDelayEstimateStd @5 :Float32;
   points @4 :List(Float32);
   calPerc @6 :Int8;
+  currentBlockSamples @7 :UInt16;
 
   enum Status {
     unestimated @0;

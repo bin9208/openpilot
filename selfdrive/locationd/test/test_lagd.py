@@ -52,7 +52,7 @@ class TestLateralLagPersistence:
     initial_lag = retrieve_initial_lag(params, cp)
 
     # Then it preserves the measured partial progress across routes.
-    assert initial_lag == pytest.approx((0.34, 2))
+    assert initial_lag == pytest.approx((0.34, 2, 0))
     assert params.get("LiveDelay") is not None
 
   @pytest.mark.parametrize(("previous_steer_ratio", "previous_actuator_delay", "previous_control_type"), [
@@ -98,7 +98,7 @@ class TestLateralLagPersistence:
     initial_lag = retrieve_initial_lag(params, cp)
 
     # Then it preserves the completed estimate.
-    assert initial_lag == pytest.approx((0.29, 50))
+    assert initial_lag == pytest.approx((0.29, 50, 0))
     assert params.get("LiveDelay") is not None
 
   @pytest.mark.parametrize(("status", "valid_blocks"), [
@@ -132,3 +132,66 @@ class TestLateralLagPersistence:
     # Then consumers receive actuator delay plus the fixed pipeline latency.
     assert live_delay.status == log.LiveDelayData.Status.unestimated
     assert live_delay.lateralDelay == pytest.approx(0.35)
+
+  def test_keeps_incomplete_first_block_across_routes(self, steering_params: SteeringParams):
+    params, cp = steering_params
+    cached = messaging.new_message("liveDelay")
+    cached.liveDelay.status = log.LiveDelayData.Status.unestimated
+    cached.liveDelay.lateralDelayEstimate = 0.27
+    cached.liveDelay.validBlocks = 0
+    cached.liveDelay.currentBlockSamples = 10
+    params.put("LiveDelay", cached.to_bytes())
+
+    initial_lag = retrieve_initial_lag(params, cp)
+
+    assert initial_lag == pytest.approx((0.27, 0, 10))
+    assert params.get("LiveDelay") is not None
+
+  def test_partial_learning_blends_into_applied_delay(self, steering_params: SteeringParams):
+    _, cp = steering_params
+    estimator = LateralLagEstimator(cp, dt=0.05)
+    for _ in range(10):
+      estimator.block_avg.update(0.25)
+
+    live_delay = estimator.get_msg(valid=True).liveDelay
+
+    assert live_delay.status == log.LiveDelayData.Status.unestimated
+    assert live_delay.calPerc == 2
+    assert live_delay.currentBlockSamples == 10
+    assert live_delay.lateralDelayEstimate == pytest.approx(0.25)
+    assert live_delay.lateralDelay == pytest.approx(0.33)
+
+  def test_restores_incomplete_block_progress(self, steering_params: SteeringParams):
+    _, cp = steering_params
+    estimator = LateralLagEstimator(cp, dt=0.05)
+
+    estimator.reset(0.27, valid_blocks=0, current_block_samples=10)
+    live_delay = estimator.get_msg(valid=True).liveDelay
+
+    assert live_delay.calPerc == 2
+    assert live_delay.currentBlockSamples == 10
+    assert live_delay.lateralDelayEstimate == pytest.approx(0.27)
+
+  def test_discards_invalid_incomplete_block_size(self, steering_params: SteeringParams):
+    params, cp = steering_params
+    cached = messaging.new_message("liveDelay")
+    cached.liveDelay.status = log.LiveDelayData.Status.unestimated
+    cached.liveDelay.lateralDelayEstimate = 0.27
+    cached.liveDelay.validBlocks = 0
+    cached.liveDelay.currentBlockSamples = 100
+    params.put("LiveDelay", cached.to_bytes())
+
+    assert retrieve_initial_lag(params, cp) is None
+    assert params.get("LiveDelay") is None
+
+  @pytest.mark.parametrize("lag", [float("nan"), 0.14, 1.01])
+  def test_discards_invalid_cached_lag_value(self, steering_params: SteeringParams, lag: float):
+    params, cp = steering_params
+    cached = messaging.new_message("liveDelay")
+    cached.liveDelay.status = log.LiveDelayData.Status.unestimated
+    cached.liveDelay.lateralDelayEstimate = lag
+    cached.liveDelay.validBlocks = 1
+    params.put("LiveDelay", cached.to_bytes())
+
+    assert retrieve_initial_lag(params, cp) is None
+    assert params.get("LiveDelay") is None
