@@ -79,6 +79,9 @@ nav_type_mapping = {
 
 import collections
 class CarrotServ:
+  _NAVIGATION_CONTROL_PROVIDERS = ("tmap", "naver", "tmap-legacy")
+  _UINT32_MAX = 2**32 - 1
+
   def __init__(self):
     self.params = Params()
     self.params_memory = Params("/dev/shm/params")
@@ -189,6 +192,18 @@ class CarrotServ:
     self.gas_pressed_state = False
     self.source_last = "none"
 
+    self.desired_speed = 250
+    self.desired_source = "none"
+    self.atcType = "none"
+    self.atcSpeed = 250
+    self.atcDist = 0
+
+    self.navigation_provider = "none"
+    self.navigation_valid = False
+    self.navigation_age_ms = 0
+    self.navigation_control_allowed = False
+    self.navigation_session_seen = False
+
     self.debugText = ""
 
     # 默认语言，稍后在 update_params 中从 Params 读取覆盖，
@@ -196,6 +211,118 @@ class CarrotServ:
     self.lang = "en"
 
     self.update_params()
+
+  def set_navigation_observability(self, provider, valid, age_ms, control_allowed):
+    """Record the accepted provider receipt without changing navigation state."""
+    provider_name = str(provider or "none")
+    try:
+      bounded_age = int(age_ms)
+    except (TypeError, ValueError, OverflowError):
+      bounded_age = 0
+    bounded_age = max(0, min(self._UINT32_MAX, bounded_age))
+    self.navigation_provider = provider_name
+    self.navigation_valid = bool(valid)
+    self.navigation_age_ms = bounded_age if self.navigation_valid else 0
+    self.navigation_control_allowed = bool(
+      control_allowed and self.navigation_valid and provider_name in self._NAVIGATION_CONTROL_PROVIDERS
+    )
+    if self.navigation_valid:
+      self.navigation_session_seen = True
+
+  def _navigation_control_authorized(self):
+    provider = str(getattr(self, "navigation_provider", "none") or "none")
+    return bool(
+      getattr(self, "navigation_valid", False) and
+      getattr(self, "navigation_control_allowed", False) and
+      provider in self._NAVIGATION_CONTROL_PROVIDERS
+    )
+
+  def neutralize_navigation(self):
+    """Reset navigation-derived control, guidance, and localization state once."""
+    neutral_fields = (
+      ("active_carrot", 0), ("active_count", 0), ("active_sdi_count", 0), ("active_kisa_count", 0),
+      ("nRoadLimitSpeed", 30), ("nRoadLimitSpeed_last", 30), ("nRoadLimitSpeed_counter", 0),
+      ("nSdiType", -1), ("nSdiSpeedLimit", 0), ("nSdiSection", 0), ("nSdiDist", 0),
+      ("nSdiBlockType", -1), ("nSdiBlockSpeed", 0), ("nSdiBlockDist", 0),
+      ("nSdiPlusType", -1), ("nSdiPlusSpeedLimit", 0), ("nSdiPlusDist", 0),
+      ("nSdiPlusBlockType", -1), ("nSdiPlusBlockSpeed", 0), ("nSdiPlusBlockDist", 0),
+      ("nTBTDist", 0), ("nTBTTurnType", -1), ("szTBTMainText", ""),
+      ("szNearDirName", ""), ("szFarDirName", ""), ("nTBTNextRoadWidth", 0),
+      ("nTBTDistNext", 0), ("nTBTTurnTypeNext", -1), ("szTBTMainTextNext", ""),
+      ("nGoPosDist", 0), ("nGoPosTime", 0), ("szPosRoadName", ""), ("roadcate", 8),
+      ("goalPosX", 0.0), ("goalPosY", 0.0), ("szGoalName", ""),
+      ("vpPosPointLatNavi", 0.0), ("vpPosPointLonNavi", 0.0),
+      ("vpPosPointLat", 0.0), ("vpPosPointLon", 0.0),
+      ("nPosSpeed", 0.0), ("nPosAngle", 0.0), ("nPosAnglePhone", 0.0),
+      ("diff_angle_count", 0), ("last_calculate_gps_time", 0),
+      ("last_update_gps_time", 0), ("last_update_gps_time_phone", 0),
+      ("last_update_gps_time_navi", 0), ("bearing_offset", 0.0),
+      ("bearing_measured", 0.0), ("bearing", 0.0), ("gps_valid", False),
+      ("phone_gps_accuracy", 0.0), ("gps_accuracy_device", 0.0),
+      ("phone_latitude", 0.0), ("phone_longitude", 0.0), ("phone_gps_frame", 0),
+      ("xSpdLimit", 0), ("xSpdDist", 0), ("xSpdType", -1),
+      ("xTurnInfo", -1), ("xDistToTurn", 0), ("xTurnInfoNext", -1), ("xDistToTurnNext", 0),
+      ("navType", "invalid"), ("navModifier", ""), ("navTypeNext", "invalid"), ("navModifierNext", ""),
+      ("atcType", "none"), ("atcSpeed", 250), ("atcDist", 0),
+      ("desired_speed", 250), ("desired_source", "none"),
+      ("atc_paused", False), ("atc_activate_count", 0), ("gas_override_speed", 0),
+      ("gas_pressed_state", False), ("source_last", "none"), ("left_spd_sec", 0),
+      ("left_tbt_sec", 0), ("left_sec", 100), ("max_left_sec", 100),
+      ("carrot_left_sec", 100), ("sdi_inform", False), ("debugText", ""),
+    )
+    transitioned = any(getattr(self, field, value) != value for field, value in neutral_fields)
+    for field, value in neutral_fields:
+      setattr(self, field, value)
+    self.set_navigation_observability("none", False, 0, False)
+    return transitioned
+
+  def _fill_navigation_message(self, message, desired_speed, source):
+    """Fill provider telemetry and gate navigation control fields in a message."""
+    provider = str(getattr(self, "navigation_provider", "none") or "none")
+    valid = bool(getattr(self, "navigation_valid", False))
+    try:
+      age_ms = int(getattr(self, "navigation_age_ms", 0))
+    except (TypeError, ValueError, OverflowError):
+      age_ms = 0
+    age_ms = max(0, min(self._UINT32_MAX, age_ms)) if valid else 0
+    control_allowed = self._navigation_control_authorized()
+
+    message.provider = provider
+    message.naviValid = valid
+    message.naviAgeMs = age_ms
+    message.naviControlAllowed = control_allowed
+
+    if not control_allowed:
+      self.desired_speed = 250
+      self.desired_source = "none"
+      self.atcType = "none"
+      self.atcSpeed = 250
+      self.atcDist = 0
+      message.activeCarrot = 0
+      message.desiredSpeed = 250
+      message.desiredSource = "none"
+      message.atcType = "none"
+      message.xSpdType = -1
+      message.xSpdLimit = 0
+      message.xSpdDist = 0
+      message.xSpdCountDown = 0
+      message.xTurnInfo = -1
+      message.xDistToTurn = 0
+      message.xTurnCountDown = 0
+      message.leftSec = 100
+      return
+
+    message.activeCarrot = int(getattr(self, "active_carrot", 0))
+    message.desiredSpeed = int(desired_speed)
+    message.desiredSource = str(source or "none")
+    message.atcType = str(getattr(self, "atcType", "none") or "none")
+    message.xSpdType = int(getattr(self, "xSpdType", -1))
+    message.xSpdLimit = int(getattr(self, "xSpdLimit", 0))
+    message.xSpdDist = int(getattr(self, "xSpdDist", 0))
+    message.xSpdCountDown = int(getattr(self, "left_spd_sec", 0))
+    message.xTurnInfo = int(getattr(self, "xTurnInfo", -1))
+    message.xDistToTurn = int(getattr(self, "xDistToTurn", 0))
+    message.xTurnCountDown = int(getattr(self, "left_tbt_sec", 0))
 
   def update_params(self):
     self.autoNaviSpeedBumpSpeed = float(self.params.get_int("AutoNaviSpeedBumpSpeed"))
@@ -860,6 +987,7 @@ class CarrotServ:
 
     self.debugText = ""
     self.update_params()
+    navigation_control_authorized = self._navigation_control_authorized()
     if sm.alive['carState'] and sm.alive['selfdriveState']:
       CS = sm['carState']
       v_ego = CS.vEgo
@@ -942,8 +1070,14 @@ class CarrotServ:
 
     #print(f"sdi_speed: {sdi_speed}, hda_active: {hda_active}, xSpdType: {self.xSpdType}, xSpdDist: {self.xSpdDist}, active_carrot: {self.active_carrot}, v_ego_kph: {v_ego_kph}, nRoadLimitSpeed: {self.nRoadLimitSpeed}")
     ### TBT 속도제어
-    atc_desired, self.atcType, self.atcSpeed, self.atcDist = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfo, self.xDistToTurn, True)
-    atc_desired_next, _, _, _ = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfoNext, self.xDistToTurnNext, False)
+    if navigation_control_authorized:
+      atc_desired, self.atcType, self.atcSpeed, self.atcDist = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfo, self.xDistToTurn, True)
+      atc_desired_next, _, _, _ = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfoNext, self.xDistToTurnNext, False)
+    else:
+      atc_desired = atc_desired_next = 250
+      self.atcType, self.atcSpeed, self.atcDist = "none", 250, 0
+      self.atc_activate_count = 0
+      self.atc_paused = False
 
     if self.nSdiType  >= 0: # or self.active_carrot > 0:
       pass
@@ -968,20 +1102,22 @@ class CarrotServ:
       self.atcType = "none"
 
 
-    speed_n_sources = [
-      (atc_desired, "atc"),
-      (atc_desired_next, "atc2"),
-      (sdi_speed, "hda" if hda_active else "bump" if self.xSpdType == 22 else "section" if self.xSpdType == 4 else "police" if self.xSpdType == 100 else "waze" if self.xSpdType == 101 else "cam"),
-      (limit_speed, "road"),
-    ]
-    if self.turnSpeedControlMode in [1,2]:
+    speed_n_sources = []
+    if navigation_control_authorized:
+      speed_n_sources = [
+        (atc_desired, "atc"),
+        (atc_desired_next, "atc2"),
+        (sdi_speed, "hda" if hda_active else "bump" if self.xSpdType == 22 else "section" if self.xSpdType == 4 else "police" if self.xSpdType == 100 else "waze" if self.xSpdType == 101 else "cam"),
+        (limit_speed, "road"),
+      ]
+    if navigation_control_authorized and self.turnSpeedControlMode in [1,2]:
       speed_n_sources.append((max(abs(vturn_speed), self.autoCurveSpeedLowerLimit), "vturn"))
 
     route_speed = max(route_speed * self.mapTurnSpeedFactor, self.autoCurveSpeedLowerLimit)
-    if self.turnSpeedControlMode == 2:
+    if navigation_control_authorized and self.turnSpeedControlMode == 2:
       if -500 < self.xDistToTurn < 500:
         speed_n_sources.append((route_speed, "route"))
-    elif self.turnSpeedControlMode in [3, 4]:
+    elif navigation_control_authorized and self.turnSpeedControlMode in [3, 4]:
       speed_n_sources.append((route_speed, "route"))
       #speed_n_sources.append((self.calculate_current_speed(dist, speed * self.mapTurnSpeedFactor, 0, 1.2), "route"))
 
@@ -989,7 +1125,12 @@ class CarrotServ:
     if model_turn_speed < 200 and abs(vturn_speed) < 120:
       speed_n_sources.append((model_turn_speed, "model"))
 
-    desired_speed, source = min(speed_n_sources, key=lambda x: x[0])
+    if navigation_control_authorized:
+      desired_speed, source = min(speed_n_sources, key=lambda x: x[0])
+    else:
+      desired_speed, source = 250, "none"
+    self.desired_speed = desired_speed
+    self.desired_source = source
 
     if CS is not None:
       if source != self.source_last:
@@ -1043,6 +1184,11 @@ class CarrotServ:
 
       self.left_sec = left_sec
 
+    if not navigation_control_authorized:
+      left_spd_sec = left_tbt_sec = 100
+      self.left_spd_sec = self.left_tbt_sec = 100
+      self.left_sec = self.max_left_sec = self.carrot_left_sec = 100
+      self.sdi_inform = False
 
     self._update_cmd()
     msg = messaging.new_message('carrotMan')
@@ -1082,6 +1228,7 @@ class CarrotServ:
     msg.carrotMan.naviPaths = coords_str
 
     msg.carrotMan.leftSec = int(self.carrot_left_sec)
+    self._fill_navigation_message(msg.carrotMan, desired_speed, source)
     pm.send('carrotMan', msg)
 
     inst = messaging.new_message('navInstructionCarrot')
@@ -1124,7 +1271,7 @@ class CarrotServ:
           maneuvers.append(maneuver)
 
       instruction.allManeuvers = maneuvers
-    elif sm.alive['navInstruction'] and sm.valid['navInstruction']:
+    elif not getattr(self, "navigation_session_seen", False) and sm.alive['navInstruction'] and sm.valid['navInstruction']:
       inst.navInstructionCarrot = sm['navInstruction']
 
     pm.send('navInstructionCarrot', inst)

@@ -44,6 +44,7 @@ class DesireHelper:
     self.carrot_blinker_state = BLINKER_NONE
     self.carrot_lane_change_count = 0
     self.carrot_cmd_index_last = 0
+    self.naver_lane_change_direction = BLINKER_NONE
     self.atc_type = ""
     self.atc_active = 0  # 0: 없음, 1: ATC 동작, 2: 충돌
 
@@ -116,13 +117,24 @@ class DesireHelper:
     return st, changed, enabled
 
   def _update_atc_blinker(self, carrotMan, driver_blinker_state):
-    atc_type = carrotMan.atcType
+    navigation_control_authorized = bool(
+      getattr(carrotMan, "naviValid", False) and
+      getattr(carrotMan, "naviControlAllowed", False)
+    )
+    atc_type = carrotMan.atcType if navigation_control_authorized else "none"
     atc_blinker_state = BLINKER_NONE
+
+    if not navigation_control_authorized:
+      self.carrot_lane_change_count = 0
+      self.carrot_blinker_state = BLINKER_NONE
+      self.atc_active = 0
+      if carrotMan.carrotCmd == "LANECHANGE":
+        self.carrot_cmd_index_last = carrotMan.carrotCmdIndex
 
     # 유지 카운트는 DesireHelper에서 관리
     if self.carrot_lane_change_count > 0:
       atc_blinker_state = self.carrot_blinker_state
-    elif carrotMan.carrotCmdIndex != self.carrot_cmd_index_last and carrotMan.carrotCmd == "LANECHANGE":
+    elif navigation_control_authorized and carrotMan.carrotCmdIndex != self.carrot_cmd_index_last and carrotMan.carrotCmd == "LANECHANGE":
       self.carrot_cmd_index_last = carrotMan.carrotCmdIndex
       self.carrot_lane_change_count = int(0.2 / DT_MDL)
       self.carrot_blinker_state = BLINKER_LEFT if carrotMan.carrotArg == "LEFT" else BLINKER_RIGHT
@@ -237,11 +249,64 @@ class DesireHelper:
     driver_st, driver_changed, driver_enabled = self._update_driver_blinker(carstate)
     atc_st, atc_enabled = self._update_atc_blinker(carrotMan, driver_st)
 
+    navigation_control_authorized = bool(
+      getattr(carrotMan, "naviValid", False) and
+      getattr(carrotMan, "naviControlAllowed", False)
+    )
+    naver_request_direction = BLINKER_NONE
+    if getattr(carrotMan, "provider", "") == "naver" and navigation_control_authorized:
+      if self.carrot_lane_change_count > 0:
+        naver_request_direction = self.carrot_blinker_state
+      elif self.atc_type in ("fork left", "atc left"):
+        naver_request_direction = BLINKER_LEFT
+      elif self.atc_type in ("fork right", "atc right"):
+        naver_request_direction = BLINKER_RIGHT
+    if naver_request_direction in (BLINKER_LEFT, BLINKER_RIGHT):
+      if self.naver_lane_change_direction in (BLINKER_NONE, naver_request_direction):
+        self.naver_lane_change_direction = naver_request_direction
+
     desire_enabled = driver_enabled or atc_enabled
     blinker_state = driver_st if driver_enabled else atc_st
 
     # 선택된 side (FSM은 이 side만 참고)
     side = self._get_selected_side(blinker_state) if blinker_state in (BLINKER_LEFT, BLINKER_RIGHT) else None
+
+    naver_lane_change_active = self.naver_lane_change_direction in (BLINKER_LEFT, BLINKER_RIGHT)
+    naver_side = self._get_selected_side(self.naver_lane_change_direction) if naver_lane_change_active else None
+    naver_driver_confirmed = naver_lane_change_active and driver_enabled and driver_st == self.naver_lane_change_direction
+    naver_opposite_blinker = naver_lane_change_active and driver_st not in (BLINKER_NONE, self.naver_lane_change_direction)
+    naver_opposite_torque = naver_lane_change_active and carstate.steeringPressed and (
+      (self.naver_lane_change_direction == BLINKER_LEFT and carstate.steeringTorque < 0) or
+      (self.naver_lane_change_direction == BLINKER_RIGHT and carstate.steeringTorque > 0)
+    )
+    naver_geometry_clear = bool(
+      naver_side is not None and naver_side.lane_change_available_geom and
+      naver_side.lane_line_info_mod in (0, 5)
+    )
+    naver_obstacles_clear = bool(
+      naver_side is not None and naver_side.lane_change_available and
+      not naver_side.side_object_detected and naver_side.bsd_hold_counter == 0 and
+      not (carstate.leftBlindspot if self.naver_lane_change_direction == BLINKER_LEFT else carstate.rightBlindspot)
+    )
+    naver_actuating = self.lane_change_state in (
+      LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing,
+    )
+    naver_request_fresh = naver_request_direction == self.naver_lane_change_direction
+    naver_abort = naver_lane_change_active and (
+      not naver_request_fresh or naver_opposite_blinker or naver_opposite_torque or
+      below_lane_change_speed or not lateral_active or
+      (naver_actuating and (not naver_driver_confirmed or not naver_geometry_clear or not naver_obstacles_clear))
+    )
+    if naver_abort:
+      self.lane_change_state = LaneChangeState.off
+      self.lane_change_direction = LaneChangeDirection.none
+      self.naver_lane_change_direction = BLINKER_NONE
+      self.carrot_lane_change_count = 0
+      desire_enabled = False
+      blinker_state = BLINKER_NONE
+      side = None
+      if naver_opposite_blinker or naver_opposite_torque:
+        self.blinker_ignore = True
 
     # auto lane change trigger (기존 로직 유지하되 side 기반)
     auto_lane_change_trigger = False
@@ -364,7 +429,11 @@ class DesireHelper:
               start_gate = (side.lane_change_available_geom and self.lane_change_delay == 0) or \
                            side.lane_line_info_edge_detect or solid_line_blocked
 
-              if start_gate:
+              if naver_lane_change_active:
+                if (naver_driver_confirmed and naver_geometry_clear and naver_obstacles_clear and
+                    self.lane_change_delay == 0):
+                  self.lane_change_state = LaneChangeState.laneChangeStarting
+              elif start_gate:
                 if solid_line_blocked:
                   if torque_applied and not (bsd_active and block_lanechange_bsd):
                     self.lane_change_state = LaneChangeState.laneChangeStarting

@@ -290,8 +290,12 @@ class VCruiseCarrot:
     CC = sm['carControl']
     if sm.alive['carrotMan']:
       carrot_man = sm['carrotMan']
-      self.nRoadLimitSpeed = carrot_man.nRoadLimitSpeed
-      self.desiredSpeed = carrot_man.desiredSpeed
+      navigation_control_authorized = bool(
+        getattr(carrot_man, "naviValid", False) and
+        getattr(carrot_man, "naviControlAllowed", False)
+      )
+      self.nRoadLimitSpeed = carrot_man.nRoadLimitSpeed if navigation_control_authorized else 30
+      self.desiredSpeed = carrot_man.desiredSpeed if navigation_control_authorized else 250
       self.carrot_cmd_index = carrot_man.carrotCmdIndex
       self.carrot_cmd = carrot_man.carrotCmd
       self.carrot_arg = carrot_man.carrotArg

@@ -39,13 +39,24 @@ class BlinkerManager:
     return st, changed, enabled
 
   def update_atc(self, carrotMan, driver_blinker_state: int):
-    atc_type = carrotMan.atcType
+    navigation_control_authorized = bool(
+      getattr(carrotMan, "naviValid", False) and
+      getattr(carrotMan, "naviControlAllowed", False)
+    )
+    atc_type = carrotMan.atcType if navigation_control_authorized else "none"
     atc_blinker_state = BLINKER_NONE
+
+    if not navigation_control_authorized:
+      self.carrot_lane_change_count = 0
+      self.carrot_blinker_state = BLINKER_NONE
+      self.atc_active = 0
+      if carrotMan.carrotCmd == "LANECHANGE":
+        self.carrot_cmd_index_last = carrotMan.carrotCmdIndex
 
     if self.carrot_lane_change_count > 0:
       atc_blinker_state = self.carrot_blinker_state
 
-    elif carrotMan.carrotCmdIndex != self.carrot_cmd_index_last and carrotMan.carrotCmd == "LANECHANGE":
+    elif navigation_control_authorized and carrotMan.carrotCmdIndex != self.carrot_cmd_index_last and carrotMan.carrotCmd == "LANECHANGE":
       self.carrot_cmd_index_last = carrotMan.carrotCmdIndex
       self.carrot_lane_change_count = int(0.2 / carrotMan.DT_MDL) if hasattr(carrotMan, "DT_MDL") else 0
       self.carrot_blinker_state = BLINKER_LEFT if carrotMan.carrotArg == "LEFT" else BLINKER_RIGHT

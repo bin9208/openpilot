@@ -387,7 +387,12 @@ class CarrotPlanner:
     atc_active = False
     if sm.alive['carrotMan']:
       carrot_man = sm['carrotMan']
-      atc_turn_left = carrot_man.atcType in ["turn left", "atc left"]
+      navigation_control_authorized = bool(
+        getattr(carrot_man, "naviValid", False) and
+        getattr(carrot_man, "naviControlAllowed", False)
+      )
+      atc_type = carrot_man.atcType if navigation_control_authorized else "none"
+      atc_turn_left = atc_type in ["turn left", "atc left"]
       trigger_start = self.carrot_stay_stop = False
       if atc_turn_left or sm['carState'].leftBlinker:
         if self.trafficState_carrot == 1 and carrot_man.trafficState == 3: # red -> left triggered
@@ -407,12 +412,13 @@ class CarrotPlanner:
           self.xState = XState.e2eCruise
           self.traffic_starting_count = 10.0 / DT_MDL
 
-      self.activeCarrot = carrot_man.activeCarrot
-      self.xDistToTurn = carrot_man.xDistToTurn
+      self.activeCarrot = carrot_man.activeCarrot if navigation_control_authorized else 0
+      self.xDistToTurn = carrot_man.xDistToTurn if navigation_control_authorized else 0
       atc_active = self.activeCarrot > 1 and 0 < self.xDistToTurn < 100
-      self.atcType = carrot_man.atcType
+      self.atcType = atc_type
 
-      v_cruise_kph = min(v_cruise_kph, carrot_man.desiredSpeed)
+      if navigation_control_authorized:
+        v_cruise_kph = min(v_cruise_kph, carrot_man.desiredSpeed)
 
     return v_cruise_kph, atc_active
 

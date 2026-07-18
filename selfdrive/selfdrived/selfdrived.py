@@ -249,7 +249,12 @@ class SelfdriveD:
       self.calibrated_pose = self.pose_calibrator.build_calibrated_pose(device_pose)
 
     if self.sm.alive['carrotMan']:
-      atc_type = self.sm['carrotMan'].atcType
+      carrot_man = self.sm['carrotMan']
+      navigation_control_authorized = bool(
+        getattr(carrot_man, "naviValid", False) and
+        getattr(carrot_man, "naviControlAllowed", False)
+      )
+      atc_type = carrot_man.atcType if navigation_control_authorized else "none"
       if atc_type != self.atc_type_last:
         if "prepare" not in atc_type and "prepare" in self.atc_type_last: # fork left/right prepare -> fork left/right
           if "fork" in atc_type:

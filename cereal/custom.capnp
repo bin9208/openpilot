@@ -41,6 +41,10 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	szSdiDescr @26 : Text;
 	naviPaths @27 : Text;
 	leftSec @28 : Int32;
+	provider @29 :Text;
+	naviValid @30 :Bool;
+	naviAgeMs @31 :UInt32;
+	naviControlAllowed @32 :Bool;
 }
 
 struct YoloDetection @0xf35cc4560bbf6ec2 {

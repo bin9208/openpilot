@@ -190,7 +190,12 @@ class Controls:
     # Steering PID loop and lateral MPC
     lat_plan = self.sm['lateralPlan']
     carrot_man = self.sm['carrotMan']
-    curve_speed_abs = abs(carrot_man.vTurnSpeed)
+    navigation_control_authorized = bool(
+      self.sm.alive['carrotMan'] and
+      getattr(carrot_man, "naviValid", False) and
+      getattr(carrot_man, "naviControlAllowed", False)
+    )
+    curve_speed_abs = abs(carrot_man.vTurnSpeed) if navigation_control_authorized else 0
     self.lanefull_mode_enabled = (lat_plan.useLaneLines and curve_speed_abs > self.params.get_int("UseLaneLineCurveSpeed"))
     laneless_mode = not lat_plan.useLaneLines
     self.laneless_low_speed_mpc = update_laneless_low_speed_mpc(self.laneless_low_speed_mpc, laneless_mode, CS.vEgo)
@@ -270,7 +275,13 @@ class Controls:
     CC.cruiseControl.override = CC.enabled and not CC.longActive and self.CP.openpilotLongitudinalControl
     CC.cruiseControl.cancel = CS.cruiseState.enabled and (not CC.enabled or not self.CP.pcmCruise)
 
-    desired_kph = min(CS.vCruiseCluster, self.sm['carrotMan'].desiredSpeed)
+    carrot_man = self.sm['carrotMan']
+    navigation_control_authorized = bool(
+      self.sm.alive['carrotMan'] and
+      getattr(carrot_man, "naviValid", False) and
+      getattr(carrot_man, "naviControlAllowed", False)
+    )
+    desired_kph = min(CS.vCruiseCluster, carrot_man.desiredSpeed) if navigation_control_authorized else CS.vCruiseCluster
     setSpeed = float(desired_kph * CV.KPH_TO_MS)
     speeds = self.sm['longitudinalPlan'].speeds
     if len(speeds):
@@ -280,8 +291,8 @@ class Controls:
 
     hudControl = CC.hudControl
 
-    hudControl.activeCarrot = self.sm['carrotMan'].activeCarrot
-    hudControl.atcDistance = self.sm['carrotMan'].xDistToTurn
+    hudControl.activeCarrot = carrot_man.activeCarrot if navigation_control_authorized else 0
+    hudControl.atcDistance = carrot_man.xDistToTurn if navigation_control_authorized else 0
 
     lp = self.sm['longitudinalPlan']
     if self.CP.pcmCruise:

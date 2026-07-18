@@ -81,7 +81,7 @@ _services: dict[str, tuple] = {
   "soundPressure": (True, 10., 10),
   "rawAudioData": (False, 20.),
 
-  "carrotMan": (True, 0.),
+  "carrotMan": (True, 20.),
   "yoloObjectData": (True, 0.),
   "laneMarkingState": (True, 5., 5),
   "sideVisionState": (True, 5., 5),
