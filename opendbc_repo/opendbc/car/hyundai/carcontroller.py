@@ -27,6 +27,7 @@ ANGLE_COMMAND_ACCEL_LIMIT = 0.05
 ANGLE_COMMAND_DECEL_LIMIT = 0.10
 ANGLE_COMMAND_LARGE_ERROR = 8.0
 ANGLE_COMMAND_LARGE_ERROR_ACCEL = 0.35
+ANGLE_HANDOFF_RELEASE_FRAMES = int(0.4 / DT_CTRL)
 
 vibrate_intervals = [
   (0.0, 0.5),
@@ -73,8 +74,39 @@ def get_angle_control_max_torque(custom_steer_max: int, min_torque: int, force_f
   requested = custom_steer_max if custom_steer_max > 0 else ANGLE_CONTROL_DEFAULT_MAX_TORQUE
   return int(np.clip(requested, min_torque, ANGLE_CONTROL_MAX_TORQUE))
 
+
+class AngleHandoffState:
+  NORMAL = 0
+  YIELDING = 1
+  REACQUIRING = 2
+
+  def __init__(self, release_frames: int = ANGLE_HANDOFF_RELEASE_FRAMES):
+    self.release_frames = max(1, int(release_frames))
+    self.state = self.NORMAL
+    self.release_count = 0
+
+  def reset(self) -> None:
+    self.state = self.NORMAL
+    self.release_count = 0
+
+  def update(self, *, steering_pressed: bool) -> int:
+    if steering_pressed:
+      self.state = self.YIELDING
+      self.release_count = 0
+    elif self.state == self.YIELDING:
+      self.release_count += 1
+      if self.release_count >= self.release_frames:
+        self.state = self.REACQUIRING
+    return self.state
+
+  def finish_reacquiring(self) -> None:
+    if self.state == self.REACQUIRING:
+      self.reset()
+
+
 def smooth_angle_command_rate(target_angle: float, last_angle: float, last_rate: float,
-                              v_ego: float, max_rate: float) -> tuple[float, float]:
+                              v_ego: float, max_rate: float, *,
+                              allow_large_error_accel: bool = True) -> tuple[float, float]:
   last_angle = float(last_angle) if np.isfinite(last_angle) else 0.0
   if not np.isfinite(target_angle) or not np.isfinite(max_rate) or max_rate <= 0.0:
     return last_angle, 0.0
@@ -90,7 +122,7 @@ def smooth_angle_command_rate(target_angle: float, last_angle: float, last_rate:
   smoothing = float(np.clip((6.0 - max(v_ego, 0.0)) / 2.0, 0.0, 1.0))
   accel_limit = max_rate * (1.0 - smoothing) + ANGLE_COMMAND_ACCEL_LIMIT * smoothing
   decel_limit = max_rate * 2.0 * (1.0 - smoothing) + ANGLE_COMMAND_DECEL_LIMIT * smoothing
-  if abs(error) > ANGLE_COMMAND_LARGE_ERROR:
+  if allow_large_error_accel and abs(error) > ANGLE_COMMAND_LARGE_ERROR:
     accel_limit = max(accel_limit, ANGLE_COMMAND_LARGE_ERROR_ACCEL)
 
   stopping_rate = np.sqrt(max(0.0, 2.0 * decel_limit * abs(error)))
@@ -113,7 +145,8 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      lat_active: bool,
                                      wheelbase_m: float,
                                      steer_ratio: float,
-                                     steer_sw_max_deg: float) -> tuple[float, float]:
+                                     steer_sw_max_deg: float,
+                                     allow_large_error_accel: bool = True) -> tuple[float, float]:
   max_lat_accel = 5.0   # m/s^2
 
   measured_valid = bool(np.isfinite(steering_sw_deg))
@@ -170,6 +203,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
     last_sw_rate_deg_per_tick,
     v,
     max_sw_rate_deg_per_tick,
+    allow_large_error_accel=allow_large_error_accel,
   )
   cmd_rw = cmd_sw / steer_ratio
 
@@ -214,6 +248,7 @@ class CarController(CarControllerBase):
 
     self.apply_angle_last = 0
     self.apply_angle_rate_last = 0.0
+    self.angle_handoff = AngleHandoffState()
     self.lkas_max_torque = 0
     self.angle_max_torque = ANGLE_CONTROL_DEFAULT_MAX_TORQUE
     self.prev_abs_angle_error = 0.0
@@ -303,6 +338,11 @@ class CarController(CarControllerBase):
       self.params.STEER_DELTA_DOWN = self.steerDeltaDown
     
     angle_control = self.CP.flags & HyundaiFlags.ANGLE_CONTROL
+    if angle_control and CC.latActive:
+      angle_handoff_state = self.angle_handoff.update(steering_pressed=CS.out.steeringPressed)
+    else:
+      self.angle_handoff.reset()
+      angle_handoff_state = AngleHandoffState.NORMAL
 
     # steering torque
     new_torque = int(round(actuators.torque * self.params.STEER_MAX))
@@ -316,17 +356,30 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw, 
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
+    if angle_control:
+      angle_command_active = CC.latActive and angle_handoff_state != AngleHandoffState.YIELDING
+      allow_large_error_accel = angle_handoff_state != AngleHandoffState.REACQUIRING
+    else:
+      angle_command_active = CC.latActive and not CS.out.steeringPressed
+      allow_large_error_accel = True
+
     apply_angle, self.apply_angle_rate_last = apply_steer_angle_limits_physics(
       actuators.steeringAngleDeg,
       self.apply_angle_last,
       self.apply_angle_rate_last,
       CS.out.vEgoRaw,
       CS.out.steeringAngleDeg,
-      CC.latActive and not CS.out.steeringPressed,
+      angle_command_active,
       self.CP.wheelbase,
       self.CP.steerRatio,
-      self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
+      self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
+      allow_large_error_accel=allow_large_error_accel,
     )
+
+    if (angle_control and angle_handoff_state == AngleHandoffState.REACQUIRING and
+        np.isfinite(actuators.steeringAngleDeg) and
+        abs(float(actuators.steeringAngleDeg) - apply_angle) <= ANGLE_COMMAND_LARGE_ERROR):
+      self.angle_handoff.finish_reacquiring()
 
     
     if angle_control:
@@ -343,7 +396,8 @@ class CarController(CarControllerBase):
 
     error_delta = self.prev_abs_angle_error - abs_angle_error
 
-    if CS.out.steeringPressed:
+    driver_yielding = CS.out.steeringPressed or (angle_control and angle_handoff_state == AngleHandoffState.YIELDING)
+    if driver_yielding:
       # Driver touched the wheel, immediately yield.
       self.lkas_max_torque = 25
       self.recover_level = 0.0

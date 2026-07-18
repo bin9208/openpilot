@@ -5,8 +5,10 @@ import pytest
 
 from opendbc.can.packer import CANPacker
 from opendbc.car.hyundai.carcontroller import (
+  ANGLE_COMMAND_ACCEL_LIMIT,
   ANGLE_CONTROL_DEFAULT_MAX_TORQUE,
   ANGLE_CONTROL_MAX_TORQUE,
+  AngleHandoffState,
   apply_steer_angle_limits_physics,
   get_angle_control_max_torque,
   smooth_angle_command_rate,
@@ -69,6 +71,52 @@ def test_large_low_speed_error_keeps_fast_curve_response() -> None:
   command, rate = smooth_angle_command_rate(20.0, 0.0, 0.0, 1.0, 1.5)
   assert command == pytest.approx(0.35)
   assert rate == pytest.approx(0.35)
+
+
+def test_reacquire_disables_large_error_acceleration() -> None:
+  command, rate = smooth_angle_command_rate(
+    20.0, 0.0, 0.0, 1.0, 1.5, allow_large_error_accel=False,
+  )
+
+  assert command == pytest.approx(ANGLE_COMMAND_ACCEL_LIMIT)
+  assert rate == pytest.approx(ANGLE_COMMAND_ACCEL_LIMIT)
+
+
+def test_angle_handoff_requires_continuous_release_hold() -> None:
+  handoff = AngleHandoffState(release_frames=40)
+
+  assert handoff.update(steering_pressed=True) == AngleHandoffState.YIELDING
+  for _ in range(20):
+    assert handoff.update(steering_pressed=False) == AngleHandoffState.YIELDING
+
+  assert handoff.update(steering_pressed=True) == AngleHandoffState.YIELDING
+  for _ in range(39):
+    assert handoff.update(steering_pressed=False) == AngleHandoffState.YIELDING
+
+  assert handoff.update(steering_pressed=False) == AngleHandoffState.REACQUIRING
+
+
+def test_angle_handoff_finishes_only_after_reacquire() -> None:
+  handoff = AngleHandoffState(release_frames=1)
+  handoff.update(steering_pressed=True)
+  handoff.finish_reacquiring()
+  assert handoff.state == AngleHandoffState.YIELDING
+
+  assert handoff.update(steering_pressed=False) == AngleHandoffState.REACQUIRING
+
+  handoff.finish_reacquiring()
+  assert handoff.state == AngleHandoffState.NORMAL
+
+
+def test_angle_handoff_reset_clears_pending_release() -> None:
+  handoff = AngleHandoffState(release_frames=40)
+  handoff.update(steering_pressed=True)
+  for _ in range(20):
+    handoff.update(steering_pressed=False)
+
+  handoff.reset()
+  assert handoff.state == AngleHandoffState.NORMAL
+  assert handoff.release_count == 0
 
 
 def test_smoothing_fades_out_at_six_meters_per_second() -> None:
