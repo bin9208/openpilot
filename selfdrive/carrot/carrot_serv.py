@@ -287,10 +287,19 @@ class CarrotServ:
     age_ms = max(0, min(self._UINT32_MAX, age_ms)) if valid else 0
     control_allowed = self._navigation_control_authorized()
 
+    try:
+      advisory_turn_info = int(getattr(self, "xTurnInfo", -1))
+      advisory_turn_distance = int(getattr(self, "xDistToTurn", 0))
+    except (TypeError, ValueError, OverflowError):
+      advisory_turn_info, advisory_turn_distance = -1, 0
+    advisory_valid = valid and advisory_turn_info > 0 and advisory_turn_distance > 0
+
     message.provider = provider
     message.naviValid = valid
     message.naviAgeMs = age_ms
     message.naviControlAllowed = control_allowed
+    message.advisoryTurnInfo = advisory_turn_info if advisory_valid else -1
+    message.advisoryTurnDistance = advisory_turn_distance if advisory_valid else 0
 
     if not control_allowed:
       self.desired_speed = 250

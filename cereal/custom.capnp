@@ -45,6 +45,8 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	naviValid @30 :Bool;
 	naviAgeMs @31 :UInt32;
 	naviControlAllowed @32 :Bool;
+	advisoryTurnInfo @33 :Int32;
+	advisoryTurnDistance @34 :Int32;
 }
 
 struct YoloDetection @0xf35cc4560bbf6ec2 {

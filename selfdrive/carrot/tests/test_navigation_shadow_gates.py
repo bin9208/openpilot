@@ -49,7 +49,8 @@ def test_legacy_tmap_control_output_is_characterized() -> None:
     message.provider, message.naviValid, message.naviAgeMs, message.naviControlAllowed,
     message.activeCarrot, message.desiredSpeed, message.desiredSource, message.atcType,
     message.xSpdType, message.xSpdLimit, message.xSpdDist, message.xTurnInfo,
-  ) == ("tmap", True, 123, True, 6, 41, "atc", "turn left", 22, 40, 100, 1)
+    message.advisoryTurnInfo, message.advisoryTurnDistance,
+  ) == ("tmap", True, 123, True, 6, 41, "atc", "turn left", 22, 40, 100, 1, 1, 120)
 
 
 def test_no_navigation_control_output_is_characterized() -> None:
@@ -66,7 +67,8 @@ def test_no_navigation_control_output_is_characterized() -> None:
     message.provider, message.naviValid, message.naviAgeMs, message.naviControlAllowed,
     message.activeCarrot, message.desiredSpeed, message.desiredSource, message.atcType,
     message.xSpdType, message.xSpdLimit, message.xSpdDist, message.xTurnInfo,
-  ) == ("none", False, 0, False, 0, 250, "none", "none", -1, 0, 0, -1)
+    message.advisoryTurnInfo, message.advisoryTurnDistance,
+  ) == ("none", False, 0, False, 0, 250, "none", "none", -1, 0, 0, -1, -1, 0)
 
 
 def test_physical_driver_blinker_baseline_is_characterized() -> None:
@@ -103,9 +105,10 @@ def test_naver_shadow_message_keeps_display_but_neutralizes_audio_countdown() ->
     message.provider, message.naviValid, message.naviAgeMs, message.naviControlAllowed,
     message.desiredSpeed, message.desiredSource, message.atcType, message.activeCarrot,
     message.xSpdType, message.xTurnInfo, message.leftSec,
+    message.advisoryTurnInfo, message.advisoryTurnDistance,
     message.szTBTMainText, message.naviPaths,
   ) == (
-    "naver", True, 7, False, 250, "none", "none", 0, -1, -1, 100,
+    "naver", True, 7, False, 250, "none", "none", 0, -1, -1, 100, 1, 120,
     "Extreme left", "127.0,37.0,0.0",
   )
 
