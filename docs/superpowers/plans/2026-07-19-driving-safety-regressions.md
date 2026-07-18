@@ -209,4 +209,3 @@ python3 -m pytest \
 - [ ] Confirm `manualSteeringRequired` has no control-disable event type and advisory navigation fields do not bypass `naviControlAllowed`.
 - [ ] Confirm radar urgent bypass still requires two stable frames and that lane-change discontinuity cannot retain SCC selection.
 - [ ] Confirm the final status contains all pre-existing user changes untouched and only planned files/commits were added.
-
