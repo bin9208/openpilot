@@ -20,6 +20,7 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
+from openpilot.selfdrive.selfdrived.turn_warning import TurnPathWarning, update_turn_path_warning
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 
 from openpilot.system.hardware import HARDWARE
@@ -124,6 +125,7 @@ class SelfdriveD:
     self.personality = self.read_personality_param()
     self.recalibrating_seen = False
     self.state_machine = StateMachine()
+    self.turn_path_warning = TurnPathWarning()
     self.rk = Ratekeeper(100, print_delay_threshold=None)
 
     self.atc_type_last = ""
@@ -264,6 +266,13 @@ class SelfdriveD:
         elif "turn" in atc_type and "turn" not in self.atc_type_last:   # fork left/right -> turn left/right
           self.events.add(EventName.audioTurn)
         self.atc_type_last = atc_type
+
+    carrot_man = self.sm['carrotMan']
+    if update_turn_path_warning(
+      self.turn_path_warning, CS, self.sm['carControl'], self.sm['modelV2'], carrot_man,
+      carrot_alive=self.sm.alive['carrotMan'],
+    ):
+      self.events.add(EventName.manualSteeringRequired)
 
     # Handle lane change
     if self.sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:

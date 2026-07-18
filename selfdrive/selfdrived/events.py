@@ -994,6 +994,14 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.NO_ENTRY: NoEntryAlert("Slow down to engage"),
   },
 
+  EventName.manualSteeringRequired: {
+    ET.WARNING: Alert(
+      "교차로 자동조향 경로 없음",
+      "핸들을 잡고 직접 조향하십시오",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.HIGH, VisualAlert.steerRequired, AudibleAlert.promptRepeat, 4.),
+  },
+
   EventName.vehicleSensorsInvalid: {
     ET.IMMEDIATE_DISABLE: ImmediateDisableAlert("Vehicle Sensors Invalid"),
     ET.PERMANENT: NormalPermanentAlert("Vehicle Sensors Calibrating", "Drive to Calibrate"),
