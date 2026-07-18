@@ -3,7 +3,6 @@ from cereal import log
 from opendbc.car.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.common.realtime import DT_CTRL, DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
-import numpy as np
 
 MIN_SPEED = 1.0
 CONTROL_N = 17
@@ -32,21 +31,25 @@ def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, steer_actuator_delay
     psis = [0.0]*CONTROL_N
     curvatures = [0.0]*CONTROL_N
     distances = [0.0] * CONTROL_N
-  v_ego = max(MIN_SPEED, v_ego)
+  raw_v_ego = float(v_ego) if np.isfinite(v_ego) else 0.0
+  v_ego = max(MIN_SPEED, raw_v_ego)
 
   # TODO this needs more thought, use .2s extra for now to estimate other delays
-  delay = max(0.01, steer_actuator_delay)
+  delay = max(0.01, float(steer_actuator_delay)) if np.isfinite(steer_actuator_delay) else 0.01
 
   # MPC can plan to turn the wheel and turn back before t_delay. This means
   # in high delay cases some corrections never even get commanded. So just use
   # psi to calculate a simple linearization of desired curvature
-  current_curvature_desired = curvatures[0]
+  current_curvature_desired = float(curvatures[0]) if np.isfinite(curvatures[0]) else 0.0
   delayed_curvature_desired = np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], curvatures)
   future_curvature_desired = np.interp(1.2, ModelConstants.T_IDXS[:CONTROL_N], curvatures)
 
   psi = np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], psis)
 
-  distance = max(np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], distances), 0.001)
+  model_distance = float(np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], distances))
+  distance = max(model_distance, 0.001) if np.isfinite(model_distance) else np.nan
+  if raw_v_ego < 5.0 and np.isfinite(distance):
+    distance = max(distance, MIN_SPEED * delay)
   #average_curvature_desired = psi / (v_ego * delay)
 
   curve_transition = (v_ego > 5 and abs(current_curvature_desired) > 0.002 and
@@ -56,7 +59,14 @@ def get_lag_adjusted_curvature(CP, v_ego, psis, curvatures, steer_actuator_delay
     psi *= float(np.clip(curve_transition_psi_scale, 0.0, 1.0))
 
   average_curvature_desired = psi / distance
-  desired_curvature = 2 * average_curvature_desired - current_curvature_desired
+  lag_adjusted_curvature = 2 * average_curvature_desired - current_curvature_desired
+  if raw_v_ego < 5.0:
+    low_speed_blend = float(np.interp(raw_v_ego, [MIN_SPEED, 5.0], [0.0, 1.0]))
+    desired_curvature = current_curvature_desired + low_speed_blend * (lag_adjusted_curvature - current_curvature_desired)
+    if not np.isfinite(desired_curvature):
+      desired_curvature = current_curvature_desired
+  else:
+    desired_curvature = lag_adjusted_curvature
 
   # This is the "desired rate of the setpoint" not an actual desired rate
   max_curvature_rate = MAX_LATERAL_JERK / (v_ego**2) # inexact calculation, check https://github.com/commaai/openpilot/pull/24755

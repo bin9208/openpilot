@@ -4,8 +4,59 @@ import numpy as np
 import pytest
 
 from openpilot.selfdrive.controls.controlsd import get_laneless_curvature_smooth_seconds
-from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_lag_adjusted_curvature
+from openpilot.selfdrive.controls.lib.drive_helpers import (
+  CONTROL_N,
+  MAX_LATERAL_JERK,
+  MIN_SPEED,
+  get_lag_adjusted_curvature,
+)
 from openpilot.selfdrive.controls.lib.lane_planner_2 import get_laneless_center_offset
+from openpilot.common.realtime import DT_MDL
+from openpilot.selfdrive.modeld.constants import ModelConstants
+
+
+def make_launch_curvature_inputs():
+  psis = np.full(CONTROL_N, -0.00044)
+  curvatures = np.full(CONTROL_N, -0.00055)
+  distances = np.full(CONTROL_N, 0.16)
+  return psis, curvatures, distances
+
+
+@pytest.mark.parametrize("v_ego", [0.5, 1.8])
+def test_launch_curvature_is_bounded(v_ego: float) -> None:
+  psis, curvatures, distances = make_launch_curvature_inputs()
+
+  desired = get_lag_adjusted_curvature(None, v_ego, psis, curvatures, 0.20, distances)
+
+  assert np.isfinite(desired)
+  assert abs(desired - curvatures[0]) < 0.002
+
+
+def test_launch_curvature_rejects_nonfinite_lag_result() -> None:
+  psis, curvatures, distances = make_launch_curvature_inputs()
+  psis[:] = np.nan
+
+  desired = get_lag_adjusted_curvature(None, 1.8, psis, curvatures, 0.20, distances)
+
+  assert desired == pytest.approx(curvatures[0])
+
+
+def test_five_meter_per_second_curvature_matches_original_formula() -> None:
+  psis, curvatures, distances = make_launch_curvature_inputs()
+  v_ego = 5.0
+  delay = 0.20
+  current_curvature = curvatures[0]
+  psi = np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], psis)
+  distance = max(np.interp(delay, ModelConstants.T_IDXS[:CONTROL_N], distances), 0.001)
+  original = 2.0 * psi / distance - current_curvature
+  max_curvature_rate = MAX_LATERAL_JERK / max(MIN_SPEED, v_ego) ** 2
+  original = np.clip(original,
+                     current_curvature - max_curvature_rate * DT_MDL,
+                     current_curvature + max_curvature_rate * DT_MDL)
+
+  desired = get_lag_adjusted_curvature(None, v_ego, psis, curvatures, delay, distances)
+
+  assert desired == pytest.approx(original, abs=1e-12)
 
 
 def test_curve_smoothing_uses_measured_moderate_tune():
