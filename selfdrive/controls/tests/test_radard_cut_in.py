@@ -4,7 +4,14 @@ import pytest
 import cereal.messaging as messaging
 from cereal import log
 
-from openpilot.selfdrive.controls.radard import RadarD, Track, get_cut_in_prediction_horizon
+from openpilot.selfdrive.controls.radard import (
+  RADAR_TO_CAMERA,
+  RadarD,
+  SccFallbackState,
+  Track,
+  get_cut_in_prediction_horizon,
+  get_scc_fallback_evidence,
+)
 
 
 def make_track() -> Track:
@@ -26,6 +33,123 @@ def make_track() -> Track:
   track.in_lane_prob_expanded = 0.10
   track.in_lane_prob_future_expanded = 0.20
   return track
+
+
+def make_scc_track(*, d_rel: float = 7.2, v_rel: float = -6.7) -> Track:
+  track = make_track()
+  track.identifier = 0
+  track.dRel = d_rel
+  track.vRel = v_rel
+  track.vLead = 0.0
+  track.vLeadK = 0.0
+  track.yRel = 0.05
+  track.dPath = 0.10
+  track.in_lane_prob = 0.80
+  return track
+
+
+def make_vision_lead(*, d_rel: float = 7.2):
+  return SimpleNamespace(
+    x=[d_rel + RADAR_TO_CAMERA],
+    xStd=[0.7],
+    y=[-0.05],
+    yStd=[0.25],
+  )
+
+
+def test_scc_fallback_requires_three_consistent_frames() -> None:
+  state = SccFallbackState()
+
+  assert not state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=False)
+  assert not state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=False)
+  assert state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=False)
+
+
+def test_scc_fallback_urgent_path_requires_two_frames() -> None:
+  state = SccFallbackState()
+
+  assert not state.update(candidate_ok=True, urgent_ok=True, continuous=True, alternative_stable=False)
+  assert state.update(candidate_ok=True, urgent_ok=True, continuous=True, alternative_stable=False)
+
+
+def test_scc_fallback_drops_discontinuous_selected_track() -> None:
+  state = SccFallbackState()
+  for _ in range(3):
+    selected = state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=False)
+
+  assert selected
+  assert not state.update(candidate_ok=True, urgent_ok=False, continuous=False, alternative_stable=False)
+
+
+def test_scc_fallback_waits_for_stable_alternative_before_switching() -> None:
+  state = SccFallbackState()
+  for _ in range(3):
+    assert state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=False) == (_ == 2)
+
+  assert state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=True)
+  assert not state.update(candidate_ok=True, urgent_ok=False, continuous=True, alternative_stable=True)
+
+
+def test_scc_fallback_evidence_rejects_distance_jump() -> None:
+  track = make_scc_track(d_rel=15.6)
+  evidence = get_scc_fallback_evidence(track, make_vision_lead(d_rel=15.6), lead_prob=0.85, previous_d_rel=5.6)
+
+  assert evidence.candidate_ok
+  assert not evidence.continuous
+
+
+def test_scc_fallback_urgent_evidence_requires_strong_overlap_and_ttc() -> None:
+  track = make_scc_track()
+  evidence = get_scc_fallback_evidence(track, make_vision_lead(), lead_prob=0.85, previous_d_rel=7.5)
+
+  assert evidence.candidate_ok
+  assert evidence.continuous
+  assert evidence.urgent_ok
+
+
+def make_scc_radar() -> RadarD:
+  radar = object.__new__(RadarD)
+  radar.v_ego = 8.0
+  radar.ready = True
+  radar.enable_radar_tracks = 2
+  radar.enable_corner_radar = 0
+  radar.scc_fallback_state = SccFallbackState()
+  radar.scc_fallback_d_rel = None
+  vision_track = SimpleNamespace(yRel=0.0, get_lead=lambda _md: {"status": True, "radarTrackId": -1})
+  radar.vision_tracks = [vision_track, vision_track]
+  return radar
+
+
+def test_get_lead_guards_scc_without_mutating_shared_tracks() -> None:
+  radar = make_scc_radar()
+  track = make_scc_track(v_rel=-1.0)
+  tracks = {0: track}
+  md = SimpleNamespace(meta=SimpleNamespace(laneChangeState=log.LaneChangeState.laneChangeStarting))
+  lead = make_vision_lead()
+
+  for _ in range(2):
+    _, radar_selected = radar.get_lead(SimpleNamespace(), md, tracks, 0, lead, 8.0, 0.85, low_speed_override=False)
+    assert not radar_selected
+    assert 0 in tracks
+
+  lead_dict, radar_selected = radar.get_lead(SimpleNamespace(), md, tracks, 0, lead, 8.0, 0.85, low_speed_override=False)
+  assert radar_selected
+  assert lead_dict["radarTrackId"] == 0
+  assert 0 in tracks
+
+
+def test_get_lead_drops_selected_scc_on_distance_jump() -> None:
+  radar = make_scc_radar()
+  track = make_scc_track(v_rel=-1.0)
+  tracks = {0: track}
+  md = SimpleNamespace(meta=SimpleNamespace(laneChangeState=log.LaneChangeState.laneChangeStarting))
+  for _ in range(3):
+    _, radar_selected = radar.get_lead(SimpleNamespace(), md, tracks, 0, make_vision_lead(), 8.0, 0.85, low_speed_override=False)
+  assert radar_selected
+
+  track.dRel = 15.6
+  _, radar_selected = radar.get_lead(SimpleNamespace(), md, tracks, 0, make_vision_lead(d_rel=15.6), 8.0, 0.85, low_speed_override=False)
+  assert not radar_selected
 
 
 def make_radar(*, lane_line_available: bool) -> RadarD:

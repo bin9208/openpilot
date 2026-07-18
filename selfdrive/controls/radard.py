@@ -2,6 +2,7 @@
 import math
 import numpy as np
 from collections import deque
+from dataclasses import dataclass
 from typing import Any
 import heapq
 import copy
@@ -50,6 +51,13 @@ VISION_MIN_Y_STD = 0.45
 VISION_MIN_Y_STD_CUT_IN = 1.4
 VISION_MIN_V_STD = 2.0
 
+SCC_FALLBACK_CONFIRM_FRAMES = 3
+SCC_FALLBACK_URGENT_CONFIRM_FRAMES = 2
+SCC_FALLBACK_ALTERNATIVE_CONFIRM_FRAMES = 2
+SCC_FALLBACK_MIN_PROB = 0.50
+SCC_FALLBACK_URGENT_MIN_PROB = 0.75
+SCC_FALLBACK_URGENT_MAX_TTC = 1.5
+
 
 def laplacian_pdf(x: float, mu: float, b: float):
   diff = abs(x - mu) / max(b, 1e-4)
@@ -61,6 +69,108 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 def get_cut_in_prediction_horizon(radar_lat_factor_param: float) -> float:
   return clamp(float(radar_lat_factor_param) * 0.01, 0.0, CUT_IN_PREDICTION_HORIZON_MAX)
+
+
+@dataclass(frozen=True)
+class SccFallbackEvidence:
+  candidate_ok: bool
+  urgent_ok: bool
+  continuous: bool
+  ttc: float
+
+
+class SccFallbackState:
+  def __init__(self):
+    self.candidate_count = 0
+    self.urgent_count = 0
+    self.alternative_count = 0
+    self.selected = False
+
+  def reset(self) -> None:
+    self.candidate_count = 0
+    self.urgent_count = 0
+    self.alternative_count = 0
+    self.selected = False
+
+  def update(self, *, candidate_ok: bool, urgent_ok: bool, continuous: bool, alternative_stable: bool) -> bool:
+    if not continuous:
+      self.reset()
+      return False
+
+    if self.selected:
+      if not candidate_ok:
+        self.reset()
+        return False
+
+      self.alternative_count = self.alternative_count + 1 if alternative_stable else 0
+      if self.alternative_count >= SCC_FALLBACK_ALTERNATIVE_CONFIRM_FRAMES:
+        self.reset()
+        return False
+      return True
+
+    if not candidate_ok or alternative_stable:
+      self.candidate_count = 0
+      self.urgent_count = 0
+      return False
+
+    self.candidate_count += 1
+    self.urgent_count = self.urgent_count + 1 if urgent_ok else 0
+    self.selected = (
+      self.candidate_count >= SCC_FALLBACK_CONFIRM_FRAMES or
+      self.urgent_count >= SCC_FALLBACK_URGENT_CONFIRM_FRAMES
+    )
+    return self.selected
+
+
+def get_scc_fallback_evidence(track: "Track", lead: capnp._DynamicStructReader, lead_prob: float,
+                              previous_d_rel: float | None) -> SccFallbackEvidence:
+  try:
+    vision_d_rel = float(lead.x[0]) - RADAR_TO_CAMERA
+    vision_y_rel = -float(lead.y[0])
+    x_std = max(float(lead.xStd[0]), VISION_MIN_X_STD)
+    y_std = max(float(lead.yStd[0]), VISION_MIN_Y_STD)
+  except (AttributeError, IndexError, TypeError, ValueError):
+    return SccFallbackEvidence(False, False, previous_d_rel is None, math.inf)
+
+  longitudinal_error = abs(float(track.dRel) - vision_d_rel)
+  lateral_error = abs(float(track.yRel) - vision_y_rel)
+  lane_evidence = max(
+    float(getattr(track, "in_lane_prob", 0.0)),
+    float(getattr(track, "in_lane_prob_future", 0.0)),
+    float(getattr(track, "in_lane_prob_expanded", 0.0)),
+    float(getattr(track, "in_lane_prob_future_expanded", 0.0)),
+  )
+  path_error = abs(float(getattr(track, "dPath", track.yRel)))
+
+  geometry_ok = (
+    longitudinal_error <= max(3.0, 2.0 * x_std) and
+    lateral_error <= max(1.0, 2.0 * y_std) and
+    (lane_evidence >= 0.25 or path_error <= 1.25)
+  )
+  candidate_ok = lead_prob >= SCC_FALLBACK_MIN_PROB and geometry_ok
+
+  if previous_d_rel is None:
+    continuous = True
+  else:
+    expected_d_rel = float(previous_d_rel) + float(track.vRel) * DT_MDL
+    continuity_tolerance = max(2.0, 0.10 * max(float(track.dRel), float(previous_d_rel)))
+    continuous = abs(float(track.dRel) - expected_d_rel) <= continuity_tolerance
+
+  closing_speed = max(-float(track.vRel), 0.0)
+  ttc = float(track.dRel) / closing_speed if closing_speed > 0.1 else math.inf
+  strong_geometry = (
+    longitudinal_error <= max(2.0, 1.5 * x_std) and
+    lateral_error <= max(0.7, 1.5 * y_std) and
+    (lane_evidence >= 0.50 or path_error <= 0.60)
+  )
+  urgent_ok = (
+    lead_prob >= SCC_FALLBACK_URGENT_MIN_PROB and
+    strong_geometry and
+    float(track.dRel) <= 20.0 and
+    float(track.vRel) < -1.0 and
+    ttc <= SCC_FALLBACK_URGENT_MAX_TTC
+  )
+  return SccFallbackEvidence(candidate_ok, urgent_ok, continuous, ttc)
 
 
 class Track:
@@ -538,6 +648,8 @@ class RadarD:
     self.radar_lat_factor = 0.0
 
     self.radar_detected = False
+    self.scc_fallback_state = SccFallbackState()
+    self.scc_fallback_d_rel: float | None = None
     self.lane_line_available = False
     self.lane_marking_intervention_enabled = False
     self.lane_marking_cut_in_available = False
@@ -648,6 +760,8 @@ class RadarD:
       if self.enable_radar_tracks >= 3:
         self._pick_lead_one_from_state()
     else:
+      self.scc_fallback_state.reset()
+      self.scc_fallback_d_rel = None
       self._reset_cut_in_confirmation(self.tracks)
       self.radar_state.leadsCutIn = []
       self.leadCutIn = {'status': False}
@@ -666,22 +780,44 @@ class RadarD:
     v_ego = self.v_ego
     ready = self.ready
 
-    ## backup SCC radar(0, 1 trackid)
+    # Keep SCC track 0 separate from raw radar without mutating the shared track map.
     if self.enable_radar_tracks <= 0:
       track_scc = tracks.get(0)
+      radar_tracks = tracks
     else:
-      track_scc = tracks.pop(0, None)
+      track_scc = tracks.get(0)
+      radar_tracks = {track_id: radar_track for track_id, radar_track in tracks.items() if track_id != 0}
 
     # Determine leads, this is where the essential logic happens
-    if len(tracks) > 0 and ready and lead_prob > .4:
-      track = match_vision_to_track(v_ego, lead_msg, lead_prob, tracks)
+    if len(radar_tracks) > 0 and ready and lead_prob > .4:
+      track = match_vision_to_track(v_ego, lead_msg, lead_prob, radar_tracks)
     else:
       track = None
 
     if (track is None or lead_prob < .6) and track_scc is not None and track_scc.cnt > 2:
       #if self.enable_radar_tracks in [-1, 2] or model_v_ego < 5 or track_scc.vLead < 5.0:
-      if self.enable_radar_tracks == -1 or (self.enable_radar_tracks >= 2 and track_scc.vLead < 5.0):
-        track = track_scc      
+      if self.enable_radar_tracks == -1:
+        track = track_scc
+
+    guarded_scc_mode = self.enable_radar_tracks >= 2 and index == 0 and track_scc is not None and track_scc.cnt > 2 and track_scc.vLead < 5.0
+    lane_change_active = md.meta.laneChangeState != log.LaneChangeState.off
+    if guarded_scc_mode and lane_change_active:
+      evidence = get_scc_fallback_evidence(track_scc, lead_msg, lead_prob, self.scc_fallback_d_rel)
+      alternative_stable = track is not None and track is not track_scc and lead_prob >= .6
+      use_scc = self.scc_fallback_state.update(
+        candidate_ok=evidence.candidate_ok,
+        urgent_ok=evidence.urgent_ok,
+        continuous=evidence.continuous,
+        alternative_stable=alternative_stable,
+      )
+      self.scc_fallback_d_rel = float(track_scc.dRel)
+      if use_scc:
+        track = track_scc
+    elif index == 0:
+      self.scc_fallback_state.reset()
+      self.scc_fallback_d_rel = None
+      if guarded_scc_mode and (track is None or lead_prob < .6):
+        track = track_scc
 
     lead_dict = {'status': False}
     radar = False
@@ -695,7 +831,7 @@ class RadarD:
       lead_dict = self.corner_radar(CS, lead_dict)
 
     if low_speed_override:
-      low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
+      low_speed_tracks = [c for c in radar_tracks.values() if c.potential_low_speed_lead(v_ego)]
       if len(low_speed_tracks) > 0:
         closest_track = min(low_speed_tracks, key=lambda c: c.dRel)
 
