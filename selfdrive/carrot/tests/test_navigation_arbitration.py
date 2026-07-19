@@ -93,6 +93,63 @@ def test_canonical_provider_alone_applies_its_state_route_and_control_gate(
   assert manager.navi_points == [(127.01, 37.51), (127.02, 37.52)]
 
 
+@pytest.mark.parametrize(
+  ("safety_kind", "sdi_type", "plus_type", "section", "expected_speed"),
+  [
+    ("fixed_camera", 1, -1, 0, 70),
+    ("mobile_camera", 7, -1, 0, 70),
+    ("section_camera", 2, -1, 1, 70),
+    ("bump", -1, 22, 0, 0),
+  ],
+)
+def test_naver_extension_maps_next_tbt_and_safety_to_control_fields(
+  safety_kind: str, sdi_type: int, plus_type: int, section: int, expected_speed: int,
+) -> None:
+  manager = make_manager()
+  frame = canonical("naver", 1)
+  frame["naver"] = {
+    "next_maneuver": "ramp_right",
+    "next_maneuver_distance_m": 780,
+    "safety_kind": safety_kind,
+    "safety_distance_m": 180,
+    "safety_speed_kph": 70,
+    "destination": {"longitude": 127.02, "latitude": 37.52},
+  }
+
+  manager._dispatch_obj(frame, peer=NAVER_PEER, received_at=10.0)
+
+  state = manager.carrot_serv.updates[-1]
+  assert (state["nTBTTurnTypeNext"], state["nTBTDistNext"]) == (101, 780)
+  assert (state["nSdiType"], state["nSdiPlusType"], state["nSdiSection"]) == (
+    sdi_type, plus_type, section,
+  )
+  assert state["nSdiSpeedLimit"] == expected_speed
+  assert state["nSdiDist"] == (180 if sdi_type >= 0 else 0)
+  assert state["nSdiPlusDist"] == (180 if plus_type == 22 else 0)
+
+
+def test_canonical_tmap_preserves_pre_naver_normalized_payload() -> None:
+  manager = make_manager()
+
+  manager._dispatch_obj(canonical("tmap", 1), peer=TMAP_PEER, received_at=10.0)
+
+  assert manager.carrot_serv.updates[-1] == {
+    "nRoadLimitSpeed": 80,
+    "nSdiType": -1,
+    "nSdiBlockType": -1,
+    "nSdiPlusType": -1,
+    "nSdiPlusBlockType": -1,
+    "nTBTTurnType": 12,
+    "nTBTDist": 120,
+    "nTBTTurnTypeNext": -1,
+    "nTBTDistNext": 0,
+    "nGoPosDist": 5_000,
+    "nGoPosTime": 600,
+    "vpPosPointLon": 127.01,
+    "vpPosPointLat": 37.51,
+  }
+
+
 def test_legacy_tmap_alone_preserves_all_existing_rgdata_fields() -> None:
   manager = make_manager()
   frame = legacy(1)

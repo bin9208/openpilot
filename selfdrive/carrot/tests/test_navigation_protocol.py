@@ -111,6 +111,59 @@ def test_canonical_frame_parses_to_typed_schema_v1() -> None:
   assert envelope.route is not None and envelope.route[0].longitude == 127.01
 
 
+def naver_extension(*, safety_speed_kph: object = 70) -> dict[str, object]:
+  return {
+    "next_maneuver": "ramp_right",
+    "next_maneuver_distance_m": 780,
+    "safety_kind": "fixed_camera",
+    "safety_distance_m": 800,
+    "safety_speed_kph": safety_speed_kph,
+    "destination": {"longitude": 127.02, "latitude": 37.52},
+  }
+
+
+def test_naver_extension_parses_next_tbt_safety_speed_and_destination() -> None:
+  payload = json.loads(canonical(replace(BASE, source="naver", session_id=NAVER_SESSION)))
+  payload["naver"] = naver_extension()
+
+  envelope = parse_canonical(json.dumps(payload, separators=(",", ":")).encode())
+
+  assert envelope.naver is not None
+  assert envelope.naver.next_maneuver is ManeuverKind.RAMP_RIGHT
+  assert envelope.naver.safety_kind.value == "fixed_camera"
+  assert envelope.naver.safety_distance_m == 800
+  assert envelope.naver.safety_speed_kph == 70
+  assert envelope.naver.destination.latitude == 37.52
+
+
+def test_naver_extension_without_safety_speed_fails_neutral_to_zero() -> None:
+  payload = json.loads(canonical(replace(BASE, source="naver", session_id=NAVER_SESSION)))
+  extension = naver_extension()
+  extension.pop("safety_speed_kph")
+  payload["naver"] = extension
+
+  envelope = parse_canonical(json.dumps(payload, separators=(",", ":")).encode())
+
+  assert envelope.naver is not None and envelope.naver.safety_speed_kph == 0
+
+
+@pytest.mark.parametrize("unsafe_speed", [-1, 251, float("nan")])
+def test_naver_extension_rejects_unsafe_safety_speed(unsafe_speed: float) -> None:
+  payload = json.loads(canonical(replace(BASE, source="naver", session_id=NAVER_SESSION)))
+  payload["naver"] = naver_extension(safety_speed_kph=unsafe_speed)
+
+  with pytest.raises(ProtocolError):
+    parse_canonical(json.dumps(payload, allow_nan=True, separators=(",", ":")).encode())
+
+
+def test_naver_extension_is_rejected_for_tmap_source() -> None:
+  payload = json.loads(canonical())
+  payload["naver"] = naver_extension()
+
+  with pytest.raises(ProtocolError, match="naver"):
+    parse_canonical(json.dumps(payload, separators=(",", ":")).encode())
+
+
 def test_source_less_legacy_frame_uses_peer_session_and_fixed_lease() -> None:
   mux = NavigationMux()
 

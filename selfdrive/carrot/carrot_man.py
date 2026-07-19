@@ -1150,9 +1150,9 @@ class CarrotMan:
 
     if self.autoCurveSpeedPreview > 0 and turnSpeed < 250:
       if len(modelData.position.x) >= n:
-        distances = np.maximum(np.array(modelData.position.x[:n]), 0.0)
+        distances = np.maximum(np.array(modelData.position.x)[:n], 0.0)
       elif len(modelData.velocity.t) >= n:
-        times = np.array(modelData.velocity.t[:n])
+        times = np.array(modelData.velocity.t)[:n]
         distances = np.maximum(times, 0.0) * v_ego
       else:
         distances = np.arange(n) * v_ego * 0.2
@@ -1323,7 +1323,7 @@ class CarrotMan:
 
   def _navigation_state_payload(self, envelope):
     position = envelope.state.position
-    return {
+    payload = {
       "nRoadLimitSpeed": int(envelope.state.road_limit_kph),
       "nSdiType": -1,
       "nSdiBlockType": -1,
@@ -1338,6 +1338,30 @@ class CarrotMan:
       "vpPosPointLon": 0.0 if position is None else position.longitude,
       "vpPosPointLat": 0.0 if position is None else position.latitude,
     }
+    naver = envelope.naver
+    if naver is None:
+      return payload
+
+    safety_kind = naver.safety_kind.value
+    safety_type = {"fixed_camera": 1, "mobile_camera": 7, "section_camera": 2}.get(safety_kind, -1)
+    safety_distance = int(naver.safety_distance_m)
+    bump = safety_kind == "bump"
+    payload.update({
+      "nSdiType": safety_type,
+      "nSdiSpeedLimit": int(naver.safety_speed_kph) if safety_type >= 0 else 0,
+      "nSdiDist": safety_distance if safety_type >= 0 else 0,
+      "nSdiSection": 1 if safety_kind == "section_camera" else 0,
+      "nSdiBlockSpeed": 0,
+      "nSdiBlockDist": 0,
+      "nSdiPlusType": 22 if bump else -1,
+      "nSdiPlusDist": safety_distance if bump else 0,
+      "nSdiPlusBlockSpeed": 0,
+      "nSdiPlusBlockDist": 0,
+      "roadcate": 3 if bump else 8,
+      "nTBTTurnTypeNext": NAVIGATION_MANEUVER_CODES[naver.next_maneuver],
+      "nTBTDistNext": int(naver.next_maneuver_distance_m),
+    })
+    return payload
 
   def _neutralize_navigation(self):
     self._ensure_navigation_pipeline()

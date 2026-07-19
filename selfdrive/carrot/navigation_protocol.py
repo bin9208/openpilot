@@ -51,6 +51,13 @@ class ManeuverKind(StrEnum):
   ARRIVE = "arrive"
 
 
+class SafetyKind(StrEnum):
+  FIXED_CAMERA = "fixed_camera"
+  MOBILE_CAMERA = "mobile_camera"
+  SECTION_CAMERA = "section_camera"
+  BUMP = "bump"
+
+
 @dataclass(frozen=True, slots=True)
 class Coordinate:
   longitude: float
@@ -69,6 +76,16 @@ class NavigationState:
 
 
 @dataclass(frozen=True, slots=True)
+class NaverNavigationMetadata:
+  next_maneuver: ManeuverKind
+  next_maneuver_distance_m: float
+  safety_kind: SafetyKind
+  safety_distance_m: float
+  safety_speed_kph: float
+  destination: Coordinate
+
+
+@dataclass(frozen=True, slots=True)
 class NavigationEnvelope:
   source: ProviderSource
   schema_version: int
@@ -79,6 +96,7 @@ class NavigationEnvelope:
   ttl_ms: int
   state: NavigationState
   route: tuple[Coordinate, ...] | None
+  naver: NaverNavigationMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +206,20 @@ def _state(value: JsonValue) -> NavigationState:
   )
 
 
+def _naver(value: JsonValue) -> NaverNavigationMetadata:
+  naver = _mapping(value, "naver")
+  return NaverNavigationMetadata(
+    next_maneuver=_enum_value(ManeuverKind, _required(naver, "next_maneuver"), "naver.next_maneuver"),
+    next_maneuver_distance_m=_number(
+      _required(naver, "next_maneuver_distance_m"), "naver.next_maneuver_distance_m", (0, 10_000_000),
+    ),
+    safety_kind=_enum_value(SafetyKind, _required(naver, "safety_kind"), "naver.safety_kind"),
+    safety_distance_m=_number(_required(naver, "safety_distance_m"), "naver.safety_distance_m", (0, 10_000_000)),
+    safety_speed_kph=_number(naver.get("safety_speed_kph", 0), "naver.safety_speed_kph", (0, 250)),
+    destination=_coordinate(_required(naver, "destination")),
+  )
+
+
 def _decode(data: bytes) -> dict[str, JsonValue]:
   if len(data) > MAX_FRAME_BYTES:
     raise ProtocolError(code="bounds", field="frame")
@@ -217,10 +249,13 @@ def _canonical(root: dict[str, JsonValue]) -> NavigationEnvelope:
     raise ProtocolError(code="consistency", field="navigation_active")
   schema = _integer(_required(root, "schema_version"), "schema_version", (1, 1))
   route = _route(root["route"]) if "route" in root else None
+  if "naver" in root and source is not ProviderSource.NAVER:
+    raise ProtocolError(code="consistency", field="naver")
+  naver = _naver(root["naver"]) if "naver" in root else None
   return NavigationEnvelope(source, schema, session_id,
                             _integer(_required(root, "sequence"), "sequence", (0, 2**63 - 1)),
                             _integer(_required(root, "timestamp_ms"), "timestamp_ms", (1, 2**63 - 1)), active,
-                            _integer(_required(root, "ttl_ms"), "ttl_ms", (250, 2_000)), state, route)
+                            _integer(_required(root, "ttl_ms"), "ttl_ms", (250, 2_000)), state, route, naver)
 
 
 def parse_canonical(data: bytes) -> NavigationEnvelope:
