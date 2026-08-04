@@ -897,3 +897,44 @@ def test_payload_rejects_encoded_or_invalid_road_limit():
   speed = speed_payload(300)
   assert speed["roadLimitValid"] is False
   assert speed["roadLimitKph"] == 0
+
+
+def test_payload_marks_road_category_valid_only_for_explicit_numeric_lane_value():
+  def lane_payload(value_marker):
+    lane_value = {"count": 1, "distance_m": 12}
+    if value_marker != "missing":
+      lane_value["road_category"] = value_marker
+    return build_carrot_navi_payload({
+      "generation": 1,
+      "session_id": "session",
+      "connected": True,
+      "items": {
+        "lane_current": {
+          "present": True,
+          "sequence": 9,
+          "source_timestamp_ms": 1234,
+          "received_mono_ns": 5678,
+          "value": lane_value,
+        },
+      },
+    }, publish_mono_ns=999)["laneCurrent"]
+
+  missing = lane_payload("missing")
+  assert missing["roadCategoryValid"] is False
+  assert missing["roadCategory"] == 0
+
+  explicit_zero = lane_payload(0)
+  assert explicit_zero["roadCategoryValid"] is True
+  assert explicit_zero["roadCategory"] == 0
+
+  explicit_one = lane_payload(1)
+  assert explicit_one["roadCategoryValid"] is True
+  assert explicit_one["roadCategory"] == 1
+
+  valid = lane_payload(8)
+  assert valid["roadCategoryValid"] is True
+  assert valid["roadCategory"] == 8
+
+  assert lane_payload(True)["roadCategoryValid"] is False
+  assert lane_payload(float("nan"))["roadCategoryValid"] is False
+  assert lane_payload(32768)["roadCategoryValid"] is False

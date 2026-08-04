@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import numbers
 import threading
 import time
 from typing import Any, TYPE_CHECKING
@@ -70,6 +71,19 @@ def _valid_road_limit_kph(value: Any) -> int | None:
   ) else None
 
 
+def _valid_road_category(value: Any) -> int | None:
+  if isinstance(value, bool) or not isinstance(value, numbers.Real):
+    return None
+  try:
+    parsed = float(value)
+  except (TypeError, ValueError, OverflowError):
+    return None
+  if not math.isfinite(parsed) or not parsed.is_integer():
+    return None
+  category = int(parsed)
+  return category if -32768 <= category <= 32767 else None
+
+
 def _text(value: Any, maximum: int) -> str:
   return str(value or "")[:maximum]
 
@@ -117,6 +131,7 @@ def _guidance(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _lane(record: dict[str, Any], value: Any) -> dict[str, Any]:
   lane = _dict(value)
+  road_category = _valid_road_category(lane.get("road_category")) if "road_category" in lane else None
   return {
     "meta": _meta(record),
     "count": _integer(lane.get("count"), minimum=0, maximum=16),
@@ -129,7 +144,8 @@ def _lane(record: dict[str, Any], value: Any) -> dict[str, Any]:
     "etcInfo": _int16_list(lane.get("etc_info")),
     "available": _int16_list(lane.get("available")),
     "guideLineColor": _integer(lane.get("guide_line_color"), minimum=-32768, maximum=32767),
-    "roadCategory": _integer(lane.get("road_category"), minimum=-32768, maximum=32767),
+    "roadCategory": road_category if road_category is not None else 0,
+    "roadCategoryValid": road_category is not None,
     "voiceCode": _integer(lane.get("voice_code"), minimum=-32768, maximum=32767),
   }
 

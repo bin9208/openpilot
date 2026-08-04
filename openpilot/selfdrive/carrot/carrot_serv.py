@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import numpy as np
+from dataclasses import replace
 from datetime import datetime
 
 from openpilot.cereal import log
@@ -19,7 +20,106 @@ from openpilot.system.hardware import PC, TICI
 from openpilot.selfdrive.navd.helpers import Coordinate
 from openpilot.common.constants import CV
 from openpilot.common.gps import get_gps_location_service
-from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
+from openpilot.selfdrive.carrot.carrot_navi_control import (
+  V2_ITEM_TTL_S,
+  CarrotNaviControl,
+  parse_carrot_navi_control,
+)
+from openpilot.selfdrive.carrot.navigation_sources import (
+  NavigationControlState,
+  NavigationInstruction,
+  NavigationLifecycle,
+  NavigationSelection,
+  NavigationSnapshot,
+  NavigationSource,
+  NavigationSourceStore,
+  SafetyItem,
+  SafetyDecision,
+  choose_safety,
+  safety_rejection,
+)
+
+_NAVIGATION_DIAGNOSTIC_MAX_CHARS = 64
+_NAVIGATION_SESSION_MAX_CHARS = 128
+_NAVIGATION_INT32_MAX = 2_147_483_647
+_NAVIGATION_UINT64_MAX = 18_446_744_073_709_551_615
+_NAVIGATION_OWNERS = frozenset(("tmap_legacy", "carrot_navi_v2", "naver_v1"))
+_NAVIGATION_PROVIDERS = _NAVIGATION_OWNERS | frozenset(("hda", "kisa"))
+_NAVIGATION_REASONS = frozenset(("cam", "section", "bump", "hda", "police", "waze"))
+_NAVIGATION_REJECTIONS = frozenset((
+  "no_owner",
+  "off_route",
+  "invalid_item",
+  "unsupported_type",
+  "invalid_distance",
+  "mode_disabled",
+  "mobile_requires_mode_3",
+  "road_category_missing",
+  "road_category_blocked",
+  "safety_stale",
+  "safety_absent",
+))
+_NAVIGATION_LIFECYCLES = frozenset(("idle", "guiding", "stopped", "arrived"))
+
+
+def _bounded_navigation_token(value, allowed):
+  token = str(value or "").strip().lower()
+  if not token:
+    return ""
+  if token not in allowed:
+    return "unknown"
+  return token[:_NAVIGATION_DIAGNOSTIC_MAX_CHARS]
+
+
+def _navigation_age_ms(age_s):
+  if age_s is None:
+    return -1
+  try:
+    age_s = float(age_s)
+  except (TypeError, ValueError, OverflowError):
+    return -1
+  if not math.isfinite(age_s):
+    return -1
+  return min(_NAVIGATION_INT32_MAX, max(0, int(age_s * 1000.0)))
+
+
+def _navigation_sequence(value):
+  try:
+    value = int(value)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  return min(_NAVIGATION_UINT64_MAX, max(0, value))
+
+
+def publish_navigation_diagnostics(target, selection, decision, rejection):
+  snapshot = None if selection is None else getattr(selection, "snapshot", None)
+  source_value = "" if snapshot is None else getattr(getattr(snapshot, "source", None), "value", "")
+  owner = _bounded_navigation_token(source_value, _NAVIGATION_OWNERS)
+  provider = _bounded_navigation_token(
+    "" if decision is None else getattr(decision, "provider", ""),
+    _NAVIGATION_PROVIDERS,
+  )
+  reason = _bounded_navigation_token(
+    "" if decision is None else getattr(decision, "reason", ""),
+    _NAVIGATION_REASONS,
+  )
+  control_allowed = bool(owner and owner != "unknown" and provider == owner)
+  rejection_token = "" if control_allowed else _bounded_navigation_token(rejection, _NAVIGATION_REJECTIONS)
+
+  target.naviOwner = owner
+  target.naviSessionId = (
+    "" if snapshot is None else str(getattr(snapshot, "session_id", "") or "")[:_NAVIGATION_SESSION_MAX_CHARS]
+  )
+  target.naviSequence = _navigation_sequence(0 if snapshot is None else getattr(snapshot, "sequence", 0))
+  target.naviOwnerAgeMs = _navigation_age_ms(None if selection is None else getattr(selection, "owner_age_s", None))
+  target.naviSafetyAgeMs = _navigation_age_ms(None if selection is None else getattr(selection, "safety_age_s", None))
+  lifecycle_value = "" if snapshot is None else getattr(getattr(snapshot, "lifecycle", None), "value", "")
+  target.naviLifecycle = _bounded_navigation_token(lifecycle_value, _NAVIGATION_LIFECYCLES)
+  target.naviControlAllowed = control_allowed
+  target.naviSafetyRejection = rejection_token
+  target.decelProvider = provider
+  target.decelReason = reason
+
 
 nav_type_mapping = {
   12: ("turn", "left", 1),
@@ -86,6 +186,8 @@ class CarrotServ:
     self.nRoadLimitSpeed = 30
     self.nRoadLimitSpeed_last = 30
     self.nRoadLimitSpeed_counter = 0
+    self.road_limit_write_generation = 0
+    self.road_limit_write_source = "init"
 
     self.active_carrot = 0     ## 1: CarrotMan Active, 2: sdi active , 3: speed decel active, 4: section active, 5: bump active, 6: speed limit active
     self.active_count = 0
@@ -93,6 +195,9 @@ class CarrotServ:
     self.active_sdi_count_max = 200 # 20 sec
 
     self.active_kisa_count = 0
+    self.kisa_safety_type = -1
+    self.kisa_safety_limit = 0.0
+    self.kisa_safety_distance = 0.0
 
     self.nSdiType = -1
     self.nSdiSpeedLimit = 0
@@ -188,19 +293,48 @@ class CarrotServ:
     self.gas_override_speed = 0
     self.gas_pressed_state = False
     self.source_last = "none"
+    self.navigation_owner = ""
+    self.last_safety_decision = None
+    self.last_safety_provider = ""
+    self.last_safety_reason = ""
+    self.last_safety_rejection = "no_owner"
+    self._last_safety_key = None
 
     self.carrot_navi_session_id = ""
     self.carrot_navi_speed_sequence = -1
     self.carrot_navi_current_sequence = -1
     self.carrot_navi_next_sequence = -1
+    self.carrot_navi_lane_sequence = -1
     self.carrot_navi_vehicle_sequence = -1
     self.carrot_navi_route_sequence = -1
+    self.carrot_navi_projection_revision = 0
+    self.carrot_navi_speed_revision = None
+    self.carrot_navi_current_revision = None
+    self.carrot_navi_next_revision = None
+    self.carrot_navi_lane_revision = None
+    self.carrot_navi_last_valid_road_category = None
+    self.carrot_navi_last_valid_road_category_received_mono_time_nanos = 0
     self.carrot_navi_active = False
     self.carrot_navi_has_control = False
     self.carrot_navi_road_limit_valid = False
+    self.carrot_navi_projected_road_limit_generation = None
     self.carrot_navi_off_route = False
     self.carrot_navi_traffic_active = False
     self.carrot_navi_control = None
+
+    self.navigation_sources = NavigationSourceStore()
+    self.navigation_selection = self.navigation_sources.select(time.monotonic())
+    self._navigation_projection_lock = threading.RLock()
+    self._projected_navigation_revision = -1
+    self._projected_navigation_safety_key = None
+    self._projected_navigation_current_key = None
+    self._projected_navigation_next_key = None
+    self._projected_navigation_road_limit_key = None
+    self._legacy_navigation_sequences = {}
+    self._legacy_road_limit_state = {}
+    self._v2_navigation_revisions = {}
+    self._v2_navigation_sequences = {}
+    self._v2_last_valid_categories = {}
 
     self.debugText = ""
 
@@ -663,8 +797,15 @@ class CarrotServ:
     self.carrot_navi_speed_sequence = -1
     self.carrot_navi_current_sequence = -1
     self.carrot_navi_next_sequence = -1
+    self.carrot_navi_lane_sequence = -1
     self.carrot_navi_vehicle_sequence = -1
     self.carrot_navi_route_sequence = -1
+    self.carrot_navi_speed_revision = None
+    self.carrot_navi_current_revision = None
+    self.carrot_navi_next_revision = None
+    self.carrot_navi_lane_revision = None
+    self.carrot_navi_last_valid_road_category = None
+    self.carrot_navi_last_valid_road_category_received_mono_time_nanos = 0
 
   def _clear_carrot_navi_traffic(self):
     if not getattr(self, "carrot_navi_traffic_active", False):
@@ -677,14 +818,394 @@ class CarrotServ:
         pass
     self.carrot_navi_traffic_active = False
 
+  def _write_road_limit_speed(self, value, source):
+    self.nRoadLimitSpeed = value
+    self.road_limit_write_generation = getattr(self, "road_limit_write_generation", 0) + 1
+    self.road_limit_write_source = source
+    return self.road_limit_write_generation
+
+  def _ensure_navigation_sources(self):
+    if not hasattr(self, "navigation_sources"):
+      self.navigation_sources = NavigationSourceStore()
+    if not hasattr(self, "_navigation_projection_lock"):
+      self._navigation_projection_lock = threading.RLock()
+    defaults = {
+      "navigation_selection": None,
+      "_projected_navigation_revision": -1,
+      "_projected_navigation_safety_key": None,
+      "_projected_navigation_current_key": None,
+      "_projected_navigation_next_key": None,
+      "_projected_navigation_position_key": None,
+      "_projected_navigation_traffic_key": None,
+      "_projected_navigation_road_limit_key": None,
+      "_legacy_navigation_sequences": {},
+      "_legacy_road_limit_state": {},
+      "_legacy_navigation_controls": {},
+      "_legacy_navigation_base_sessions": set(),
+      "_legacy_navigation_pending": {},
+      "_v2_navigation_revisions": {},
+      "_v2_navigation_sequences": {},
+      "_v2_last_valid_categories": {},
+      "navigation_owner": "",
+      "last_safety_decision": None,
+      "last_safety_provider": "",
+      "last_safety_reason": "",
+      "last_safety_rejection": "no_owner",
+      "_last_safety_key": None,
+      "kisa_safety_type": -1,
+      "kisa_safety_limit": 0.0,
+      "kisa_safety_distance": 0.0,
+    }
+    for name, value in defaults.items():
+      if not hasattr(self, name):
+        setattr(self, name, value)
+
+  def _apply_navigation_safety(self, hda_limit_kph, hda_distance_m):
+    selection = getattr(self, "navigation_selection", None)
+    if selection is None:
+      self.navigation_owner = ""
+      self.last_safety_decision = None
+      self.last_safety_provider = ""
+      self.last_safety_reason = ""
+      self.last_safety_rejection = "no_owner"
+      self._last_safety_key = None
+      if getattr(self, "active_kisa_count", 0) <= 0:
+        self.active_carrot = 0
+      return None
+    snapshot = selection.snapshot
+    self.navigation_owner = "" if snapshot is None else snapshot.source.value
+    kisa_type = self.kisa_safety_type
+    kisa_active = (
+      getattr(self, "active_kisa_count", 0) > 0
+      and kisa_type in (100, 101)
+      and self.kisa_safety_limit > 0.0
+      and self.kisa_safety_distance >= -250.0
+    )
+    decision = (
+      SafetyDecision("kisa", "police" if kisa_type == 100 else "waze", self.kisa_safety_limit, self.kisa_safety_distance, kisa_type)
+      if kisa_active else choose_safety(
+        selection,
+        hda_limit_kph,
+        hda_distance_m,
+        mode=self.autoNaviSpeedCtrlMode,
+        safety_factor=self.autoNaviSpeedSafetyFactor,
+        bump_speed_kph=self.autoNaviSpeedBumpSpeed,
+      )
+    )
+    self.last_safety_decision = decision
+    self.last_safety_provider = "" if decision is None else decision.provider
+    self.last_safety_reason = "" if decision is None else decision.reason
+    self.last_safety_rejection = (
+      safety_rejection(
+        selection,
+        self.autoNaviSpeedCtrlMode,
+        self.autoNaviSpeedSafetyFactor,
+        self.autoNaviSpeedBumpSpeed,
+      ) if decision is None else decision.rejection
+    )
+
+    self.active_carrot = 2 if snapshot is not None or getattr(self, "active_kisa_count", 0) > 0 else 0
+    key = None if decision is None else (
+      decision.provider,
+      decision.reason,
+      decision.limit_kph,
+      decision.distance_m,
+      decision.type,
+    )
+    if decision is not None and decision.provider != "hda":
+      if decision.provider == "kisa" or key != self._last_safety_key:
+        self.xSpdLimit = decision.limit_kph
+        self.xSpdDist = decision.distance_m
+      self.xSpdType = decision.type
+      self.active_carrot = 5 if decision.type == 22 else 4 if (
+        decision.type == 4 or (decision.provider == "kisa" and decision.distance_m <= 0.0)
+      ) else 3
+    else:
+      self.xSpdType = -1
+      self.xSpdLimit = self.xSpdDist = 0
+    self._last_safety_key = key
+    return decision
+
+  def _safety_distance_for_speed(self, decision):
+    if decision is None or decision.provider == "hda":
+      return 0.0 if decision is None else decision.distance_m
+    return self.kisa_safety_distance if decision.provider == "kisa" else self.xSpdDist
+
+  @staticmethod
+  def _select_final_speed(speed_n_sources):
+    return min(speed_n_sources, key=lambda item: item[0])
+
+  def accept_navigation_snapshot(self, snapshot: NavigationSnapshot) -> bool:
+    self._ensure_navigation_sources()
+    with self._navigation_projection_lock:
+      return self.navigation_sources.accept(snapshot, snapshot.received_mono_s)
+
+  def prepare_navigation(self, sm, now_s=None):
+    return self._update_carrot_navi(sm, now_s=now_s)
+
+  @staticmethod
+  def _navigation_safety_key(snapshot, item):
+    if snapshot is None or item is None:
+      return None
+    return (snapshot.source, snapshot.session_id, item)
+
+  @staticmethod
+  def _navigation_instruction_key(snapshot, item):
+    if snapshot is None or not item.present:
+      return None
+    return (snapshot.source, snapshot.session_id, item)
+
+  def _clear_projected_navigation_fields(self):
+    projected_generation = getattr(self, "carrot_navi_projected_road_limit_generation", None)
+    if projected_generation is not None and self.road_limit_write_generation == projected_generation:
+      self._write_road_limit_speed(0, "navigation_clear")
+    self.carrot_navi_projected_road_limit_generation = None
+    self._projected_navigation_road_limit_key = None
+
+    self.nSdiType = self.nSdiBlockType = self.nSdiPlusType = self.nSdiPlusBlockType = -1
+    self.nSdiSection = -1
+    self.nSdiSpeedLimit = self.nSdiDist = 0
+    self.nSdiBlockSpeed = self.nSdiBlockDist = 0
+    self.nSdiPlusSpeedLimit = self.nSdiPlusDist = 0
+    self.nSdiPlusBlockSpeed = self.nSdiPlusBlockDist = 0
+    self.xSpdType = -1
+    self.xSpdLimit = self.xSpdDist = 0
+
+    self.nTBTTurnType = self.nTBTTurnTypeNext = -1
+    self.nTBTDist = self.nTBTDistNext = 0
+    self.nTBTNextRoadWidth = 0
+    self.szTBTMainText = self.szTBTMainTextNext = ""
+    self.szNearDirName = self.szFarDirName = ""
+    self.xTurnInfo = self.xTurnInfoNext = -1
+    self.xDistToTurn = self.xDistToTurnNext = 0
+    self.navType = self.navTypeNext = "invalid"
+    self.navModifier = self.navModifierNext = ""
+
+    self.roadcate = 0
+    self.nGoPosDist = self.nGoPosTime = 0
+    self.goalPosX = self.goalPosY = 0.0
+    self.szGoalName = ""
+    self.carrot_navi_off_route = False
+    self.carrot_navi_road_limit_valid = False
+    self.carrot_navi_has_control = False
+    self.carrot_navi_active = False
+    self.active_count = 0
+    self.active_sdi_count = 0
+    self.last_update_gps_time_navi = 0
+    self.szPosRoadName = ""
+    self._projected_navigation_safety_key = None
+    self._projected_navigation_current_key = None
+    self._projected_navigation_next_key = None
+    self._projected_navigation_position_key = None
+    self._projected_navigation_traffic_key = None
+    self._clear_carrot_navi_traffic()
+
+  def _project_navigation_traffic(self, snapshot, control):
+    key = None if not control.traffic_present else (
+      snapshot.source,
+      snapshot.session_id,
+      control.traffic_received_mono_s,
+      control.traffic_visible,
+      control.traffic_distance_m,
+      control.traffic_source,
+      control.traffic_lamp,
+      control.traffic_remain_s,
+    )
+    if key == self._projected_navigation_traffic_key:
+      return
+    self._projected_navigation_traffic_key = key
+    if (
+      not control.traffic_present
+      or not control.traffic_visible
+      or not control.traffic_lamp
+      or control.traffic_remain_s <= 0
+    ):
+      self._clear_carrot_navi_traffic()
+      return
+    params_memory = getattr(self, "params_memory", None)
+    if params_memory is None:
+      return
+    value = {
+      "distance": control.traffic_distance_m,
+      "lamp": control.traffic_lamp,
+      "remain": control.traffic_remain_s,
+      "source": control.traffic_source,
+      "ts": control.traffic_received_mono_s,
+    }
+    try:
+      params_memory.put_nonblocking("TrafficLight", json.dumps(value))
+      self.carrot_navi_traffic_active = True
+    except Exception:
+      pass
+
+  def _project_navigation_selection(self, selection: NavigationSelection) -> bool:
+    self._ensure_navigation_sources()
+    with self._navigation_projection_lock:
+      if selection.projection_revision <= self._projected_navigation_revision:
+        return False
+
+      snapshot = selection.snapshot
+      if snapshot is None:
+        previous_selection = self.navigation_selection
+        if previous_selection is not None and previous_selection.snapshot is not None:
+          self._clear_projected_navigation_fields()
+        self.navigation_selection = selection
+        self._projected_navigation_revision = selection.projection_revision
+        self.carrot_navi_projection_revision = selection.projection_revision
+        return True
+
+      control = snapshot.control
+      previous_safety_key = self._projected_navigation_safety_key
+      previous_speed_type = self.xSpdType
+      previous_speed_distance = self.xSpdDist
+      previous_current_key = self._projected_navigation_current_key
+      previous_current_distance = self.xDistToTurn
+      previous_next_key = self._projected_navigation_next_key
+      previous_next_distance = self.xDistToTurnNext
+
+      self.roadcate = control.road_category if control.road_category is not None else 0
+
+      road_limit_key = None if control.road_limit_kph is None else (
+        snapshot.source,
+        snapshot.session_id,
+        control.road_limit_received_mono_s,
+        control.road_limit_kph,
+      )
+      if road_limit_key != self._projected_navigation_road_limit_key:
+        projected_generation = getattr(self, "carrot_navi_projected_road_limit_generation", None)
+        if control.road_limit_kph is not None:
+          self.carrot_navi_projected_road_limit_generation = self._write_road_limit_speed(
+            control.road_limit_kph, f"navigation:{snapshot.source.value}",
+          )
+        else:
+          if projected_generation is not None and self.road_limit_write_generation == projected_generation:
+            self._write_road_limit_speed(0, "navigation_clear")
+          self.carrot_navi_projected_road_limit_generation = None
+        self._projected_navigation_road_limit_key = road_limit_key
+      self.carrot_navi_road_limit_valid = control.road_limit_kph is not None
+
+      safety = control.safety
+      if safety is None:
+        self.nSdiType = -1
+        self.nSdiSpeedLimit = self.nSdiDist = 0
+        self.nSdiSection = self.nSdiBlockType = -1
+        self.nSdiBlockSpeed = self.nSdiBlockDist = 0
+      else:
+        self.nSdiType = safety.type
+        self.nSdiSpeedLimit = safety.speed_limit_kph
+        self.nSdiDist = safety.distance_m
+        self.nSdiSection = 1 if safety.section else safety.section_type
+        self.nSdiBlockType = safety.block_type
+        self.nSdiBlockSpeed = safety.block_speed_kph
+        self.nSdiBlockDist = safety.block_distance_m
+
+      secondary = control.secondary_safety
+      if secondary is None:
+        self.nSdiPlusType = self.nSdiPlusBlockType = -1
+        self.nSdiPlusSpeedLimit = self.nSdiPlusDist = 0
+        self.nSdiPlusBlockSpeed = self.nSdiPlusBlockDist = 0
+      else:
+        self.nSdiPlusType = secondary.type
+        self.nSdiPlusSpeedLimit = secondary.speed_limit_kph
+        self.nSdiPlusDist = secondary.distance_m
+        self.nSdiPlusBlockType = secondary.block_type
+        self.nSdiPlusBlockSpeed = secondary.block_speed_kph
+        self.nSdiPlusBlockDist = secondary.block_distance_m
+      self._update_sdi()
+      safety_key = self._navigation_safety_key(snapshot, safety)
+      if safety_key == previous_safety_key and self.xSpdType == previous_speed_type and previous_speed_type >= 0:
+        self.xSpdDist = previous_speed_distance
+      self._projected_navigation_safety_key = safety_key
+
+      current = control.current
+      self.nTBTDist = current.distance_m if current.present else 0
+      self.nTBTTurnType = current.turn_type if current.present else -1
+      self.szTBTMainText = current.main_text if current.present else ""
+      self.szNearDirName = current.near_direction if current.present else ""
+      self.szFarDirName = current.far_direction if current.present else ""
+      self.nTBTNextRoadWidth = current.next_road_width if current.present else 0
+      next_instruction = control.next
+      self.nTBTDistNext = next_instruction.distance_m if next_instruction.present else 0
+      self.nTBTTurnTypeNext = next_instruction.turn_type if next_instruction.present else -1
+      self.szTBTMainTextNext = next_instruction.main_text if next_instruction.present else ""
+      self._update_tbt()
+      if not current.present:
+        self.xTurnInfo = -1
+        self.xDistToTurn = 0
+      if not next_instruction.present:
+        self.xTurnInfoNext = -1
+        self.xDistToTurnNext = 0
+      current_key = self._navigation_instruction_key(snapshot, current)
+      next_key = self._navigation_instruction_key(snapshot, next_instruction)
+      if current_key == previous_current_key and current_key is not None:
+        self.xDistToTurn = previous_current_distance
+      if next_key == previous_next_key and next_key is not None:
+        self.xDistToTurnNext = previous_next_distance
+      self._projected_navigation_current_key = current_key
+      self._projected_navigation_next_key = next_key
+
+      self.nGoPosDist = control.remaining_distance_m if control.route_present else 0
+      self.nGoPosTime = control.remaining_time_s if control.route_present else 0
+      self.carrot_navi_off_route = control.off_route if control.route_present else False
+      if not control.destination_present or control.destination is None:
+        self.goalPosX = self.goalPosY = 0.0
+      else:
+        self.goalPosY, self.goalPosX = control.destination
+
+      position_key = None if not control.position_present else (
+        snapshot.source,
+        snapshot.session_id,
+        control.position_received_mono_s,
+        control.position_latitude,
+        control.position_longitude,
+        control.position_heading_deg,
+        control.position_speed_kph,
+        control.position_road_name,
+      )
+      if position_key != self._projected_navigation_position_key:
+        if control.position_present:
+          self.vpPosPointLatNavi = control.position_latitude
+          self.vpPosPointLonNavi = control.position_longitude
+          self.nPosAngle = control.position_heading_deg
+          self.nPosSpeed = control.position_speed_kph
+          self.szPosRoadName = control.position_road_name
+          self.last_update_gps_time_navi = self.last_calculate_gps_time = control.position_received_mono_s
+        else:
+          self.last_update_gps_time_navi = 0
+          self.szPosRoadName = current.road_name if current.present else ""
+        self._projected_navigation_position_key = position_key
+      if not control.position_present:
+        self.last_update_gps_time_navi = 0
+        self.szPosRoadName = current.road_name if current.present else ""
+
+      self._project_navigation_traffic(snapshot, control)
+      self.carrot_navi_has_control = bool(
+        control.speed_present or current.present or next_instruction.present
+      )
+      self.carrot_navi_active = snapshot.source is NavigationSource.CARROT_NAVI_V2
+      if self.carrot_navi_has_control:
+        self.active_count = 80
+        self.active_sdi_count = self.active_sdi_count_max
+
+      self.navigation_selection = selection
+      self._projected_navigation_revision = selection.projection_revision
+      self.carrot_navi_projection_revision = selection.projection_revision
+      return True
+
   def _clear_carrot_navi_control(self):
+    projected_generation = getattr(self, "carrot_navi_projected_road_limit_generation", None)
     self.active_count = 0
     self.active_sdi_count = 0
     self.carrot_navi_has_control = False
     self.carrot_navi_road_limit_valid = False
     self.carrot_navi_off_route = False
     self.carrot_navi_control = None
+    self.carrot_navi_projection_revision = getattr(self, "carrot_navi_projection_revision", 0) + 1
     self._reset_carrot_navi_sequences("")
+    self.roadcate = 0
+    if projected_generation is not None and self.road_limit_write_generation == projected_generation:
+      self._write_road_limit_speed(0, "carrot_navi_clear")
+    self.carrot_navi_projected_road_limit_generation = None
 
     self.nSdiType = self.nSdiBlockType = self.nSdiPlusType = self.nSdiPlusBlockType = -1
     self.nSdiSection = -1
@@ -707,13 +1228,22 @@ class CarrotServ:
     self.szPosRoadName = ""
     self._clear_carrot_navi_traffic()
 
-  def _apply_carrot_navi_speed(self, navi: CarrotNaviControl):
+  def _apply_carrot_navi_speed(self, navi: CarrotNaviControl, fresh=True, project_road_limit=True):
     speed = navi.speed
-    self.carrot_navi_road_limit_valid = speed.road_limit_kph is not None
-    if speed.road_limit_kph is not None:
-      self.nRoadLimitSpeed = speed.road_limit_kph
+    speed_active = fresh and speed.present
+    if project_road_limit:
+      projected_generation = getattr(self, "carrot_navi_projected_road_limit_generation", None)
+      self.carrot_navi_road_limit_valid = speed_active and speed.road_limit_kph is not None
+      if self.carrot_navi_road_limit_valid:
+        self.carrot_navi_projected_road_limit_generation = self._write_road_limit_speed(
+          speed.road_limit_kph, "carrot_navi",
+        )
+      else:
+        if projected_generation is not None and self.road_limit_write_generation == projected_generation:
+          self._write_road_limit_speed(0, "carrot_navi_clear")
+        self.carrot_navi_projected_road_limit_generation = None
 
-    if speed.section_active:
+    if speed_active and speed.section_active:
       self.nSdiType = 4
       self.nSdiSpeedLimit = speed.section_speed_limit_kph
       self.nSdiDist = speed.section_remaining_distance_m
@@ -721,7 +1251,7 @@ class CarrotServ:
       self.nSdiBlockType = 2
       self.nSdiBlockSpeed = speed.section_speed_limit_kph
       self.nSdiBlockDist = speed.section_remaining_distance_m
-    elif speed.sdi_present:
+    elif speed_active and speed.sdi_present:
       self.nSdiType = speed.sdi_type
       self.nSdiSpeedLimit = speed.sdi_speed_limit_kph
       self.nSdiDist = speed.sdi_distance_m
@@ -738,7 +1268,7 @@ class CarrotServ:
       self.nSdiBlockSpeed = 0
       self.nSdiBlockDist = 0
 
-    if speed.secondary_sdi_present:
+    if speed_active and speed.secondary_sdi_present:
       self.nSdiPlusType = speed.secondary_sdi_type
       self.nSdiPlusSpeedLimit = speed.secondary_sdi_speed_limit_kph
       self.nSdiPlusDist = speed.secondary_sdi_distance_m
@@ -798,11 +1328,13 @@ class CarrotServ:
     except Exception:
       pass
 
-  def _apply_carrot_navi_guidance(self, navi: CarrotNaviControl, force=False):
+  def _apply_carrot_navi_guidance(self, navi: CarrotNaviControl, force=False,
+                                  current_fresh=True, next_fresh=True,
+                                  current_revision_changed=False, next_revision_changed=False):
     current = navi.current
-    current_changed = force or current.sequence != self.carrot_navi_current_sequence
+    current_changed = force or current_revision_changed or current.sequence != self.carrot_navi_current_sequence
     next_guidance = navi.next
-    next_changed = force or next_guidance.sequence != self.carrot_navi_next_sequence
+    next_changed = force or next_revision_changed or next_guidance.sequence != self.carrot_navi_next_sequence
     if not current_changed and not next_changed:
       return
 
@@ -810,70 +1342,263 @@ class CarrotServ:
     old_next_dist = self.xDistToTurnNext
     if current_changed:
       self.carrot_navi_current_sequence = current.sequence
-      self.nTBTDist = current.distance_m if current.present else 0
-      self.nTBTTurnType = current.turn_type if current.present else -1
-      self.szTBTMainText = current.main_text if current.present else ""
-      self.szNearDirName = current.near_direction if current.present else ""
-      self.szFarDirName = current.far_direction if current.present else ""
+      current_active = current.present and current_fresh
+      self.nTBTDist = current.distance_m if current_active else 0
+      self.nTBTTurnType = current.turn_type if current_active else -1
+      self.szTBTMainText = current.main_text if current_active else ""
+      self.szNearDirName = current.near_direction if current_active else ""
+      self.szFarDirName = current.far_direction if current_active else ""
 
     if next_changed:
       self.carrot_navi_next_sequence = next_guidance.sequence
-      self.nTBTDistNext = next_guidance.distance_m if next_guidance.present else 0
-      self.nTBTTurnTypeNext = next_guidance.turn_type if next_guidance.present else -1
-      self.szTBTMainTextNext = next_guidance.main_text if next_guidance.present else ""
+      next_active = next_guidance.present and next_fresh
+      self.nTBTDistNext = next_guidance.distance_m if next_active else 0
+      self.nTBTTurnTypeNext = next_guidance.turn_type if next_active else -1
+      self.szTBTMainTextNext = next_guidance.main_text if next_active else ""
 
     self._update_tbt()
+    if current_changed and not (current.present and current_fresh):
+      self.xTurnInfo = -1
+      self.xDistToTurn = 0
+    if next_changed and not (next_guidance.present and next_fresh):
+      self.xTurnInfoNext = -1
+      self.xDistToTurnNext = 0
     if not current_changed:
       self.xDistToTurn = old_current_dist
     if not next_changed:
       self.xDistToTurnNext = old_next_dist
 
-  def _update_carrot_navi(self, sm):
-    service_active = sm.alive['carrotNavi'] and sm.valid['carrotNavi']
-    if service_active and not sm.updated['carrotNavi']:
-      if self.carrot_navi_active and self.carrot_navi_has_control:
-        self.active_count = 80
-        self.active_sdi_count = self.active_sdi_count_max
-      return self.carrot_navi_active and self.carrot_navi_has_control
-
-    navi = parse_carrot_navi_control(sm['carrotNavi']) if service_active else None
-    was_active = self.carrot_navi_active
-    self.carrot_navi_active = navi is not None
-    if navi is None:
-      if was_active:
-        self._clear_carrot_navi_control()
+  @staticmethod
+  def _carrot_navi_item_fresh(present, received_mono_time_nanos, now_s):
+    if not present or received_mono_time_nanos <= 0:
       return False
+    age_s = now_s - received_mono_time_nanos / 1_000_000_000.0
+    return 0.0 <= age_s < V2_ITEM_TTL_S
 
-    self.carrot_navi_control = navi
-    new_session = navi.session_id != self.carrot_navi_session_id
-    if navi.session_id != self.carrot_navi_session_id:
-      self._reset_carrot_navi_sequences(navi.session_id)
-    off_route_changed = navi.off_route != self.carrot_navi_off_route
-    self.carrot_navi_off_route = navi.off_route
-    self.carrot_navi_road_limit_valid = navi.speed.road_limit_kph is not None
-    self.carrot_navi_has_control = (
-      navi.speed.present or navi.current.present or navi.next.present
-      or navi.guidance_active or navi.route.present
+  @staticmethod
+  def _raw_navigation_value(obj, name, default=None):
+    if isinstance(obj, dict):
+      return obj.get(name, default)
+    try:
+      return getattr(obj, name)
+    except Exception:
+      return default
+
+  @classmethod
+  def _raw_navigation_meta(cls, data, item_name):
+    item = cls._raw_navigation_value(data, item_name)
+    meta = cls._raw_navigation_value(item, "meta")
+    try:
+      present = bool(cls._raw_navigation_value(meta, "present", False))
+      sequence = max(0, int(cls._raw_navigation_value(meta, "sequence", 0)))
+      received_ns = max(0, int(cls._raw_navigation_value(meta, "receivedMonoTimeNanos", 0)))
+    except (TypeError, ValueError, OverflowError):
+      return False, 0, 0
+    return present, sequence, received_ns
+
+  def _v2_navigation_revision(self, raw, navi):
+    try:
+      generation = max(0, int(self._raw_navigation_value(raw, "generation", 0)))
+    except (TypeError, ValueError, OverflowError):
+      generation = 0
+    metas = tuple(
+      self._raw_navigation_meta(raw, name)
+      for name in (
+        "speed", "guidanceCurrent", "guidanceNext", "laneCurrent",
+        "route", "vehicle", "trafficSignal", "navigationStatus",
+      )
+    )
+    return (generation, metas, navi)
+
+  def _v2_navigation_snapshot(self, raw, navi, now_s):
+    session_id = navi.session_id
+    revision = self._v2_navigation_revision(raw, navi)
+    if self._v2_navigation_revisions.get(session_id) == revision:
+      return None
+    self._v2_navigation_revisions[session_id] = revision
+    sequence = self._v2_navigation_sequences.get(session_id, 0) + 1
+    self._v2_navigation_sequences[session_id] = sequence
+
+    speed_fresh = self._carrot_navi_item_fresh(
+      navi.speed.present, navi.speed.received_mono_time_nanos, now_s,
+    )
+    speed_received = navi.speed.received_mono_time_nanos / 1_000_000_000.0 if speed_fresh else None
+    safety = None
+    secondary = None
+    if speed_fresh and navi.speed.section_active:
+      safety = SafetyItem(
+        type=4,
+        distance_m=navi.speed.section_remaining_distance_m,
+        speed_limit_kph=navi.speed.section_speed_limit_kph,
+        received_mono_s=speed_received,
+        reason="section",
+        section=True,
+        section_type=1,
+        block_type=2,
+        block_speed_kph=navi.speed.section_speed_limit_kph,
+        block_distance_m=navi.speed.section_remaining_distance_m,
+      )
+    elif speed_fresh and navi.speed.sdi_present:
+      safety = SafetyItem(
+        type=navi.speed.sdi_type,
+        distance_m=navi.speed.sdi_distance_m,
+        speed_limit_kph=navi.speed.sdi_speed_limit_kph,
+        received_mono_s=speed_received,
+        reason="bump" if navi.speed.sdi_type == 22 else "cam",
+        section_type=navi.speed.sdi_section_type,
+        block_type=navi.speed.sdi_block_type,
+        block_speed_kph=navi.speed.sdi_block_speed_kph,
+        block_distance_m=navi.speed.sdi_block_distance_m,
+      )
+    if speed_fresh and navi.speed.secondary_sdi_present:
+      secondary = SafetyItem(
+        type=navi.speed.secondary_sdi_type,
+        distance_m=navi.speed.secondary_sdi_distance_m,
+        speed_limit_kph=navi.speed.secondary_sdi_speed_limit_kph,
+        received_mono_s=speed_received,
+        reason="bump" if navi.speed.secondary_sdi_type == 22 else "cam",
+        section_type=navi.speed.secondary_sdi_section_type,
+        block_type=navi.speed.secondary_sdi_block_type,
+        block_speed_kph=navi.speed.secondary_sdi_block_speed_kph,
+        block_distance_m=navi.speed.secondary_sdi_block_distance_m,
+      )
+
+    current_fresh = self._carrot_navi_item_fresh(
+      navi.current.present, navi.current.received_mono_time_nanos, now_s,
+    )
+    current = NavigationInstruction(
+      present=current_fresh,
+      turn_type=navi.current.turn_type if current_fresh else -1,
+      distance_m=navi.current.distance_m if current_fresh else 0.0,
+      main_text=navi.current.main_text if current_fresh else "",
+      near_direction=navi.current.near_direction if current_fresh else "",
+      far_direction=navi.current.far_direction if current_fresh else "",
+      received_mono_s=(
+        navi.current.received_mono_time_nanos / 1_000_000_000.0 if current_fresh else None
+      ),
+    )
+    next_fresh = self._carrot_navi_item_fresh(
+      navi.next.present, navi.next.received_mono_time_nanos, now_s,
+    )
+    next_instruction = NavigationInstruction(
+      present=next_fresh,
+      turn_type=navi.next.turn_type if next_fresh else -1,
+      distance_m=navi.next.distance_m if next_fresh else 0.0,
+      main_text=navi.next.main_text if next_fresh else "",
+      near_direction=navi.next.near_direction if next_fresh else "",
+      far_direction=navi.next.far_direction if next_fresh else "",
+      received_mono_s=navi.next.received_mono_time_nanos / 1_000_000_000.0 if next_fresh else None,
     )
 
-    if new_session or off_route_changed or navi.speed.sequence != self.carrot_navi_speed_sequence:
-      self.carrot_navi_speed_sequence = navi.speed.sequence
-      self._apply_carrot_navi_speed(navi)
+    lane_fresh = self._carrot_navi_item_fresh(
+      navi.lane_present, navi.lane_received_mono_time_nanos, now_s,
+    )
+    last_category = self._v2_last_valid_categories.get(session_id)
+    if lane_fresh and navi.road_category_valid and navi.road_category is not None:
+      road_category = navi.road_category
+      category_received = navi.lane_received_mono_time_nanos / 1_000_000_000.0
+      self._v2_last_valid_categories[session_id] = (road_category, category_received)
+    elif lane_fresh and last_category is not None and 0.0 <= now_s - last_category[1] < V2_ITEM_TTL_S:
+      road_category, category_received = last_category
+    else:
+      road_category = None
+      category_received = None
 
-    # The cereal service repeats at 2 Hz even when item sequences do not change.
-    # Refresh GPS and Params freshness from that heartbeat.
-    self._apply_carrot_navi_vehicle(navi)
-    self._apply_carrot_navi_traffic(navi)
-    if new_session or navi.route.sequence != self.carrot_navi_route_sequence:
-      self._apply_carrot_navi_route(navi)
+    route_present, _, route_received_ns = self._raw_navigation_meta(raw, "route")
+    route_fresh = self._carrot_navi_item_fresh(route_present, route_received_ns, now_s)
+    route_fresh = route_fresh and navi.route.present
+    route_received = route_received_ns / 1_000_000_000.0 if route_fresh else None
+    status_present, _, status_received_ns = self._raw_navigation_meta(raw, "navigationStatus")
+    status_fresh = self._carrot_navi_item_fresh(status_present, status_received_ns, now_s)
+    status_received = status_received_ns / 1_000_000_000.0 if status_fresh else None
+    guidance_receipts = [
+      receipt for receipt in (
+        current.received_mono_s if current.present else None,
+        next_instruction.received_mono_s if next_instruction.present else None,
+        status_received if status_fresh and navi.guidance_active else None,
+      )
+      if receipt is not None
+    ]
+    owner_received = max(guidance_receipts) if guidance_receipts else None
 
-    if navi.road_category is not None:
-      self.roadcate = navi.road_category
-    self._apply_carrot_navi_guidance(navi, force=new_session or off_route_changed)
-    if self.carrot_navi_has_control:
+    vehicle_present, _, vehicle_received_ns = self._raw_navigation_meta(raw, "vehicle")
+    vehicle_fresh = self._carrot_navi_item_fresh(vehicle_present, vehicle_received_ns, now_s)
+    vehicle_fresh = vehicle_fresh and navi.vehicle.present
+    vehicle_received = vehicle_received_ns / 1_000_000_000.0 if vehicle_fresh else None
+    traffic_present, _, traffic_received_ns = self._raw_navigation_meta(raw, "trafficSignal")
+    traffic_fresh = self._carrot_navi_item_fresh(traffic_present, traffic_received_ns, now_s)
+    traffic_fresh = traffic_fresh and navi.traffic.present
+    traffic_received = traffic_received_ns / 1_000_000_000.0 if traffic_fresh else None
+
+    control = NavigationControlState(
+      current=current,
+      next=next_instruction,
+      safety=safety,
+      secondary_safety=secondary,
+      speed_present=speed_fresh,
+      speed_received_mono_s=speed_received,
+      road_limit_kph=navi.speed.road_limit_kph if speed_fresh else None,
+      road_limit_received_mono_s=speed_received if speed_fresh and navi.speed.road_limit_kph is not None else None,
+      road_category=road_category,
+      road_category_received_mono_s=category_received,
+      route_present=route_fresh,
+      route_received_mono_s=route_received,
+      remaining_distance_m=navi.route.remaining_distance_m if route_fresh else 0.0,
+      remaining_time_s=navi.route.remaining_time_sec if route_fresh else 0.0,
+      off_route=navi.off_route if status_fresh else False,
+      status_present=status_fresh,
+      status_received_mono_s=status_received,
+      route_points=navi.route.polyline if route_fresh else (),
+      position_present=vehicle_fresh,
+      position_received_mono_s=vehicle_received,
+      position_latitude=navi.vehicle.latitude if vehicle_fresh else 0.0,
+      position_longitude=navi.vehicle.longitude if vehicle_fresh else 0.0,
+      position_heading_deg=navi.vehicle.heading_deg if vehicle_fresh else 0.0,
+      position_speed_kph=navi.vehicle.speed_kph if vehicle_fresh else 0.0,
+      position_road_name=navi.vehicle.road_name if vehicle_fresh else "",
+      traffic_present=traffic_fresh,
+      traffic_received_mono_s=traffic_received,
+      traffic_visible=navi.traffic.visible if traffic_fresh else False,
+      traffic_distance_m=navi.traffic.distance_m if traffic_fresh else 0.0,
+      traffic_source=navi.traffic.source if traffic_fresh else "",
+      traffic_lamp=navi.traffic.lamp if traffic_fresh else "",
+      traffic_remain_s=navi.traffic.remain_sec if traffic_fresh else 0,
+    )
+    return NavigationSnapshot(
+      source=NavigationSource.CARROT_NAVI_V2,
+      session_id=session_id,
+      sequence=sequence,
+      lifecycle=NavigationLifecycle.GUIDING if owner_received is not None else NavigationLifecycle.IDLE,
+      received_mono_s=now_s,
+      activation_epoch=0,
+      control=control,
+      owner_received_mono_s=owner_received,
+    )
+
+  def _update_carrot_navi(self, sm, now_s=None):
+    now_s = time.monotonic() if now_s is None else now_s
+    self._ensure_navigation_sources()
+    service_active = sm.alive['carrotNavi'] and sm.valid['carrotNavi']
+    raw = sm['carrotNavi'] if service_active else None
+    navi = parse_carrot_navi_control(raw) if service_active else None
+    self.carrot_navi_control = navi
+    if navi is not None and navi.session_id:
+      snapshot = self._v2_navigation_snapshot(raw, navi, now_s)
+      if snapshot is not None:
+        self.accept_navigation_snapshot(snapshot)
+
+    selection = self.navigation_sources.select(now_s)
+    self._project_navigation_selection(selection)
+    snapshot = selection.snapshot
+    has_control = bool(snapshot is not None and (
+      snapshot.control.speed_present
+      or snapshot.control.current.present
+      or snapshot.control.next.present
+    ))
+    if has_control:
       self.active_count = 80
       self.active_sdi_count = self.active_sdi_count_max
-    return self.carrot_navi_has_control
+    return has_control
 
   def _update_gps(self, v_ego, sm, gps_service):
     gps = sm[gps_service]
@@ -1033,7 +1758,9 @@ class CarrotServ:
       self.nGoPosDist = int(msg_nav.distanceRemaining)
       self.nGoPosTime = int(msg_nav.timeRemaining)
       if self.active_kisa_count <= 0 and msg_nav.speedLimit > 0:
-        self.nRoadLimitSpeed = max(30, round(msg_nav.speedLimit * CV.MS_TO_KPH))
+        self._write_road_limit_speed(
+          max(30, round(msg_nav.speedLimit * CV.MS_TO_KPH)), "nav_instruction",
+        )
       self.xDistToTurn = int(msg_nav.maneuverDistance)
       self.szTBTMainText = msg_nav.maneuverPrimaryText
       self.xTurnInfo = -1
@@ -1056,7 +1783,7 @@ class CarrotServ:
         print(f"kisawazeroadspdlimit: {road_limit_speed} km/h")
         if not self.is_metric:
           road_limit_speed *= CV.MPH_TO_KPH
-        self.nRoadLimitSpeed = road_limit_speed
+        self._write_road_limit_speed(road_limit_speed, "kisa_waze")
     if "kisawazealert" in data:
       pass
     if "kisawazeendalert" in data:
@@ -1080,15 +1807,25 @@ class CarrotServ:
         xSpdType = 100
 
       if xSpdType >= 0:
-        self.xSpdLimit = self.nRoadLimitSpeed * self.autoNaviSpeedSafetyFactor if self.nRoadLimitSpeed > 0 else 0
-        self.xSpdDist = distance
-        self.xSpdType = xSpdType
+        self.kisa_safety_limit = self.nRoadLimitSpeed * self.autoNaviSpeedSafetyFactor if self.nRoadLimitSpeed > 0 else 0
+        self.kisa_safety_distance = distance
+        self.kisa_safety_type = xSpdType
 
-  def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speed, gps_service):
+  def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speed, gps_service,
+                  navigation_prepared=False):
 
     self.debugText = ""
     self.update_params()
-    carrot_navi_active = self._update_carrot_navi(sm)
+    if navigation_prepared:
+      selection = getattr(self, "navigation_selection", None)
+      snapshot = None if selection is None else selection.snapshot
+      carrot_navi_active = bool(snapshot is not None and (
+        snapshot.control.speed_present
+        or snapshot.control.current.present
+        or snapshot.control.next.present
+      ))
+    else:
+      carrot_navi_active = self._update_carrot_navi(sm)
     if sm.alive['carState'] and sm.alive['selfdriveState']:
       CS = sm['carState']
       v_ego = CS.vEgo
@@ -1097,7 +1834,7 @@ class CarrotServ:
       delta_dist = distanceTraveled - self.totalDistance
       self.totalDistance = distanceTraveled
       if CS.speedLimit > 0 and self.active_carrot <= 1:
-        self.nRoadLimitSpeed = CS.speedLimit
+        self._write_road_limit_speed(CS.speedLimit, "vehicle")
     else:
       v_ego = v_ego_kph = 0
       delta_dist = 0
@@ -1109,6 +1846,7 @@ class CarrotServ:
     self.bearing = self._update_gps(v_ego, sm, gps_service)
 
     self.xSpdDist = max(self.xSpdDist - delta_dist, -1000)
+    self.kisa_safety_distance = max(self.kisa_safety_distance - delta_dist, -1000)
     self.xDistToTurn = self.xDistToTurn - delta_dist
     self.xDistToTurnNext = self.xDistToTurnNext - delta_dist
     self.active_count = max(self.active_count - 1, 0)
@@ -1121,6 +1859,10 @@ class CarrotServ:
       self.active_carrot = 2 if self.active_sdi_count > 0 else 1
     else:
       self.active_carrot = 0
+
+    hda_limit_kph = 0.0 if CS is None else CS.speedLimit
+    hda_distance_m = 0.0 if CS is None else CS.speedLimitDistance
+    safety_decision = self._apply_navigation_safety(hda_limit_kph, hda_distance_m)
 
     limit_speed = 200
     road_limit_valid = not carrot_navi_active or self.carrot_navi_road_limit_valid
@@ -1151,24 +1893,20 @@ class CarrotServ:
       self.xTurnInfoNext = -1
 
     sdi_speed = 250
-    hda_active = False
-    ### 과속카메라, 사고방지턱
-    if self.xSpdLimit > 0 and (self.xSpdDist > 0 or self.xSpdType in [100, 101]) and self.active_carrot > 0:
-      safe_sec = self.autoNaviSpeedBumpTime if self.xSpdType == 22 else self.autoNaviSpeedCtrlEnd
-      decel = self.autoNaviSpeedDecelRate
-      sdi_speed = min(sdi_speed, self.calculate_current_speed(self.xSpdDist, self.xSpdLimit, safe_sec, decel))
-      self.active_carrot = 5 if self.xSpdType == 22 else 3
-      if self.xSpdType == 4 or (self.xSpdType in [100, 101] and self.xSpdDist <= 0):
-        sdi_speed = self.xSpdLimit
-        self.active_carrot = 4
-    elif CS is not None and CS.speedLimit > 0 and CS.speedLimitDistance > 0:
-      sdi_speed = min(sdi_speed,
-                      self.calculate_current_speed(CS.speedLimitDistance,
-                                                   CS.speedLimit * self.autoNaviSpeedSafetyFactor,
-                                                   self.autoNaviSpeedCtrlEnd,
-                                                   self.autoNaviSpeedDecelRate))
-      #self.active_carrot = 6
-      hda_active = True
+    safety_source = "none"
+    if safety_decision is not None:
+      safety_source = safety_decision.reason
+      safe_sec = self.autoNaviSpeedBumpTime if safety_decision.type == 22 else self.autoNaviSpeedCtrlEnd
+      sdi_speed = min(sdi_speed, self.calculate_current_speed(
+        self._safety_distance_for_speed(safety_decision),
+        safety_decision.limit_kph,
+        safe_sec,
+        self.autoNaviSpeedDecelRate,
+      ))
+      if safety_decision.type == 4 or (
+        safety_decision.provider == "kisa" and safety_decision.distance_m <= 0.0
+      ):
+        sdi_speed = safety_decision.limit_kph
 
     #print(f"sdi_speed: {sdi_speed}, hda_active: {hda_active}, xSpdType: {self.xSpdType}, xSpdDist: {self.xSpdDist}, active_carrot: {self.active_carrot}, v_ego_kph: {v_ego_kph}, nRoadLimitSpeed: {self.nRoadLimitSpeed}")
     ### TBT 속도제어
@@ -1201,7 +1939,7 @@ class CarrotServ:
     speed_n_sources = [
       (atc_desired, "atc"),
       (atc_desired_next, "atc2"),
-      (sdi_speed, "hda" if hda_active else "bump" if self.xSpdType == 22 else "section" if self.xSpdType == 4 else "police" if self.xSpdType == 100 else "waze" if self.xSpdType == 101 else "cam"),
+      (sdi_speed, safety_source),
       (limit_speed, "road"),
     ]
     if self.turnSpeedControlMode in [1,2]:
@@ -1219,7 +1957,7 @@ class CarrotServ:
     if model_turn_speed < 200 and abs(vturn_speed) < 120:
       speed_n_sources.append((model_turn_speed, "model"))
 
-    desired_speed, source = min(speed_n_sources, key=lambda x: x[0])
+    desired_speed, source = self._select_final_speed(speed_n_sources)
 
     if CS is not None:
       if source != self.source_last:
@@ -1293,6 +2031,12 @@ class CarrotServ:
     msg.carrotMan.szTBTMainText = self.szTBTMainText
     msg.carrotMan.desiredSpeed = int(desired_speed)
     msg.carrotMan.desiredSource = source
+    publish_navigation_diagnostics(
+      msg.carrotMan,
+      getattr(self, "navigation_selection", None),
+      getattr(self, "last_safety_decision", None),
+      getattr(self, "last_safety_rejection", None),
+    )
     msg.carrotMan.carrotCmdIndex = int(self.carrotCmdIndex)
     msg.carrotMan.carrotCmd = self.carrotCmd
     msg.carrotMan.carrotArg = self.carrotArg
@@ -1412,15 +2156,305 @@ class CarrotServ:
     except subprocess.CalledProcessError:
       print("timed.failed_setting_time")
 
-  def update(self, json):
-    def _i(v, default=0):
-      return default if v is None else int(v)
+  @staticmethod
+  def _legacy_number(data, name, default=0.0):
+    try:
+      value = float(data.get(name, default))
+      return value if math.isfinite(value) else float(default)
+    except (TypeError, ValueError, OverflowError):
+      return float(default)
+
+  @staticmethod
+  def _legacy_integer(data, name, default=0):
+    try:
+      return int(data.get(name, default))
+    except (TypeError, ValueError, OverflowError):
+      return int(default)
+
+  def _legacy_road_limit(self, data, session_id):
+    road_limit = self._legacy_integer(data, "nRoadLimitSpeed", 20)
+    if road_limit > 200:
+      road_limit = (road_limit - 20) / 10
+    elif road_limit == 120:
+      road_limit = 115
+    elif road_limit <= 0:
+      road_limit = 30
+
+    state = self._legacy_road_limit_state.get(session_id)
+    if state is None:
+      state = [30, None, 0]
+      self._legacy_road_limit_state[session_id] = state
+    current, candidate, count = state
+    if road_limit == current:
+      state[:] = [road_limit, road_limit, 0]
+    else:
+      count = count + 1 if candidate == road_limit else 1
+      if count > 5:
+        current = road_limit
+        count = 0
+      state[:] = [current, road_limit, count]
+    return float(state[0])
+
+  def _legacy_navigation_snapshot(self, data, source, session_id, received_mono_s):
+    if source is not NavigationSource.TMAP_LEGACY:
+      return None
+    sequence = self._legacy_navigation_sequences.get(session_id, 0) + 1
+    self._legacy_navigation_sequences[session_id] = sequence
+    road_limit = self._legacy_road_limit(data, session_id)
+
+    primary_type = self._legacy_integer(data, "nSdiType", -1)
+    safety = None
+    if primary_type >= 0:
+      safety = SafetyItem(
+        type=primary_type,
+        distance_m=self._legacy_number(data, "nSdiDist", 0),
+        speed_limit_kph=self._legacy_number(data, "nSdiSpeedLimit", 0),
+        received_mono_s=received_mono_s,
+        reason="bump" if primary_type == 22 else "section" if primary_type == 4 else "cam",
+        # 7713 provides the exact public nSdiSection value.  Only the v2
+        # section adapter uses SafetyItem.section to force public value 1.
+        section=False,
+        section_type=self._legacy_integer(data, "nSdiSection", -1),
+        block_type=self._legacy_integer(data, "nSdiBlockType", -1),
+        block_speed_kph=self._legacy_number(data, "nSdiBlockSpeed", 0),
+        block_distance_m=self._legacy_number(data, "nSdiBlockDist", 0),
+      )
+    secondary_type = self._legacy_integer(data, "nSdiPlusType", -1)
+    secondary = None
+    if secondary_type >= 0:
+      secondary = SafetyItem(
+        type=secondary_type,
+        distance_m=self._legacy_number(data, "nSdiPlusDist", 0),
+        speed_limit_kph=self._legacy_number(data, "nSdiPlusSpeedLimit", 0),
+        received_mono_s=received_mono_s,
+        reason="bump" if secondary_type == 22 else "cam",
+        section_type=self._legacy_integer(data, "nSdiPlusSection", -1),
+        block_type=self._legacy_integer(data, "nSdiPlusBlockType", -1),
+        block_speed_kph=self._legacy_number(data, "nSdiPlusBlockSpeed", 0),
+        block_distance_m=self._legacy_number(data, "nSdiPlusBlockDist", 0),
+      )
+
+    current_type = self._legacy_integer(data, "nTBTTurnType", -1)
+    next_type = self._legacy_integer(data, "nTBTTurnTypeNext", -1)
+    current = NavigationInstruction(
+      present=current_type >= 0,
+      turn_type=current_type,
+      distance_m=self._legacy_number(data, "nTBTDist", 0),
+      road_name=str(data.get("szPosRoadName") or ""),
+      main_text=str(data.get("szTBTMainText") or ""),
+      near_direction=str(data.get("szNearDirName") or ""),
+      far_direction=str(data.get("szFarDirName") or ""),
+      next_road_width=self._legacy_integer(data, "nTBTNextRoadWidth", 0),
+      received_mono_s=received_mono_s if current_type >= 0 else None,
+    )
+    next_instruction = NavigationInstruction(
+      present=next_type >= 0,
+      turn_type=next_type,
+      distance_m=self._legacy_number(data, "nTBTDistNext", 0),
+      main_text=str(data.get("szTBTMainTextNext", data.get("szTBTMainText")) or ""),
+      received_mono_s=received_mono_s if next_type >= 0 else None,
+    )
+    category = self._legacy_integer(data, "roadcate", 0) if "roadcate" in data else None
+    latitude = self._legacy_number(data, "vpPosPointLat", 0.0)
+    longitude = self._legacy_number(data, "vpPosPointLon", 0.0)
+    position_present = latitude != 0.0 and -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0
+    route_present = any(name in data for name in ("nGoPosDist", "nGoPosTime", "goalPosX", "goalPosY"))
+    destination = None
+    if data.get("goalPosX") is not None and data.get("goalPosY") is not None:
+      destination = (
+        self._legacy_number(data, "goalPosY", 0.0),
+        self._legacy_number(data, "goalPosX", 0.0),
+      )
+    control = NavigationControlState(
+      current=current,
+      next=next_instruction,
+      safety=safety,
+      secondary_safety=secondary,
+      speed_present=True,
+      speed_received_mono_s=received_mono_s,
+      road_limit_kph=road_limit,
+      road_limit_received_mono_s=received_mono_s,
+      road_category=category,
+      road_category_received_mono_s=received_mono_s if category is not None else None,
+      route_present=route_present,
+      route_received_mono_s=received_mono_s if route_present else None,
+      remaining_distance_m=self._legacy_number(data, "nGoPosDist", 0),
+      remaining_time_s=self._legacy_number(data, "nGoPosTime", 0),
+      destination=destination,
+      destination_present=destination is not None,
+      destination_received_mono_s=received_mono_s if destination is not None else None,
+      position_present=position_present,
+      position_received_mono_s=received_mono_s if position_present else None,
+      position_latitude=latitude if position_present else 0.0,
+      position_longitude=longitude if position_present else 0.0,
+      position_heading_deg=self._legacy_number(data, "nPosAngle", 0.0),
+      position_speed_kph=self._legacy_number(data, "nPosSpeed", 0.0),
+      position_road_name=(
+        "" if str(data.get("szPosRoadName") or "") == "null"
+        else str(data.get("szPosRoadName") or "")
+      ),
+    )
+    previous = self._legacy_navigation_controls.get(session_id)
+    pending = self._legacy_navigation_pending.get(session_id, {})
+    merged_updates = {}
+    if previous is not None:
+      if previous.route_points:
+        merged_updates.update(
+          route_present=True,
+          route_received_mono_s=(
+            control.route_received_mono_s if control.route_present
+            else previous.route_received_mono_s
+          ),
+          route_points=previous.route_points,
+        )
+      if previous.traffic_present:
+        merged_updates.update(
+          traffic_present=True,
+          traffic_received_mono_s=previous.traffic_received_mono_s,
+          traffic_visible=previous.traffic_visible,
+          traffic_distance_m=previous.traffic_distance_m,
+          traffic_source=previous.traffic_source,
+          traffic_lamp=previous.traffic_lamp,
+          traffic_remain_s=previous.traffic_remain_s,
+        )
+      if (
+        not control.destination_present
+        and previous.destination_present
+        and previous.destination is not None
+      ):
+        merged_updates.update(
+          destination=previous.destination,
+          destination_present=True,
+          destination_received_mono_s=previous.destination_received_mono_s,
+        )
+    pending_updates = dict(pending)
+    if control.destination_present:
+      for field_name in ("destination", "destination_present", "destination_received_mono_s"):
+        pending_updates.pop(field_name, None)
+    merged_updates.update(pending_updates)
+    if merged_updates:
+      control = replace(control, **merged_updates)
+    return NavigationSnapshot(
+      source=source,
+      session_id=session_id,
+      sequence=sequence,
+      lifecycle=NavigationLifecycle.GUIDING,
+      received_mono_s=received_mono_s,
+      activation_epoch=0,
+      control=control,
+    )
+
+  @staticmethod
+  def _legacy_route_points(payload):
+    raw_points = payload.get("route_points", ()) if isinstance(payload, dict) else ()
+    points = []
+    for point in raw_points:
+      if not isinstance(point, (tuple, list)) or len(point) != 2:
+        continue
+      try:
+        latitude, longitude = float(point[0]), float(point[1])
+      except (TypeError, ValueError, OverflowError):
+        continue
+      if math.isfinite(latitude) and math.isfinite(longitude) and -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0:
+        points.append((latitude, longitude))
+    return tuple(points)
+
+  def _legacy_navigation_aux_updates(self, kind, payload, received_mono_s):
+    if kind == "route":
+      route_points = self._legacy_route_points(payload)
+      return {
+        "route_present": bool(route_points),
+        "route_received_mono_s": received_mono_s if route_points else None,
+        "route_points": route_points,
+      }
+    if kind == "destination":
+      destination = payload.get("destination") if isinstance(payload, dict) else None
+      if not isinstance(destination, (tuple, list)) or len(destination) != 2:
+        return None
+      try:
+        latitude, longitude = float(destination[0]), float(destination[1])
+      except (TypeError, ValueError, OverflowError):
+        return None
+      if not (math.isfinite(latitude) and math.isfinite(longitude)):
+        return None
+      return {
+        "destination": (latitude, longitude),
+        "destination_present": True,
+        "destination_received_mono_s": received_mono_s,
+      }
+    if kind == "traffic" and isinstance(payload, dict):
+      present = bool(payload.get("traffic_present", False))
+      return {
+        "traffic_present": present,
+        "traffic_received_mono_s": received_mono_s if present else None,
+        "traffic_visible": bool(payload.get("traffic_visible", False)) if present else False,
+        "traffic_distance_m": self._legacy_number(payload, "traffic_distance_m", 0.0) if present else 0.0,
+        "traffic_source": str(payload.get("traffic_source") or "") if present else "",
+        "traffic_lamp": str(payload.get("traffic_lamp") or "") if present else "",
+        "traffic_remain_s": self._legacy_integer(payload, "traffic_remain_s", 0) if present else 0,
+      }
+    return None
+
+  def update_legacy_navigation_aux(self, kind, payload, source, session_id, received_mono_s):
+    self._ensure_navigation_sources()
+    if source is not NavigationSource.TMAP_LEGACY or not isinstance(session_id, str) or not session_id:
+      return False
+    try:
+      received_mono_s = float(received_mono_s)
+      if not math.isfinite(received_mono_s) or received_mono_s < 0.0:
+        return False
+    except (TypeError, ValueError, OverflowError):
+      return False
+    updates = self._legacy_navigation_aux_updates(kind, payload, received_mono_s)
+    if updates is None:
+      return False
+
+    with self._navigation_projection_lock:
+      if session_id not in self._legacy_navigation_base_sessions:
+        self._legacy_navigation_pending.setdefault(session_id, {}).update(updates)
+        return False
+
+      previous = self._legacy_navigation_controls.get(session_id)
+      if previous is None:
+        return False
+      control = replace(previous, **updates)
+      sequence = self._legacy_navigation_sequences.get(session_id, 0) + 1
+      snapshot = NavigationSnapshot(
+        source=source,
+        session_id=session_id,
+        sequence=sequence,
+        lifecycle=NavigationLifecycle.GUIDING,
+        received_mono_s=received_mono_s,
+        activation_epoch=0,
+        control=control,
+      )
+      if not self.accept_navigation_snapshot(snapshot):
+        return False
+      self._legacy_navigation_sequences[session_id] = sequence
+      self._legacy_navigation_controls[session_id] = control
+      return True
+
+  def update(self, json, source=NavigationSource.TMAP_LEGACY, received_mono_s=None):
     def _f(v, default=0.0):
       return default if v is None else float(v)  
-    def _s(v, default=""):
-      return default if v is None else str(v)  
     if json is None:
       return
+    self._ensure_navigation_sources()
+    bound_source_value = json.get("_navigation_source", source)
+    try:
+      bound_source = NavigationSource(bound_source_value)
+    except (TypeError, ValueError):
+      bound_source = None
+    session_id = str(json.get("_navigation_session_id") or "tmap-legacy-compat")
+    receipt_value = received_mono_s
+    if receipt_value is None:
+      receipt_value = json.get("_navigation_received_mono_s")
+    try:
+      navigation_received_mono_s = float(receipt_value)
+      if not math.isfinite(navigation_received_mono_s) or navigation_received_mono_s < 0:
+        raise ValueError
+    except (TypeError, ValueError, OverflowError):
+      navigation_received_mono_s = time.monotonic()
     if "carrotIndex" in json:
       self.carrotIndex = int(json.get("carrotIndex") or self.carrotIndex + 1)
 
@@ -1443,90 +2477,29 @@ class CarrotServ:
       self.carrotArg = json.get("carrotArg")
       print(f"carrotCmd = {self.carrotCmd}, {self.carrotArg}")
 
-    self.active_count = 80
     now = time.monotonic()
 
-    if "goalPosX" in json:
+    if "goalPosX" in json and "nRoadLimitSpeed" not in json:
       gx = json.get("goalPosX")
       gy = json.get("goalPosY")
       if gx is not None and gy is not None:
-        self.goalPosX = float(json.get("goalPosX", self.goalPosX))
-        self.goalPosY = float(json.get("goalPosY", self.goalPosY))
-        self.szGoalName = json.get("szGoalName", self.szGoalName)
+        self.update_legacy_navigation_aux(
+          "destination",
+          {"destination": (gy, gx)},
+          bound_source,
+          session_id,
+          navigation_received_mono_s,
+        )
 
     if "nRoadLimitSpeed" in json:
-      #print(json)
-      self.active_sdi_count = self.active_sdi_count_max
-      ### roadLimitSpeed
-      nRoadLimitSpeed = int(json.get("nRoadLimitSpeed", 20))
-      if nRoadLimitSpeed > 0:
-        if nRoadLimitSpeed > 200:
-          nRoadLimitSpeed = (nRoadLimitSpeed - 20) / 10
-        elif nRoadLimitSpeed == 120:
-          nRoadLimitSpeed = 115 # 120 -> 115 fix bug
-      else:
-        nRoadLimitSpeed = 30
-      #self.nRoadLimitSpeed = nRoadLimitSpeed
-      if self.nRoadLimitSpeed != nRoadLimitSpeed:
-        self.nRoadLimitSpeed_counter += 1
-        if self.nRoadLimitSpeed_counter > 5:
-          self.nRoadLimitSpeed = nRoadLimitSpeed
-      else:
-        self.nRoadLimitSpeed_counter = 0
-
-      ### SDI
-      self.nSdiType = _i(json.get("nSdiType"), -1)
-      self.nSdiSpeedLimit = _i(json.get("nSdiSpeedLimit"), 0)
-      self.nSdiSection = _i(json.get("nSdiSection"), -1)
-      self.nSdiDist = _i(json.get("nSdiDist"), -1)
-      self.nSdiBlockType = _i(json.get("nSdiBlockType"), -1)
-      self.nSdiBlockSpeed = _i(json.get("nSdiBlockSpeed"), 0)
-      self.nSdiBlockDist = _i(json.get("nSdiBlockDist"), 0)
-
-      self.nSdiPlusType = _i(json.get("nSdiPlusType"), -1)
-      self.nSdiPlusSpeedLimit = _i(json.get("nSdiPlusSpeedLimit"), 0)
-      self.nSdiPlusDist = _i(json.get("nSdiPlusDist"), 0)
-      self.nSdiPlusBlockType = _i(json.get("nSdiPlusBlockType"), -1)
-      self.nSdiPlusBlockSpeed = _i(json.get("nSdiPlusBlockSpeed"), 0)
-      self.nSdiPlusBlockDist = _i(json.get("nSdiPlusBlockDist"), 0)
-      self.roadcate = _i(json.get("roadcate"), 0)
-
-      ## GuidePoint
-      self.nTBTDist = int(json.get("nTBTDist", 0))
-      self.nTBTTurnType = int(json.get("nTBTTurnType", -1))
-      self.szTBTMainText = _s(json.get("szTBTMainText"))
-      self.szNearDirName = _s(json.get("szNearDirName"))
-      self.szFarDirName = _s(json.get("szFarDirName"))
-
-      self.nTBTNextRoadWidth = int(json.get("nTBTNextRoadWidth", 0))
-      self.nTBTDistNext = int(json.get("nTBTDistNext", 0))
-      self.nTBTTurnTypeNext = int(json.get("nTBTTurnTypeNext", -1))
-      self.szTBTMainTextNext = json.get("szTBTMainText", "")
-
-      self.nGoPosDist = int(json.get("nGoPosDist", 0))
-      self.nGoPosTime = int(json.get("nGoPosTime", 0))
-      self.szPosRoadName = _s(json.get("szPosRoadName"))
-      if self.szPosRoadName == "null":
-        self.szPosRoadName = ""
-
-      self.vpPosPointLatNavi = float(json.get("vpPosPointLat", 0.0))
-      self.vpPosPointLonNavi = float(json.get("vpPosPointLon", 0.0))
-      if self.vpPosPointLatNavi != 0.0:
-        self.last_update_gps_time_navi = self.last_calculate_gps_time = now
-        self.nPosAngle = float(json.get("nPosAngle", self.nPosAngle))
-
-      self.nPosSpeed = float(json.get("nPosSpeed", self.nPosSpeed))
-      self._update_tbt()
-      self._update_sdi()
-      print(
-        f"sdi = {self.nSdiType}, {self.nSdiSpeedLimit}, {self.nSdiPlusType}, " +
-        f"tbt = {self.nTBTTurnType}, {self.nTBTDist}, " +
-        f"next = {self.nTBTTurnTypeNext}, {self.nTBTDistNext}"
+      snapshot = self._legacy_navigation_snapshot(
+        json, bound_source, session_id, navigation_received_mono_s,
       )
-      #print(json)
-    else:
-      #print(json)
-      pass
+      if snapshot is not None:
+        if self.accept_navigation_snapshot(snapshot):
+          self._legacy_navigation_controls[session_id] = snapshot.control
+          self._legacy_navigation_base_sessions.add(session_id)
+          self._legacy_navigation_pending.pop(session_id, None)
 
     # 3초간 navi 데이터가 없으면, phone gps로 업데이트
     if "latitude" in json:

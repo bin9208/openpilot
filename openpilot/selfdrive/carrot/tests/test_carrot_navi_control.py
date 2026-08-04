@@ -1,8 +1,12 @@
 from openpilot.selfdrive.carrot.carrot_navi_control import parse_carrot_navi_control
 
 
-def _meta(sequence=1, present=True):
-  return {"present": present, "sequence": sequence}
+def _meta(sequence=1, present=True, received_mono_ns=0):
+  return {
+    "present": present,
+    "sequence": sequence,
+    "receivedMonoTimeNanos": received_mono_ns,
+  }
 
 
 def _message(**overrides):
@@ -166,7 +170,7 @@ def test_parses_vehicle_route_traffic_and_secondary_sdi():
       "redOn": True,
       "redRemainSec": 18,
     },
-    laneCurrent={"meta": _meta(15), "roadCategory": 6},
+    laneCurrent={"meta": _meta(15), "roadCategoryValid": True, "roadCategory": 6},
     navigationStatus={"meta": _meta(14), "guidanceActive": True},
   ))
 
@@ -182,3 +186,34 @@ def test_parses_vehicle_route_traffic_and_secondary_sdi():
   assert (control.traffic.lamp, control.traffic.remain_sec) == ("red", 18)
   assert control.road_category == 6
   assert control.guidance_active
+
+
+def test_parses_item_receipt_time_and_lane_category_validity():
+  control = parse_carrot_navi_control(_message(
+    speed={"meta": _meta(7, received_mono_ns=7_000_000_001)},
+    guidanceCurrent={"meta": _meta(8, received_mono_ns=8_000_000_002)},
+    laneCurrent={
+      "meta": _meta(9, received_mono_ns=9_000_000_003),
+      "roadCategoryValid": True,
+      "roadCategory": 8,
+    },
+  ))
+
+  assert control is not None
+  assert control.speed.received_mono_time_nanos == 7_000_000_001
+  assert control.current.received_mono_time_nanos == 8_000_000_002
+  assert control.lane_sequence == 9
+  assert control.lane_received_mono_time_nanos == 9_000_000_003
+  assert control.road_category_valid is True
+  assert control.road_category == 8
+
+  missing = parse_carrot_navi_control(_message(laneCurrent={
+    "meta": _meta(10, received_mono_ns=10_000_000_004),
+    "roadCategoryValid": False,
+    "roadCategory": 0,
+  }))
+  assert missing is not None
+  assert missing.lane_sequence == 10
+  assert missing.lane_received_mono_time_nanos == 10_000_000_004
+  assert missing.road_category_valid is False
+  assert missing.road_category is None

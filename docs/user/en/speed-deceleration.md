@@ -38,6 +38,33 @@ If raising one value produces no change, another source may already be lower. Ch
 > [!NOTE]
 > CarrotMan and CarrotLink are not currently supported. Features requiring external route, turn-by-turn, or road input may be unavailable in a given setup; describing their internal calculations does not imply support for those former connection methods.
 
+### Navigation guidance owner and safety-deceleration provider are different
+
+Tmap, Naver, and Carrot Navi v2 inputs are kept in separate per-source states. A newly activated
+guidance session can become the guidance owner, and a fresh owner does not keep changing merely
+because another source sends a later frame. Valid safety information from the selected Tmap/Naver
+navigation source is authoritative and is used without taking the lower value against HDA. HDA is
+selected in the same control cycle only when the app safety item is missing, stale, or unusable and
+both the HDA limit and distance are valid. HDA, model, route, and curve candidates are not disabled
+merely because an external-navigation connection is absent.
+
+APN represents the currently guiding app, not HDA-only operation. APN can therefore remain visible
+while Naver owns guidance and HDA supplies fallback safety information. Conversely, HDA without a
+guiding app does not show APN. In diagnostics, `naviOwner` identifies the guidance owner,
+`decelProvider`/`decelReason` identify the safety item selected in that control cycle, and
+`desiredSource` identifies the final winner across all speed candidates, including model and route
+candidates.
+
+The guidance leases are 2 seconds for Naver, 4 seconds for legacy Tmap, and 10 seconds for Carrot
+Navi v2. v2 guidance, speed, and lane items share a 10-second TTL based on local monotonic receipt
+time. TCP EOF, reset, or timeout records transport loss for the exact source/session but does not
+immediately clear guidance. A `stopped` or `arrived` envelope tombstones that session, so a later
+frame cannot reactivate it even with a higher sequence; new guidance requires a new session ID.
+
+No patched Tmap APK is required by this C3 source-selection change. The Naver behavior described
+here is conditional on receiving a valid `naver.navigation.v1` frame; it does not claim that a
+particular Naver APK or real-vehicle reception has been validated.
+
 ### Catalog defaults and initial Params can differ
 
 | Parameter | Catalog default | Initial Params value |
@@ -156,7 +183,18 @@ For `-1`, a non-negative offset selects limit + offset; a negative offset select
 <a id="speed-bump"></a>
 ## 3. Speed bumps
 
-Speed-bump control requires `AutoNaviSpeedCtrlMode >= 2`, a bump event and distance, and a road category that the code does not treat as highway.
+Speed-bump control requires `AutoNaviSpeedCtrlMode >= 2` plus a bump event and distance. For ordinary navigation input, the road category must also not be treated as highway.
+
+For Carrot Navi v2, a valid road category from the same snapshot is applied before the bump speed,
+and a lane-only category change re-evaluates the existing bump. An explicit road category `0` or
+`1` is treated as a highway-class road and can suppress a type-22 speed bump. A missing category is
+not treated as a valid zero; the last valid category is retained while it remains within the
+10-second TTL.
+
+Naver v1 is a narrow exception: a type-22 event positively identified by the production mapper
+through Naver's `SafetyCode.isSpeedBump()` may slow for a bump when Naver supplies no road
+category. The code does not synthesize a category, and an explicit category `0` or `1` still blocks
+the Naver bump just as it does for other navigation sources.
 
 ### `AutoNaviSpeedBumpSpeed`
 
@@ -289,6 +327,11 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 ## Code references
 
 - Event/limit/bump/turn candidate selection: `openpilot/selfdrive/carrot/carrot_serv.py`
+- Navigation snapshots, ownership, and safety selection: `openpilot/selfdrive/carrot/navigation_sources.py`
+- Legacy/Naver ingress boundary: `openpilot/selfdrive/carrot/navigation_ingress.py`
+- Naver v1 envelope validation: `openpilot/selfdrive/carrot/naver_navigation_protocol.py`
+- Carrot Navi v2 parsing and 10-second TTL: `openpilot/selfdrive/carrot/carrot_navi_control.py`
+- Carrot Navi v2 cereal conversion: `openpilot/selfdrive/carrot/carrot_navi_cereal.py`
 - Vision-curve speed: `openpilot/selfdrive/carrot/carrot_man.py`
 - Future-model speed: `openpilot/selfdrive/controls/lib/desire_helper.py`
 - Automatic road/model set speed: `openpilot/selfdrive/car/cruise.py`

@@ -64,10 +64,15 @@
     },
     {
       "id": "speed-deceleration",
-      "description": "카메라, 제한속도, 방지턱, 커브와 턴 감속",
+      "description": "내비 소스 선택, 카메라, 제한속도, 방지턱, 커브와 턴 감속",
       "code_paths": [
         "openpilot/selfdrive/carrot/carrot_serv.py",
         "openpilot/selfdrive/carrot/carrot_man.py",
+        "openpilot/selfdrive/carrot/navigation_sources.py",
+        "openpilot/selfdrive/carrot/navigation_ingress.py",
+        "openpilot/selfdrive/carrot/naver_navigation_protocol.py",
+        "openpilot/selfdrive/carrot/carrot_navi_control.py",
+        "openpilot/selfdrive/carrot/carrot_navi_cereal.py",
         "openpilot/selfdrive/controls/lib/desire_helper.py"
       ],
       "doc_sets": [

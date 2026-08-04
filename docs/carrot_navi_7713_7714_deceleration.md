@@ -3,9 +3,9 @@
 ## 확인 기준
 
 - 저장소: `ajouatom/openpilot`
-- 브랜치: `origin/thftgr/navi-stream`
-- 커밋: `4488bd591b26dad1b9d44a6f3890336a0ba25ec8`
-- 확인일: 2026-07-16
+- 기준 베이스: `upstream/carrot-wip` (`79a2a542020b0feb0600297f906cf0afedb6d6ff`)
+- 구현: 소스별 snapshot arbitration과 Naver v1 ingress가 통합된 현재 코드
+- 확인일: 2026-07-23
 - 범위: 수신, 파싱, `CarrotServ` 상태 반영, 감속 목표 선택, 종방향 계획 반영, UI 표시
 
 ## 핵심 결론
@@ -14,17 +14,21 @@
 `CarrotServ.update_navi()`를 통해 `carrotMan.desiredSpeed`와 `desiredSource`를 만든다. 따라서 같은
 `xSpdType/xSpdLimit/xSpdDist`, TBT, 경로 상태에 도달한 뒤의 감속 공식과 UI source 표시는 같다.
 
-그러나 두 포트가 동시에 활성화될 때의 명시적 우선순위나 소스별 상태 분리는 없다. 양쪽이 같은
-`CarrotServ` 필드를 직접 갱신하므로 마지막으로 실제 필드를 쓴 입력이 이긴다. 7714의 동일 sequence
-heartbeat는 SDI 필드를 다시 쓰지 않기 때문에, 그 사이 들어온 7713 값이 다음 7714 speed sequence까지
-남을 수 있다.
+현재 구현은 Tmap legacy, Carrot Navi v2와 Naver v1 입력을 소스별 immutable snapshot으로 분리한다.
+`NavigationSourceStore`는 새 안내 활성화에 activation epoch를 부여하고, fresh한 현재 owner를
+sticky하게 유지한다. 따라서 단순한 마지막 frame 순서로 안내 소유권이나 type/limit/distance가
+뒤섞이지 않는다.
 
-실제 운용 전제는 두 포트를 동시에 사용하지 않는 것이다. 각 포트를 단독 사용하면 7713의 핵심 감속
-항목에 대응하는 7714 코드 경로는 존재한다. 그러나 **7714 primary type 22 방지턱은 수신만으로 감속이
-보장되지 않는다.** 두 비교 브랜치 모두 `lane_current.road_category` 처리 순서와 기본값 때문에
-`xSpdType=22` 후보가 생성되지 않을 수 있다. 특히 lane item에 `road_category`가 빠지면 cereal 변환값이
-0이 되고, `roadcate > 1` gate에서 방지턱이 계속 탈락한다. 이는 7713은 감속하지만 7714는 감속하지 않는
-현장 증상을 코드상 재현한다.
+선택된 Tmap/Naver 소스의 안전정보가 fresh하고 제어 가능한 경우 그 정보가 권위가 있으며 HDA와 더
+낮은 값을 비교하지 않는다. 선택 소스의 안전정보가 없거나 stale/unusable일 때만 같은 제어 cycle에서
+유효한 HDA limit/distance로 fallback한다. 안내 owner와 안전 감속 provider는 별도 상태이므로
+`naviOwner=naver_v1`, `decelProvider=hda`가 동시에 정상적으로 발행될 수 있다. HDA, model, route,
+curve 후보는 외부 내비 lease로 gate하지 않는다.
+
+7714 primary type 22는 현재 snapshot의 유효한 `lane_current.road_category`를 speed보다 먼저 적용한
+뒤 평가한다. lane sequence, category validity 또는 freshness만 바뀌어도 현재 speed projection을
+다시 평가한다. category key 누락은 유효한 0이 아니며 마지막 fresh 유효값을 보존하고, 명시적 0/1만
+고속도로 계열로서 방지턱을 차단한다.
 
 ## 7713 → 7714 핵심 감속 parity
 
@@ -36,7 +40,7 @@ heartbeat는 SDI 필드를 다시 쓰지 않기 때문에, 그 사이 들어온 
 | `nSdiBlockSpeed` | `speed.sdi.block_speed_kph` | 양쪽 모두 수신/저장만 하고 감속 제한속도로 사용하지 않음 |
 | `nSdiPlusType/Dist`의 type 22 | `speed.sdi_secondary.type/distance_m`의 type 22 | primary 감속 분기가 없을 때 동일 적용 |
 | `nSdiPlusSpeedLimit`, plus block fields | secondary speed/block fields | 양쪽 모두 감속 미적용 |
-| `roadcate` | `lane_current.road_category` | 최종 gate는 같지만 갱신 순서가 다름. 7713은 같은 packet 값을 먼저 적용하고, 7714는 SDI 판정 후 적용 |
+| `roadcate` | `lane_current.road_category` + `roadCategoryValid` | 양쪽 모두 유효 category를 SDI보다 먼저 적용. 7714는 lane-only 변경에도 기존 speed를 재평가하며 누락과 명시적 0을 구분 |
 | 현재/다음 TBT type, distance | `guidance_current/next` type, distance | 동일 적용 |
 | `nTBTNextRoadWidth` | 직접 대응 control mapping 없음 | 7714에서 누락. 다만 현재 코드는 감속 목표속도 공식에는 쓰지 않고 ATC type 전환 거리/표시에만 사용 |
 | route/vrtx polyline | `route.polyline` | 동일 곡률 감속 적용. 7713 최대 4096점, 7714 최대 256점 |
@@ -65,9 +69,11 @@ heartbeat는 SDI 필드를 다시 쓰지 않기 때문에, 그 사이 들어온 
 1. 상시 `carrot_navi` 프로세스가 WebSocket v2 스트림을 수신한다.
 2. item별 presence, sequence와 session을 검사하고 `carrotNavi` cereal service로 2 Hz heartbeat를
    발행한다.
-3. `carrot_man`이 `CarrotNaviControl`로 파싱한 뒤 기존 `CarrotServ` 필드로 변환한다.
-4. speed item은 새 session, off-route 변경 또는 speed sequence 변경 시에만 다시 적용한다. 동일
-   sequence heartbeat에서는 로컬에서 차감 중인 거리를 보존한다.
+3. `carrot_man`이 `CarrotNaviControl`로 파싱하고 로컬 수신 monotonic 시간과 item sequence를 보존한
+   source snapshot을 `NavigationSourceStore`에 넣는다.
+4. guidance/speed/lane은 공유 `V2_ITEM_TTL_S=10.0`을 사용한다. speed sequence가 같아도 lane
+   sequence, category validity 또는 freshness가 바뀌면 projection revision을 올려 다시 적용한다.
+   단순 cereal heartbeat에서는 로컬에서 차감 중인 거리를 보존한다.
 
 ## SDI wire JSON 구조
 
@@ -172,14 +178,14 @@ heartbeat는 SDI 필드를 다시 쓰지 않기 때문에, 그 사이 들어온 
 | 0 | 고속도로 | 차단 |
 | 1 | 도시고속도로/자동차전용도로 계열 | 차단 |
 | 2 이상 | 일반도로 계열로 취급 | 허용 |
-| 누락 | lane item이 present이면 cereal에서 0으로 변환 | 차단 |
+| 누락/invalid | `roadCategoryValid=false`; 유효한 0으로 덮지 않고 마지막 fresh 유효값 유지 | 마지막 유효값에 따름 |
 
 TMAP 데이터 정의의 `roadcate` 표는 0 고속국도, 1 도시고속화도로, 2 국도, 3 국가지원지방도,
 4 지방도, 5 주요도로1, 6 주요도로2, 7 주요도로3, 8 기타도로1, 9 이면도로, 10 페리항로,
 11 단지내도로, 12 이면도로2(세도로)다. 필드명과 0/1 의미가 코드 주석과 정확히 일치하므로 이 값의
 원천으로 볼 수 있다. 다만 7714 protocol 문서 자체에는 enum이 선언되어 있지 않으며 openpilot 제어는
-세부 등급을 구분하지 않고 `0/1` 대 `2 이상`만 사용한다. 초기값 8은 실제 지도 판정이 아니라 수신 전
-fallback이고, 결과적으로 방지턱을 허용한다.
+세부 등급을 구분하지 않고 `0/1` 대 `2 이상`만 사용한다. 수신 전에 임의의 일반도로 기본값으로
+방지턱을 허용하지 않으며, key presence와 숫자 validity가 확인된 category만 새 유효값으로 저장한다.
 
 ```json
 {
@@ -230,7 +236,7 @@ SDI를 지울 때는 더 큰 sequence로 `present: false`, `value: null`, 비어
 | 이동식 카메라 | type 7 | type 7 | mode 3에서만 적용. mode 1/2에서는 `_update_sdi()`가 limit/dist를 0으로 지움 | `cam` |
 | 구간단속(block) | `nSdiBlockType` 2/3, block distance | primary SDI block type 2/3, block distance | type을 4로 바꾸고 block distance 사용. 단, block speed는 사용하지 않고 primary SDI speed에 안전계수를 적용 | `section` |
 | 7714 전용 section object | 없음 | `section.active`, speed limit, remaining distance | present + active + not suspended + section off-route 아님 + 전체 off-route 아님 + limit > 0일 때 type 4로 변환 | `section` |
-| 방지턱 | primary/plus type 22 | primary/secondary type 22 | `roadcate > 1`, mode >= 2. payload speed는 무시하고 `AutoNaviSpeedBumpSpeed` 사용. 단, 7714는 road category 갱신 순서/기본값 문제로 type 22가 수신되어도 후보 생성에 실패할 수 있음 | `bump` |
+| 방지턱 | primary/plus type 22 | primary/secondary type 22 | mode >= 2이고 fresh category가 존재하며 0/1이 아닐 때 적용. 단, Naver v1 mapper가 `SafetyCode.isSpeedBump()`로 검증한 type 22는 category가 없을 때도 적용한다. 모든 source에서 명시적 0/1은 차단한다. 7714는 같은 snapshot category를 speed보다 먼저 적용하고 lane-only 변경에도 재평가. payload speed는 무시하고 `AutoNaviSpeedBumpSpeed` 사용 | `bump` |
 | 도로 제한속도 | `nRoadLimitSpeed` | `road_limit_kph` | `AutoRoadSpeedLimitOffset >= 0`, active >= 2, road limit valid일 때 limit+offset | `road` |
 | 현재 TBT | `nTBTTurnType/nTBTDist` | `guidance_current.turn_type/distance_m` | 지원 turn type이 `xTurnInfo`로 변환되고 `AutoTurnControl`이 2 또는 3일 때 속도 목표 계산 | `atc` |
 | 다음 TBT | `nTBTTurnTypeNext/nTBTDistNext` | `guidance_next` | 현재 거리 + 다음 거리를 사용하고 같은 ATC 설정 적용 | `atc2` |
@@ -271,39 +277,37 @@ section/camera 분기가 secondary 방지턱보다 먼저다.
 
 ## 7713과 7714의 중요한 동작 차이
 
-### Primary type 22 방지턱의 결정적 차이
+### Primary type 22 category-before-speed 동작
 
-7713 `update(json)`의 처리 순서는 다음과 같다.
+7713 `update(json)`은 같은 packet의 `roadcate`를 저장한 뒤 `_update_sdi()`를 호출한다. 현재 7714
+`_update_carrot_navi()`도 같은 의미를 보장한다.
 
-1. `nSdiType/nSdiDist`를 저장한다.
-2. 같은 JSON의 `roadcate`를 저장한다.
-3. 마지막에 `_update_sdi()`를 호출한다.
+1. `roadCategoryValid=true`인 fresh lane category를 먼저 적용한다.
+2. 그 뒤 current speed snapshot을 projection한다.
+3. lane sequence, category validity 또는 freshness가 변하면 speed sequence가 같아도 projection을
+   다시 실행한다.
+4. lane category key가 누락되거나 invalid이면 유효한 0으로 만들지 않고 마지막 fresh 유효값을
+   보존한다.
+5. 10초 TTL 경계에서 stale speed/category projection을 지우고 `projection_revision`을 올린다.
 
-따라서 같은 packet의 `roadcate=8`, `nSdiType=22`, `nSdiDist=93`은 곧바로
-`xSpdType=22`, `xSpdLimit=AutoNaviSpeedBumpSpeed`, `xSpdDist=93`이 된다.
+| 입력 | 결과 |
+|---|---|
+| 같은 snapshot의 category 8 + primary type 22/dist 93 | 즉시 `xSpdType=22`, bump 설정속도, distance 93 |
+| 기존 category 0 뒤 lane-only category 8 | 기존 type 22 speed를 즉시 재평가하여 허용 |
+| category key 누락/invalid | 마지막 fresh 유효 category 유지; 명시적 0으로 간주하지 않음 |
+| 명시적 category 0 또는 1 | 고속도로 계열 gate로 type 22 차단 |
+| Naver v1 category 없음 + mapper가 검증한 type 22 | category를 합성하지 않고 방지턱 허용 |
+| Tmap/Carrot Navi category 없음 | `road_category_missing`으로 차단하고 HDA 후보로 fallback |
+| category/speed 수신 후 정확히 10초 | stale projection clear |
 
-7714 `_update_carrot_navi()`는 반대 순서다.
+과거 `origin/carrot-wip`과 `origin/thftgr/navi-stream`의 비교 대상 커밋에는 speed를 먼저 판정하고
+category를 나중에 저장하는 순서 결함이 있었다. 위 표는 그 역사적 결함이 아니라 현재 통합 구현의
+동작이다.
 
-1. speed sequence가 바뀌면 `_apply_carrot_navi_speed()`를 호출한다.
-2. 그 안의 `_update_sdi()`가 **이전 `self.roadcate`**로 방지턱을 판정한다.
-3. 그 뒤에야 현재 `navi.road_category`를 `self.roadcate`에 저장한다.
-
-또한 lane sequence만 바뀐 경우 `_update_sdi()`를 다시 호출하지 않는다. 그래서 이전 road category가
-0/1이면 같은 7714 snapshot에 새 `road_category=8`이 있어도 그 speed item은 일단 탈락한다. 다음 speed
-sequence에서 다시 평가되어야 살아난다. 더 심각하게는 present인 `lane_current`에 `road_category` key가
-없으면 `carrot_navi_cereal._lane()`이 기본값 0을 넣고 control parser가 이를 유효한 road category로
-받는다. 이 상태에서는 이후 type 22 speed sequence도 계속 0을 보고 탈락한다.
-
-두 브랜치의 실제 `_update_sdi()`를 추출해 같은 상태로 실행한 결과는 동일했다.
-
-| 처리 | `xSpdType` | `xSpdLimit` | `xSpdDist` |
-|---|---:|---:|---:|
-| 7713 순서: 먼저 `roadcate=8`, 이후 type 22 판정 | 22 | 22 | 93 |
-| 7714 순서: 이전 `roadcate=0`으로 판정, 이후 8 저장 | -1 | 0 | 0 |
-| 그 다음 speed sequence에서 8로 재판정 | 22 | 22 | 93 |
-
-이는 `origin/carrot-wip`과 `origin/thftgr/navi-stream` primary type 22에 공통이다. `navi-stream`의
-secondary SDI/route 확장은 이 primary gate 문제를 고치지 않는다.
+Naver 예외는 production mapper의 exact safety-code 판정에만 적용한다. 숫자 type 22만 임의로 만든
+다른 source에는 확장하지 않으며, Naver snapshot에 category 0/1이 명시되면 예외보다 highway gate가
+우선한다. 실제 production Naver safety 이벤트의 기기 수용 여부는 Task 15 실주행 검증 전까지 완료로
+간주하지 않는다.
 
 ### 도로 제한속도
 
@@ -319,21 +323,26 @@ secondary SDI/route 확장은 이 primary gate 문제를 고치지 않는다.
   제한속도는 유효하면 남긴다.
 - 7713에는 off-route gate가 없다. 앱이 clear 값이나 새 값을 보내거나 active timer가 끝날 때까지
   기존 값이 유지된다.
-- 7714는 control WebSocket disconnect 또는 `connected=false`가 cereal로 전달되면 speed/TBT/route
-  control 상태를 명시적으로 지운다.
-- 7713 rgdata는 매 수신 시 `active_count=80`이다. 20 Hz loop 기준 약 4초 동안 새 rgdata가 없으면
-  active가 꺼진다. `active_sdi_count=200`은 단독으로 active를 유지하지 않는다.
-- 7714 receiver는 manifest에 stale timeout을 광고하지만 receiver 자체에서 JSON item을 시간으로
-  expire하지는 않는다. control socket이 살아 있고 tombstone이 오지 않으면 같은 item을 heartbeat로
-  계속 발행한다. 거리는 차량 이동량만큼 로컬 차감되지만 정차 중인 stale SDI/road limit은 남을 수 있다.
+- TCP EOF, reset 또는 timeout은 `record_transport_loss(source, exact_session_id, now)`로 해당 연결에서
+  실제 확인된 source/session의 transport loss만 기록한다. active snapshot이나 owner를 즉시 지우지
+  않는다.
+- 명시적 `stopped`/`arrived` envelope는 즉시 terminal 상태가 되며 `(source, session_id)` tombstone을
+  남긴다. 같은 session은 더 큰 sequence로도 재활성화할 수 없고 새 안내에는 새 session ID가 필요하다.
+- terminal envelope가 없으면 Naver는 2초, legacy Tmap은 4초, Carrot Navi v2는 10초 owner lease
+  경계에서 논리적으로 release된다.
+- lease expiry는 terminal tombstone이 아니다. 같은 nonterminal session이 나중에 재개할 수는 있지만
+  기존 activation epoch를 유지하므로 현재 fresh owner를 빼앗지 않는다.
 
 ### 순서와 freshness
 
 - 7713 rgdata는 양수 timestamp가 있을 때 하나의 전역 `last timestamp`보다 큰지만 검사한다. timestamp가
   없거나 0이면 검사하지 않으며, client 재접속 때 counter를 reset하지 않는다.
 - 7714는 새 협상마다 session을 만들고 item stream별 strictly increasing sequence를 검사한다.
-- 7714 cluster raw 패널은 별도로 speed 등 일반 item 6초, status 10초, route 30초 TTL을 적용하지만,
-  이 UI TTL은 `CarrotServ` control parser에는 적용되지 않는다.
+- 7714 guidance current/next, speed와 lane은 `carrot_navi_control.V2_ITEM_TTL_S=10.0`을 service와
+  cluster가 함께 사용한다. local `receivedMonoTimeNanos`만 freshness 기준이며 phone wall-clock은
+  제어 TTL에 사용하지 않는다.
+- vehicle/crossroad, status, route, traffic 같은 다른 cluster 표시 item의 TTL은 별도이며 이 10초
+  guidance/speed/lane 계약과 혼동하면 안 된다.
 
 ### route
 
@@ -344,18 +353,42 @@ secondary SDI/route 확장은 이 primary gate 문제를 고치지 않는다.
 
 ### 동시 수신 충돌
 
-- 포트별 별도 `CarrotServ` state나 fixed priority가 없다.
-- 7713 HTTP handler thread와 20 Hz control/update thread 사이에 `CarrotServ` state를 보호하는 lock도
-  없다. 여러 attribute를 갱신하는 도중 main loop가 읽을 수 있어, 엄밀히는 단순 last-writer뿐 아니라
-  서로 다른 입력의 type/limit/dist가 일시적으로 섞일 가능성도 있다.
-- 7713 rgdata가 들어오면 shared speed/TBT 필드를 즉시 덮어쓴다.
-- 7714는 새 speed sequence일 때만 speed 필드를 덮어쓴다. 동일 sequence heartbeat는 7713이 바꾼
-  값을 복원하지 않는다.
-- 7714가 연결되어 있지만 7714 speed에 valid road limit이 없으면, `carrot_navi_active=true` 때문에
-  7713이 채운 road limit의 `road` 후보가 비활성화될 수 있다.
-- 따라서 두 포트를 동시에 제어 입력으로 쓰는 것은 결정적 우선순위를 보장하지 않는다.
+- Tmap legacy, Carrot Navi v2와 Naver v1은 각각 완전한 frozen `NavigationSnapshot`으로 저장된다.
+- `NavigationSourceStore`의 `RLock` 아래에서 accept/select를 수행하므로 source 간
+  type/limit/distance가 섞이지 않는다.
+- inactive→guiding 또는 새 session 전환에서만 activation epoch를 올린다. 더 새로 활성화된 안내가
+  owner가 될 수 있지만, fresh owner가 정해진 뒤 다른 source의 단순 후속 frame은 owner를 흔들지 않는다.
+- terminal/stale owner가 사라지면 같은 select cycle에 다음 fresh owner 또는 no-owner 상태로
+  원자적으로 전환한다.
+- owner와 safety provider는 분리되어 있으므로 안내 owner가 유지되는 동안에도 safety absent/stale
+  조건에서 `decelProvider=hda`를 사용할 수 있다.
 
 ## UI 표시 확인
+
+### 안내 owner, 안전 provider와 APN
+
+현재 `carrotMan` 진단은 안내 소유권과 안전 감속 선택을 다음 필드로 분리한다.
+
+| 필드 | 의미 |
+|---|---|
+| `naviOwner` | 현재 guiding owner: `tmap_legacy`, `carrot_navi_v2`, `naver_v1` 또는 빈 값 |
+| `naviSessionId`, `naviSequence` | 선택 owner snapshot의 session과 sequence |
+| `naviOwnerAgeMs` | local monotonic receipt 기준 owner age; 없으면 `-1` |
+| `naviSafetyAgeMs` | 선택 owner의 안전 item age; 없으면 `-1` |
+| `naviLifecycle` | `idle`, `guiding`, `stopped`, `arrived` lifecycle |
+| `naviControlAllowed` | 선택 owner 안전정보의 제어 허용 여부 |
+| `naviSafetyRejection` | `safety_absent`, `safety_stale`, `off_route` 등 bounded rejection token |
+| `decelProvider`, `decelReason` | 그 cycle에 실제 선택한 navigation/HDA 안전 후보와 이유 |
+
+`naviOwner`는 guidance를, `decelProvider`는 safety candidate를 설명한다. 따라서 Naver guidance와 HDA
+fallback이 동시에 표시되는 것은 모순이 아니다. `desiredSource`는 이 안전 후보뿐 아니라 ATC, road,
+route, model 등 모든 속도 후보 중 최종 winner이므로 `decelProvider`와 다를 수 있다. 기존
+`desiredSource` token은 호환성을 위해 유지한다.
+
+APN/`activeCarrot`은 guiding owner에서 시작한다. fresh owner는 기본 active 2이고 선택된
+camera/section/bump에 따라 3/4/5가 될 수 있다. HDA는 APN을 켜거나 올리지 않는다. 따라서 HDA-only는
+APN이 아니지만, 안내 owner가 있고 안전정보만 HDA로 fallback한 cycle에는 APN이 유지될 수 있다.
+옛 log에 새 필드가 없으면 cluster/Web은 기존 generic source 표시로 fallback한다.
 
 ### 실제 감속 source 표시
 
@@ -383,9 +416,10 @@ on-road UI, mici UI, cluster live UI는 모두 다음 조건에서 실제 source
 ### 방지턱에서 `route 30`이 표시되는 경우
 
 `desiredSource`는 현재 들어온 이벤트 type을 그대로 표시하는 값이 아니라, 실제로 생성된 후보 중 가장
-낮은 속도를 만든 후보의 이름이다. 따라서 `route 30`은 두 경우 모두 가능하다. (1) 정상 생성된 bump
-후보보다 route가 낮거나, (2) 위 road category 문제로 bump 후보 자체가 생성되지 않은 경우다. 7714만
-실제 감속하지 않았다는 관측까지 합치면 두 번째 경우를 먼저 의심해야 한다.
+낮은 속도를 만든 후보의 이름이다. 따라서 `route 30`은 정상 생성된 bump 후보보다 route가 낮거나,
+명시적 category 0/1, mode, off-route, stale/invalid safety 같은 gate로 bump 후보가 생성되지 않은
+경우에 가능하다. 과거 category 처리 순서 결함은 현재 구현에서 수정되었으므로 누락 category나
+lane-only 변경 자체를 순서 결함으로 진단하면 안 된다.
 
 - 방지턱 후보는 `AutoNaviSpeedBumpSpeed`를 도착 목표로 하여 거리 기반 감속 속도를 계산한다. 목표속도가
   30 km/h여도 방지턱에 도달하기 전 계산값은 보통 30보다 조금 크다. 기본 목표는 35 km/h다.
@@ -394,7 +428,7 @@ on-road UI, mici UI, cluster live UI는 모두 다음 조건에서 실제 source
 - UI에 발행하는 `desiredSpeed`는 `int()`로 소수점을 버린다. 내부적으로 route가 30.0, bump가 30.x이면
   둘 다 화면에는 30처럼 보일 수 있지만 route가 엄밀히 더 낮아 source는 `route`가 된다.
 - 속도가 완전히 같은 경우에는 후보 list에서 먼저 나오는 SDI/bump가 이긴다. 따라서 `route 30`은 내부
-  route 값이 실제로 더 낮았거나, 방지턱이 `roadcate > 1`, mode >= 2 등의 조건을 통과하지 못했다는 뜻이다.
+  route 값이 실제로 더 낮았거나, 방지턱이 category/mode/freshness 등의 조건을 통과하지 못했다는 뜻이다.
 - route 곡률은 현재 위치부터 약 300 m 경로를 사용하고 뒤에서 앞으로 감속속도를 전파한다. 전방의 실제
   급커브뿐 아니라 polyline의 꺾임/노이즈도 route 값을 30까지 낮출 수 있으며, 방지턱 type 자체를 route로
   변환하는 로직은 없다.
@@ -403,8 +437,9 @@ on-road UI, mici UI, cluster live UI는 모두 다음 조건에서 실제 source
   mode 3/4에서는 route 후보가 항상 활성화된다.
 
 현장에서 `carrotMan.xSpdType == 22`이고 `activeCarrot == 5`이면 방지턱 자체는 정상 인식된 상태에서
-route가 더 낮아 이긴 것이다. `xSpdType == -1`이면 7714의 raw SDI가 UI에 보여도 방지턱 제어 후보는
-없으며, `lane_current.road_category`, speed sequence, off-route를 먼저 확인해야 한다.
+route가 더 낮아 이긴 것이다. `xSpdType == -1`이면 raw SDI가 UI에 보여도 방지턱 제어 후보는 없으며,
+`naviOwner`, `naviSafetyRejection`, `naviSafetyAgeMs`, 명시적 `lane_current.road_category`, mode와
+off-route를 함께 확인해야 한다.
 
 ### 현장 설정 사례: bump 22 km/h, route/curve 하한 18 km/h
 
@@ -460,9 +495,9 @@ km/h다.
 
 - 7714 primary 또는 secondary SDI type 22가 있어야 한다. secondary type 22는 적용 가능한 primary
   camera/section이 있으면 무시된다.
-- `road_category > 1`이어야 한다. lane item이 전혀 없으면 마지막 값/초기값 8이 남지만, lane item은
-  present이고 key만 빠지면 0으로 변환되어 방지턱을 차단한다. 앱은 `lane_current.road_category`를 반드시
-  명시하고 speed보다 먼저 또는 적어도 다음 speed sequence 전에 유효값이 반영되게 해야 한다.
+- 명시적인 fresh `road_category`가 0/1이면 방지턱을 차단한다. key 누락/invalid는 유효한 0으로
+  덮지 않고 마지막 fresh 유효값을 유지한다. 같은 snapshot의 category는 speed보다 먼저 적용되고
+  lane-only 변경도 즉시 기존 speed를 재평가한다.
 - `navigation_status.off_route=true`이면 7714 SDI가 억제된다.
 - `HapticFeedbackWhenSpeedCamera=1`은 현재 checkout에서 Param 등록/설정 UI 외에 읽는 코드가 없어
   방지턱 감속이나 실제 햅틱에 영향을 주지 않는다.
@@ -483,12 +518,24 @@ km/h다.
   확인하여 suspended/section off-route도 반영하지 않는다. 따라서 control parser가 감속을 억제해도
   패널에는 SDI 또는 SECTION이 보일 수 있다.
 
+## APK와 지원 범위
+
+이 C3 source arbitration은 수정된 Tmap APK를 요구하지 않으며 기존 Tmap 입력 계약을 보존한다. Naver는
+`naver.navigation.v1` envelope가 TCP 7712로 실제 수신될 때만 `naver_v1` source가 된다. 이 문서의
+Naver projection 설명은 C3 정책과 synthetic envelope 검증 범위이며, 특정 Naver 6.8.0.5 APK에서 실제
+안내·카메라·방지턱 frame이 도착했다는 실차 acceptance 주장은 아니다.
+
 ## 검증 근거
 
-- 7714 control parser의 focused test 함수들은 현재 체크아웃에서 직접 실행하여 통과했다.
-- 저장소의 `test_carrot_navi_serv.py`는 일반 7714 SDI/section/secondary 상태 반영, disconnect clear 및
-  legacy 7713 경로를 단언하지만, primary type 22의 road-category 순서를 end-to-end로 단언하지 않는다.
-- 두 브랜치의 실제 `_update_sdi()` 함수로 `roadcate=8`인 7713 순서와 이전값 0인 7714 순서를 별도로
-  실행하여 각각 `(22,22,93)`과 `(-1,0,0)`을 재현했다.
-- `test_carrot_navi_route_bridge.py`는 양쪽 route 경로와 7714 tombstone/disconnect ownership을 단언한다.
-- Windows 환경에는 전체 openpilot Linux 의존성과 pytest가 없어 전체 test suite는 실행하지 못했다.
+- `test_navigation_sources.py`는 sticky owner, exact-session transport loss, lease boundary, terminal
+  tombstone, owner/provider 분리와 concurrent accept/select 계약을 다룬다.
+- `test_carrot_navi.py`, `test_carrot_navi_control.py`, `test_carrot_navi_serv.py`는
+  `roadCategoryValid`, same-frame category-before-speed, lane-only 재평가, missing/explicit category
+  구분과 10초 expiry 계약을 다룬다.
+- `test_cluster_navi.py`는 service와 cluster가 같은 `V2_ITEM_TTL_S == 10.0`을 사용하는지 단언한다.
+- `test_carrot_navi_speed_selection.py`는 selected app authority, same-cycle HDA fallback, APN과
+  navigation-owner/deceleration-provider 분리를 다룬다.
+- `test_cluster_live.py`와 Web navigation-provider/wire tests는 새 진단 field와 old-log fallback을
+  다룬다.
+- 이 문서 수정 과정에서는 프로세스 spawn이 불가능하여 위 suite를 다시 실행하지 못했다. 테스트 결과는
+  실행 담당자의 실제 출력으로만 보고해야 하며, 문서의 계약 설명을 통과 증거로 간주하면 안 된다.

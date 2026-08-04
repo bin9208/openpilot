@@ -45,6 +45,20 @@ The Drive page displays live video and driving state. Its usual layout contains 
 
 The web video and HUD are reference displays. Always prioritize the vehicle's actual warnings and the road ahead.
 
+### Navigation guidance and deceleration sources
+
+When the newer driving-data fields are available, the mini HUD distinguishes the navigation
+guidance owner from the safety-deceleration provider. `naver`, `tmap`, or `v2` identifies the app
+that owns guidance. A temporary deceleration label such as `naver:...`, `tmap:...`, or `hda:...`
+identifies the safety source selected for that control cycle and its reason. For example,
+`naver` guidance with `hda:safety_absent` means Naver still owns guidance while HDA supplies safety
+information because the Naver safety item is absent. This diagnostic can differ from the final
+speed candidate after model, route, and other candidates are considered.
+
+For an older log without these fields, Carrot Web falls back to its legacy navigation/deceleration
+source display. The display is diagnostic only and does not replace actual vehicle warnings or
+behavior.
+
 ### Layout
 
 `Tools > Web Settings > Layout` controls:

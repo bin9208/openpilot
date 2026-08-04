@@ -159,6 +159,17 @@ carrotRawCapnpGlobal.CarrotRawCapnp = (() => {
         szSdiDescr: { kind: "text", offset: 7 },
         naviPaths: { kind: "text", offset: 8 },
         desiredSource: { kind: "text", offset: 4 },
+        // Appended fields: offsets verified from capnp CodeGeneratorRequest.
+        naviOwner: { kind: "text", offset: 9 },
+        naviSessionId: { kind: "text", offset: 10 },
+        naviSequence: { kind: "uint64decimal", offset: 10 },
+        naviOwnerAgeMs: { kind: "int32", offset: 22 },
+        naviSafetyAgeMs: { kind: "int32", offset: 23 },
+        naviLifecycle: { kind: "text", offset: 11 },
+        naviControlAllowed: { kind: "bool", offset: 768 },
+        naviSafetyRejection: { kind: "text", offset: 12 },
+        decelProvider: { kind: "text", offset: 13 },
+        decelReason: { kind: "text", offset: 14 },
         carrotCmdIndex: { kind: "int32", offset: 11 },
         carrotCmd: { kind: "text", offset: 5 },
         carrotArg: { kind: "text", offset: 6 },
@@ -774,11 +785,13 @@ carrotRawCapnpGlobal.CarrotRawCapnp = (() => {
   }
 
   function readStructSlot(message, structRef, slotIndex) {
+    if (slotIndex < 0 || slotIndex >= structRef.pointerCount) return null;
     const pointerWordOffset = structRef.dataWordOffset + structRef.dataWords + slotIndex;
     return readStructPointer(message, structRef.segmentIndex, pointerWordOffset);
   }
 
   function readListSlot(message, structRef, slotIndex) {
+    if (slotIndex < 0 || slotIndex >= structRef.pointerCount) return null;
     const pointerWordOffset = structRef.dataWordOffset + structRef.dataWords + slotIndex;
     const resolved = resolvePointerWord(message, structRef.segmentIndex, pointerWordOffset);
     if (!resolved) return null;
@@ -814,6 +827,25 @@ carrotRawCapnpGlobal.CarrotRawCapnp = (() => {
 
   function readScalar(message, structRef, kind, offset) {
     const base = structDataByteOffset(message, structRef);
+    const byteRange = (() => {
+      switch (kind) {
+        case "int8": return [offset, 1];
+        case "int16":
+        case "uint16":
+        case "enum": return [offset * 2, 2];
+        case "bool": return [Math.floor(offset / 8), 1];
+        case "uint32":
+        case "int32":
+        case "float32": return [offset * 4, 4];
+        case "uint64":
+        case "uint64decimal":
+        case "float64": return [offset * 8, 8];
+        default: return null;
+      }
+    })();
+    if (byteRange == null) throw new Error(`unsupported capnp scalar kind ${kind}`);
+    const [relativeByteOffset, byteLength] = byteRange;
+    if (relativeByteOffset < 0 || relativeByteOffset + byteLength > structRef.dataWords * 8) return null;
     switch (kind) {
       case "int8":
         return message.view.getInt8(base + offset);
@@ -834,6 +866,8 @@ carrotRawCapnpGlobal.CarrotRawCapnp = (() => {
         const hi = message.view.getUint32(byteOffset + 4, true);
         return hi * 0x100000000 + lo;
       }
+      case "uint64decimal":
+        return message.view.getBigUint64(base + offset * 8, true).toString();
       case "int32":
         return message.view.getInt32(base + offset * 4, true);
       case "float32":
@@ -940,6 +974,7 @@ carrotRawCapnpGlobal.CarrotRawCapnp = (() => {
       case "uint16":
       case "uint32":
       case "uint64":
+      case "uint64decimal":
       case "int32":
       case "float32":
       case "float64": {

@@ -41,6 +41,16 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	szSdiDescr @26 : Text;
 	naviPaths @27 : Text;
 	leftSec @28 : Int32;
+	naviOwner @29 : Text;
+	naviSessionId @30 : Text;
+	naviSequence @31 : UInt64;
+	naviOwnerAgeMs @32 : Int32;
+	naviSafetyAgeMs @33 : Int32;
+	naviLifecycle @34 : Text;
+	naviControlAllowed @35 : Bool;
+	naviSafetyRejection @36 : Text;
+	decelProvider @37 : Text;
+	decelReason @38 : Text;
 }
 
 struct CarrotNaviState @0xaedffd8f31e7b55d {
@@ -106,6 +116,7 @@ struct CarrotNaviState @0xaedffd8f31e7b55d {
 		guideLineColor @10 :Int16;
 		roadCategory @11 :Int16;
 		voiceCode @12 :Int16;
+		roadCategoryValid @13 :Bool;
 	}
 
 	struct Speed {

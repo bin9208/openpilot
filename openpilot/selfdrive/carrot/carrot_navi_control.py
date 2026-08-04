@@ -8,12 +8,14 @@ from typing import Any
 MAX_ROUTE_POINTS = 256
 MAX_ROAD_LIMIT_KPH = 200
 ROAD_LIMIT_STEP_KPH = 10
+V2_ITEM_TTL_S = 10.0
 
 
 @dataclass(frozen=True)
 class NaviGuidanceControl:
   present: bool
   sequence: int
+  received_mono_time_nanos: int = 0
   distance_m: int = 0
   turn_type: int = -1
   main_text: str = ""
@@ -36,6 +38,7 @@ class NaviVehicleControl:
 class NaviSpeedControl:
   present: bool
   sequence: int
+  received_mono_time_nanos: int = 0
   road_limit_kph: int | None = None
   sdi_present: bool = False
   sdi_type: int = -1
@@ -89,6 +92,10 @@ class CarrotNaviControl:
   traffic: NaviTrafficControl
   off_route: bool = False
   guidance_active: bool = False
+  lane_present: bool = False
+  lane_sequence: int = 0
+  lane_received_mono_time_nanos: int = 0
+  road_category_valid: bool = False
   road_category: int | None = None
 
 
@@ -123,9 +130,13 @@ def _text(obj: Any, name: str) -> str:
     return ""
 
 
-def _meta(item: Any) -> tuple[bool, int]:
+def _meta(item: Any) -> tuple[bool, int, int]:
   meta = _get(item, "meta")
-  return bool(_get(meta, "present", False)), max(0, _int(meta, "sequence"))
+  return (
+    bool(_get(meta, "present", False)),
+    max(0, _int(meta, "sequence")),
+    max(0, _int(meta, "receivedMonoTimeNanos")),
+  )
 
 
 def _valid_road_limit_kph(item: Any) -> int | None:
@@ -139,11 +150,12 @@ def _valid_road_limit_kph(item: Any) -> int | None:
 
 
 def _guidance(item: Any, enabled: bool) -> NaviGuidanceControl:
-  present, sequence = _meta(item)
+  present, sequence, received_mono_time_nanos = _meta(item)
   present = present and enabled
   return NaviGuidanceControl(
     present=present,
     sequence=sequence,
+    received_mono_time_nanos=received_mono_time_nanos,
     distance_m=max(0, _int(item, "distanceM")) if present else 0,
     turn_type=_int(item, "turnType", -1) if present else -1,
     main_text=_text(item, "mainText") if present else "",
@@ -154,7 +166,7 @@ def _guidance(item: Any, enabled: bool) -> NaviGuidanceControl:
 
 def _vehicle(data: Any) -> NaviVehicleControl:
   item = _get(data, "vehicle")
-  present, sequence = _meta(item)
+  present, sequence, _ = _meta(item)
   latitude = _float(item, "latitude", math.nan)
   longitude = _float(item, "longitude", math.nan)
   present = present and -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0
@@ -171,7 +183,7 @@ def _vehicle(data: Any) -> NaviVehicleControl:
 
 def _route(data: Any) -> NaviRouteControl:
   item = _get(data, "route")
-  present, sequence = _meta(item)
+  present, sequence, _ = _meta(item)
   points: list[tuple[float, float]] = []
   if present:
     try:
@@ -194,7 +206,7 @@ def _route(data: Any) -> NaviRouteControl:
 
 def _traffic(data: Any) -> NaviTrafficControl:
   item = _get(data, "trafficSignal")
-  present, sequence = _meta(item)
+  present, sequence, _ = _meta(item)
   visible = present and bool(_get(item, "visible", False))
   lamp = ""
   remain_sec = 0
@@ -221,12 +233,12 @@ def parse_carrot_navi_control(data: Any) -> CarrotNaviControl | None:
     return None
 
   status = _get(data, "navigationStatus")
-  status_present, _ = _meta(status)
+  status_present, _, _ = _meta(status)
   off_route = status_present and bool(_get(status, "offRoute", False))
   guidance_active = status_present and bool(_get(status, "guidanceActive", False))
 
   speed_item = _get(data, "speed")
-  speed_present, speed_sequence = _meta(speed_item)
+  speed_present, speed_sequence, speed_received_mono_time_nanos = _meta(speed_item)
   road_limit_kph = _valid_road_limit_kph(speed_item) if speed_present else None
 
   sdi_present = speed_present and bool(_get(speed_item, "sdiPresent", False)) and not off_route
@@ -248,6 +260,7 @@ def parse_carrot_navi_control(data: Any) -> CarrotNaviControl | None:
   speed = NaviSpeedControl(
     present=speed_present,
     sequence=speed_sequence,
+    received_mono_time_nanos=speed_received_mono_time_nanos,
     road_limit_kph=road_limit_kph,
     sdi_present=sdi_present,
     sdi_type=_int(speed_item, "sdiType", -1) if sdi_present else -1,
@@ -275,8 +288,9 @@ def parse_carrot_navi_control(data: Any) -> CarrotNaviControl | None:
   )
 
   lane = _get(data, "laneCurrent")
-  lane_present, _ = _meta(lane)
-  road_category = _int(lane, "roadCategory") if lane_present else None
+  lane_present, lane_sequence, lane_received_mono_time_nanos = _meta(lane)
+  road_category_valid = lane_present and bool(_get(lane, "roadCategoryValid", False))
+  road_category = _int(lane, "roadCategory") if road_category_valid else None
 
   return CarrotNaviControl(
     session_id=_text(data, "sessionId"),
@@ -288,5 +302,9 @@ def parse_carrot_navi_control(data: Any) -> CarrotNaviControl | None:
     traffic=_traffic(data),
     off_route=off_route,
     guidance_active=guidance_active,
+    lane_present=lane_present,
+    lane_sequence=lane_sequence,
+    lane_received_mono_time_nanos=lane_received_mono_time_nanos,
+    road_category_valid=road_category_valid,
     road_category=road_category,
   )

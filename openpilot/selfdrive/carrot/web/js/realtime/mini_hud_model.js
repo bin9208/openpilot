@@ -70,6 +70,35 @@
     return "stock";
   }
 
+  function providerLabel(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "naver_v1") return "naver";
+    if (normalized === "tmap_legacy") return "tmap";
+    if (normalized === "carrot_navi_v2") return "v2";
+    if (normalized === "hda" || normalized === "kisa") return normalized;
+    return normalized ? "unknown" : "none";
+  }
+
+  function reasonLabel(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized || "none";
+  }
+
+  function sourceDiagnostic(carrotMan) {
+    const value = carrotMan && typeof carrotMan === "object" ? carrotMan : {};
+    const hasOwner = Object.prototype.hasOwnProperty.call(value, "naviOwner");
+    const hasProvider = Object.prototype.hasOwnProperty.call(value, "decelProvider");
+    if (!hasOwner && !hasProvider) {
+      const legacy = sourceMode(value) === "nav" ? "nav" : "none";
+      return { guidance: legacy, deceleration: legacy, reason: "none" };
+    }
+    return {
+      guidance: providerLabel(value.naviOwner),
+      deceleration: providerLabel(value.decelProvider),
+      reason: reasonLabel(value.decelReason),
+    };
+  }
+
   function driveMode(payload) {
     const rawKind = String(payload?.driveMode?.kind || "normal").trim().toLowerCase();
     const kind = ["normal", "eco", "safe", "sport"].includes(rawKind) ? rawKind : "normal";
@@ -91,7 +120,12 @@
     const rawFast = rawCarrotMan && typeof rawCarrotMan === "object" ? rawCarrotMan : null;
     const carrotMan = (liveBase || rawFast) ? { ...(liveBase || {}), ...(rawFast || {}) } : {};
     const isMetric = payload?.isMetric !== false;
-    const source = sourceMode(carrotMan);
+    const sourceDiagnosticValue = sourceDiagnostic(carrotMan);
+    const source = sourceDiagnosticValue.guidance === "none" ? "stock" : sourceDiagnosticValue.guidance;
+    const hasDecelDiagnostic = (
+      Object.prototype.hasOwnProperty.call(carrotMan, "decelProvider")
+      || Object.prototype.hasOwnProperty.call(carrotMan, "decelReason")
+    );
     const alertType = integer(carrotMan?.xSpdType, -1);
     const alert = alertDescriptor(alertType);
     const alertDistance = finite(carrotMan?.xSpdDist);
@@ -109,6 +143,7 @@
 
     return {
       source,
+      sourceDiagnostic: sourceDiagnosticValue,
       isMetric,
       // metric → Korean/Vienna red circle, imperial → US MUTCD rectangle.
       limitStyle: isMetric ? "kr" : "us",
@@ -119,7 +154,13 @@
       gap: displayGap(payload?.tfGap ?? payload?.tfBars),
       temp: {
         visible: tempVisible,
-        label: tempVisible ? String(carrotMan?.desiredSource || "").trim() : "",
+        label: tempVisible
+          ? (
+            hasDecelDiagnostic && sourceDiagnosticValue.deceleration !== "none"
+              ? `${sourceDiagnosticValue.deceleration}:${sourceDiagnosticValue.reason}`
+              : String(carrotMan?.desiredSource || "").trim()
+          )
+          : "",
         speed: tempVisible ? displaySpeed(desiredSpeed, isMetric) : "",
         decel: tempVisible && vSetKph != null && desiredSpeed < vSetKph,
       },
@@ -138,5 +179,5 @@
     };
   }
 
-  window.CarrotMiniHudModel = { build, displayDistance, displaySpeed, displayGap, displayGear };
+  window.CarrotMiniHudModel = { build, displayDistance, displaySpeed, displayGap, displayGear, sourceDiagnostic };
 })();

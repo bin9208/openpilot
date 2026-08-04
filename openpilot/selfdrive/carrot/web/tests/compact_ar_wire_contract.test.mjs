@@ -11,6 +11,14 @@ const nativeSource = fs.readFileSync(path.join(carrotRoot, "realtime", "compact_
 const browserSource = fs.readFileSync(path.join(webRoot, "js", "realtime", "vision_compact.js"), "utf8");
 
 const arContract = {
+  carrotMan: [5, [
+    "activeCarrot", "nRoadLimitSpeed", "xSpdType", "xSpdLimit", "xSpdDist", "xSpdCountDown",
+    "xTurnInfo", "xDistToTurn", "xTurnCountDown", "atcType", "szPosRoadName", "szTBTMainText",
+    "desiredSpeed", "xPosLat", "xPosLon", "xPosAngle", "xPosSpeed", "trafficState", "nGoPosDist",
+    "nGoPosTime", "szSdiDescr", "naviPaths", "desiredSource", "naviOwner", "naviSessionId",
+    "naviSequence", "naviOwnerAgeMs", "naviSafetyAgeMs", "naviLifecycle", "naviControlAllowed",
+    "naviSafetyRejection", "decelProvider", "decelReason",
+  ]],
   carState: [1, [
     "vEgo", "aEgo", "vEgoCluster", "vCruiseCluster", "steeringAngleDeg",
     "brakeHoldActive", "softHoldActive", "carrotCruise", "gearStep", "useLaneLineSpeed",
@@ -89,7 +97,7 @@ function pythonDeclarationFields(source) {
 
 function browserDeclarationFields(source) {
   const wireTypes = new Set([
-    "bool", "i8", "u8", "i16", "u16", "i32", "u32", "u64", "f32", "f64", "text",
+    "bool", "i8", "u8", "i16", "u16", "i32", "u32", "u64", "u64decimal", "f32", "f64", "text",
     "enumname", "f32list", "i16list", "coordlist", "u16cmlist", "i16cmlist", "i16mmlist",
     "struct", "structlist",
   ]);
@@ -200,6 +208,7 @@ test("AR nested pose and navigation schemas stay identical in Python and browser
 
 test("native AR encoders retain the shared field sequence and route limit", () => {
   const directEncoders = {
+    encode_carrot_man: arContract.carrotMan[1],
     encode_car_state: arContract.carState[1].flatMap((field) => field === "tpms" ? ["tpms", "fl", "tpms", "fr", "tpms", "rl", "tpms", "rr"] : [field]),
     encode_selfdrive_state: arContract.selfdriveState[1],
     encode_gps: arContract.gpsLocationExternal[1],

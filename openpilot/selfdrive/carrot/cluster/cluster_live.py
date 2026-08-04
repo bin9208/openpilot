@@ -71,6 +71,33 @@ def deceleration_source_display_label(source: str | None) -> str:
     return DECELERATION_SOURCE_LABELS.get(normalized, normalized[:8])
 
 
+def _navigation_provider_display_label(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized == "naver_v1":
+        return "naver"
+    if normalized == "tmap_legacy":
+        return "tmap"
+    if normalized == "carrot_navi_v2":
+        return "v2"
+    if normalized in ("hda", "kisa"):
+        return normalized
+    return "unknown" if normalized else "none"
+
+
+def navigation_source_diagnostic(carrot_man: Any) -> tuple[str, str, str] | None:
+    if carrot_man is None:
+        return None
+    has_owner = hasattr(carrot_man, "naviOwner") if not isinstance(carrot_man, dict) else "naviOwner" in carrot_man
+    has_provider = hasattr(carrot_man, "decelProvider") if not isinstance(carrot_man, dict) else "decelProvider" in carrot_man
+    if not has_owner and not has_provider:
+        return None
+    return (
+        _navigation_provider_display_label(safe_get(carrot_man, "naviOwner", "")),
+        _navigation_provider_display_label(safe_get(carrot_man, "decelProvider", "")),
+        str(safe_get(carrot_man, "decelReason", "") or "").strip().lower() or "none",
+    )
+
+
 def _limited_items(items: Any, max_items: int):
     if max_items <= 0:
         return ()
@@ -409,7 +436,15 @@ class OpenpilotLiveSource:
                 desired_source = str(safe_get(carrot_man, "desiredSource", "") or "").strip()
                 if desired_speed is not None and 0.0 < desired_speed < 200.0 and desired_speed < state.cruise_kph:
                     cruise_override_kph = desired_speed
-                    cruise_override_label = deceleration_source_display_label(desired_source)
+                    navigation_diagnostic = navigation_source_diagnostic(carrot_man)
+                    cruise_override_label = (
+                        (
+                            f"{navigation_diagnostic[0]}>{navigation_diagnostic[1]}"
+                            f":{navigation_diagnostic[2]}"
+                        )
+                        if navigation_diagnostic is not None
+                        else deceleration_source_display_label(desired_source)
+                    )
                     cruise_override_color_mode = 2
 
         return replace(

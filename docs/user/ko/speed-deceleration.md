@@ -38,6 +38,31 @@
 > [!NOTE]
 > 당근맨(CarrotMan)과 CarrotLink는 현재 지원하지 않습니다. 외부 경로·TBT·도로 정보가 필요한 기능은 입력 환경에 따라 동작하지 않을 수 있으며, 이 페이지의 코드 설명이 해당 앱이나 연결 방식의 지원을 뜻하지 않습니다.
 
+### 내비 안내 소유자와 안전 감속 제공자는 다릅니다
+
+Tmap, Naver와 Carrot Navi v2 입력은 소스별 상태로 분리됩니다. 새 안내 세션이 활성화되면 안내 소유자가
+선택되고, 그 소유자가 유효한 동안에는 다른 소스의 단순 후속 프레임 때문에 계속 바뀌지 않습니다.
+선택된 Tmap/Naver 내비 소스의 안전운전 정보가 유효하면 HDA 제한속도와 더 낮은 값을 비교하지 않고 그
+앱 정보를 사용합니다. 앱 안전정보가 없거나 오래되었거나 사용할 수 없을 때만 같은 제어 주기에서
+제한속도와 거리가 모두 유효한 HDA 정보로 대체합니다. HDA, 모델, 경로와 커브 후보는 외부 내비 연결
+상태만으로 차단되지 않습니다.
+
+APN은 현재 안내 중인 앱을 나타내며 HDA만 사용하는 상태를 뜻하지 않습니다. 따라서 Naver가 안내를
+소유하면서 안전정보는 HDA로 대체되는 경우 APN은 유지될 수 있습니다. 반대로 안내 앱 없이 HDA만
+사용하면 APN은 표시되지 않습니다. 진단 화면의 `naviOwner`는 안내 소유자,
+`decelProvider`/`decelReason`은 그 제어 주기에 선택된 안전 감속 정보, `desiredSource`는 모델·경로
+등을 포함한 전체 속도 후보 중 최종 선택값을 나타냅니다.
+
+소스별 안내 유지시간은 Naver 2초, legacy Tmap 4초, Carrot Navi v2 10초입니다. v2의 안내·속도·차로
+항목은 로컬 monotonic 수신시간 기준 10초 TTL을 공유합니다. TCP 연결 종료, reset 또는 timeout은
+해당 source/session의 전송 손실만 기록하며 즉시 안내 상태를 지우지 않습니다. `stopped` 또는
+`arrived`가 수신되면 해당 session은 종료 tombstone으로 남아 더 큰 sequence가 와도 다시 활성화되지
+않으며, 새 안내에는 새 session ID가 필요합니다.
+
+이 C3 소스 선택 변경에는 수정된 Tmap APK가 필요하지 않습니다. Naver 입력에 대한 설명은 유효한
+`naver.navigation.v1` 프레임이 수신되는 경우의 C3 동작을 뜻하며, 특정 Naver APK나 실차 수신 검증
+완료를 뜻하지 않습니다.
+
 ### 초기값이 서로 다르게 보일 수 있습니다
 
 Carrot Web 기본값 복원에 쓰이는 `carrot_settings.json`과 Params 최초 생성에 쓰이는 `params_keys.h`의 값이 일부 다릅니다.
@@ -200,7 +225,16 @@ Carrot Web 기본값 복원에 쓰이는 `carrot_settings.json`과 Params 최초
 <a id="speed-bump"></a>
 ## 3. 과속방지턱
 
-관련 설정은 `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`입니다. 방지턱 감속은 `AutoNaviSpeedCtrlMode >= 2`이고, 내비가 방지턱 종류와 거리를 제공하며, 코드가 고속도로가 아닌 도로 범주로 판단할 때 사용합니다.
+관련 설정은 `AutoNaviSpeedBumpTime`, `AutoNaviSpeedBumpSpeed`입니다. 방지턱 감속은 `AutoNaviSpeedCtrlMode >= 2`이고 내비가 방지턱 종류와 거리를 제공할 때 사용합니다. 일반적인 내비 입력은 코드가 고속도로가 아닌 도로 범주로 판단해야 합니다.
+
+Carrot Navi v2에서는 같은 snapshot의 유효한 도로 범주를 방지턱 speed보다 먼저 적용합니다. 차로
+항목만 갱신되어 도로 범주가 달라져도 기존 방지턱을 다시 평가합니다. 도로 범주 `0` 또는 `1`이
+명시되면 고속도로 계열로 해석되어 type 22 방지턱 감속이 차단될 수 있습니다. 범주 필드 누락은
+유효한 `0`으로 처리하지 않으며, 10초 TTL 안의 마지막 유효 범주를 유지합니다.
+
+Naver v1은 production mapper가 Naver의 `SafetyCode.isSpeedBump()`로 정확히 확인한 type 22에
+한해 도로 범주가 제공되지 않아도 방지턱 감속을 허용합니다. 가짜 도로 범주를 만들지는 않으며,
+Naver가 명시적으로 범주 `0` 또는 `1`을 제공한 경우에는 다른 내비와 동일하게 감속을 차단합니다.
 
 ### `AutoNaviSpeedBumpSpeed`
 
@@ -396,6 +430,11 @@ CAN 오류로 자동 전송되는 진단 로그는 현재 온로드에서 새로
 ## 코드 기준
 
 - 카메라·도로 제한·방지턱·턴 후보 선택: `openpilot/selfdrive/carrot/carrot_serv.py`
+- 내비 소스 snapshot·소유권·안전정보 선택: `openpilot/selfdrive/carrot/navigation_sources.py`
+- legacy/Naver 수신 경계: `openpilot/selfdrive/carrot/navigation_ingress.py`
+- Naver v1 envelope 검증: `openpilot/selfdrive/carrot/naver_navigation_protocol.py`
+- Carrot Navi v2 파싱·10초 TTL: `openpilot/selfdrive/carrot/carrot_navi_control.py`
+- Carrot Navi v2 cereal 변환: `openpilot/selfdrive/carrot/carrot_navi_cereal.py`
 - 비전 커브 속도 계산: `openpilot/selfdrive/carrot/carrot_man.py`
 - 모델 미래속도 계산: `openpilot/selfdrive/controls/lib/desire_helper.py`
 - 도로·모델 자동 설정속도: `openpilot/selfdrive/car/cruise.py`

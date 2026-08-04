@@ -9,13 +9,14 @@ import pytest
 
 from openpilot.selfdrive.carrot.carrot_navi import CATALOG
 from openpilot.selfdrive.carrot.carrot_navi_cereal import build_carrot_navi_payload
+from openpilot.selfdrive.carrot.carrot_navi_control import V2_ITEM_TTL_S as CONTROL_V2_ITEM_TTL_S
 
 
 CLUSTER_DIR = Path(__file__).resolve().parents[1] / "cluster"
 sys.path.insert(0, str(CLUSTER_DIR))
 
 from cluster_config import RADAR_TO_CAMERA_M, VEHICLE_LENGTH_M
-from cluster_navi import fresh_carrot_navi, parse_carrot_navi, resolve_navi_speed_limit
+from cluster_navi import V2_ITEM_TTL_S, fresh_carrot_navi, parse_carrot_navi, resolve_navi_speed_limit
 from cluster_navi_overlay import merge_navi_overlay_state
 from cluster_navi_source import (
   DecodedH264Frame,
@@ -157,9 +158,19 @@ def test_parse_and_expire_live_navi_groups_independently():
   assert state.traffic_light is not None and state.traffic_light.red_s == 18
   assert state.route is not None and state.route.polyline == ((37.5, 127.0),)
 
-  after_live_expiry, next_expiry = fresh_carrot_navi(state, now=106.1)
+  assert V2_ITEM_TTL_S == CONTROL_V2_ITEM_TTL_S == 10.0
+
+  before_live_expiry, next_expiry = fresh_carrot_navi(state, now=109.999)
+  assert before_live_expiry is not None
+  assert before_live_expiry.current is not None
+  assert before_live_expiry.lane_current is not None
+  assert before_live_expiry.speed is not None
+  assert next_expiry == 110.0
+
+  after_live_expiry, next_expiry = fresh_carrot_navi(state, now=110.0)
   assert after_live_expiry is not None
   assert after_live_expiry.current is None
+  assert after_live_expiry.lane_current is None
   assert after_live_expiry.speed is None
   assert after_live_expiry.route is not None
   assert after_live_expiry.traffic_light is not None
@@ -168,6 +179,23 @@ def test_parse_and_expire_live_navi_groups_independently():
   after_all_expiry, next_expiry = fresh_carrot_navi(after_live_expiry, now=160.1)
   assert after_all_expiry is None
   assert next_expiry == float("inf")
+
+
+@pytest.mark.parametrize("received_s", (0.0, 101.0))
+def test_zero_or_future_item_receipt_is_stale_in_cluster(received_s):
+  snapshot = {
+    "generation": 1,
+    "session_id": "session",
+    "connected": True,
+    "items": {
+      "guidance_current": _record({"distance_m": 100}, 1, received_s),
+      "lane_current": _record({"count": 1}, 2, received_s),
+      "speed": _record({"current_kph": 30}, 3, received_s),
+    },
+  }
+
+  payload = build_carrot_navi_payload(snapshot, publish_mono_ns=100_000_000_000)
+  assert parse_carrot_navi(_namespace(payload), now=100.0) is None
 
 
 def test_navi_speed_limit_overrides_legacy_navigation_default_but_not_vehicle_limit():

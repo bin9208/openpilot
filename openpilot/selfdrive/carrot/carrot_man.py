@@ -35,6 +35,18 @@ from openpilot.common.constants import CV
 
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
+from openpilot.selfdrive.carrot.navigation_ingress import (
+  NAVER_NAVIGATION_TCP_PORT,
+  NAVI_TCP_MAX_CLIENTS,
+  NavigationPeerState,
+  NavigationIngress,
+  NavigationIngressError,
+  bind_tmap_legacy_frame,
+  build_legacy_http_session_id,
+  handle_navigation_udp_datagram,
+  serve_navigation_tcp,
+)
+from openpilot.selfdrive.carrot.navigation_sources import NavigationSource
 from openpilot.selfdrive.carrot.server.services.web_settings import read_web_settings
 from openpilot.selfdrive.carrot.web_upload import (
   carrot_logs_web_target,
@@ -314,6 +326,13 @@ class CarrotMan:
     self.pm = messaging.PubMaster(['carrotMan', "navRoute", "navInstructionCarrot"])
 
     self.carrot_serv = CarrotServ()
+    self._navigation_ingress = NavigationIngress(
+      carrot_serv=self.carrot_serv,
+      legacy_dispatch=self._dispatch_legacy_navi_frame,
+      record_transport_loss=self._record_navigation_transport_loss,
+      monotonic=time.monotonic,
+      reject=self._navigation_ingress_rejected,
+    )
 
     self.show_panda_debug = False
     self.broadcast_ip = self.get_broadcast_address()
@@ -324,6 +343,8 @@ class CarrotMan:
 
     self.ip_address = "0.0.0.0"
     self.remote_addr = None
+    self._remote_addr_lock = threading.Lock()
+    self._navigation_peers = NavigationPeerState()
 
     self.turn_speed_last = 250
     self.curvatureFilter = MyMovingAverage(20)
@@ -381,17 +402,34 @@ class CarrotMan:
       print(f"[carrot_man] failed to resolve broadcast address: {e}")
     return "255.255.255.255"
 
-  def get_local_ip(self):
+  def get_local_ip(self, destination_ip="8.8.8.8"):
       try:
-          # 외부 서버와의 연결을 통해 로컬 IP 확인
+          # 대상까지의 경로에 선택되는 로컬 IP 확인
           with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-              s.connect(("8.8.8.8", 80))  # Google DNS로 연결 시도
+              s.connect((destination_ip, 80))
               return s.getsockname()[0]
       except Exception:
           return None
 
 
   # 브로드캐스트 메시지 전송
+  def _update_navigation_cycle(self, remote_ip, vturn_speed, navd_route_updated=False):
+    # Project before bridging, then compute route inputs from that same owner.
+    self.carrot_serv.prepare_navigation(self.sm)
+    self._update_selected_navigation_route(force=navd_route_updated)
+    coords, distances, route_speed = self.carrot_navi_route()
+    self.carrot_serv.update_navi(
+      remote_ip,
+      self.sm,
+      self.pm,
+      vturn_speed,
+      coords,
+      distances,
+      route_speed,
+      self.gps_location_service,
+      navigation_prepared=True,
+    )
+
   def broadcast_version_info(self):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -408,21 +446,10 @@ class CarrotMan:
         navd_route_updated = self.sm.updated['navRouteNavd']
         if navd_route_updated:
           self.send_routes(self.sm['navRouteNavd'].coordinates, True)
-        carrot_navi_service_active = self.sm.alive['carrotNavi'] and self.sm.valid['carrotNavi']
-        if (
-          self.sm.updated['carrotNavi'] or navd_route_updated
-          or (self.carrot_navi_route_session_id and not carrot_navi_service_active)
-        ):
-          carrot_navi = parse_carrot_navi_control(self.sm['carrotNavi']) if carrot_navi_service_active else None
-          self._update_carrot_navi_route(carrot_navi, force=navd_route_updated)
         remote_addr = self.remote_addr
         remote_ip = remote_addr[0] if remote_addr is not None else ""
         vturn_speed = self.carrot_curve_speed(self.sm)
-        coords, distances, route_speed = self.carrot_navi_route()
-
-        #print("coords=", coords)
-        #print("curvatures=", curvatures)
-        self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speed, self.gps_location_service)
+        self._update_navigation_cycle(remote_ip, vturn_speed, navd_route_updated)
 
         now = time.monotonic()
         if now >= next_broadcast_time:
@@ -437,7 +464,7 @@ class CarrotMan:
               raise OSError(errno.ENETUNREACH, "Network is unreachable")
             if ip_address != self.ip_address:
               self.ip_address = ip_address
-              self.remote_addr = None
+              self._clear_all_navigation_peers()
             self.params_memory.put_nonblocking("NetworkAddress", self.ip_address)
 
             msg = self.make_send_message()
@@ -462,7 +489,7 @@ class CarrotMan:
               if self.connection:
                 self.connection.close()
               self.connection = None
-              self.remote_addr = None
+              self._clear_all_navigation_peers()
               self.ip_address = "0.0.0.0"
               self.params_memory.put_nonblocking("NetworkAddress", self.ip_address)
               next_broadcast_time = now + BROADCAST_NETWORK_ERROR_RETRY_INTERVAL
@@ -533,6 +560,41 @@ class CarrotMan:
     self.carrot_navi_route_owned = self.navi_points_active
     # Keep the existing route consumer alive without asking navd to calculate a
     # different route from the app's destination.
+    self.navd_active = self.navi_points_active
+    self.send_routes(coords)
+
+  def _update_selected_navigation_route(self, force: bool = False):
+    if force:
+      self.carrot_navi_route_session_id = ""
+      self.carrot_navi_route_sequence = -1
+      self.carrot_navi_route_owned = False
+
+    selection = getattr(self.carrot_serv, "navigation_selection", None)
+    snapshot = None if selection is None else selection.snapshot
+    control = None if snapshot is None else snapshot.control
+    points = () if control is None or not control.route_present else control.route_points
+    session_id = "" if snapshot is None else f"{snapshot.source.value}:{snapshot.session_id}"
+    revision = -1 if control is None else (control.route_received_mono_s, points)
+    if (
+      session_id == self.carrot_navi_route_session_id
+      and revision == self.carrot_navi_route_sequence
+    ):
+      return
+    if not points and not self.carrot_navi_route_owned:
+      self.carrot_navi_route_session_id = session_id
+      self.carrot_navi_route_sequence = revision
+      return
+
+    self.carrot_navi_route_session_id = session_id
+    self.carrot_navi_route_sequence = revision
+    coords = [
+      {"latitude": latitude, "longitude": longitude}
+      for latitude, longitude in points
+    ]
+    self.navi_points = [(point["longitude"], point["latitude"]) for point in coords]
+    self.navi_points_start_index = 0
+    self.navi_points_active = bool(self.navi_points)
+    self.carrot_navi_route_owned = self.navi_points_active
     self.navd_active = self.navi_points_active
     self.send_routes(coords)
 
@@ -709,7 +771,6 @@ class CarrotMan:
 
           while True:
             try:
-              #self.remote_addr = None
               # 데이터 수신 (UDP는 recvfrom 사용)
               try:
                 data, remote_addr = sock.recvfrom(4096)  # 최대 4096 바이트 수신
@@ -718,15 +779,22 @@ class CarrotMan:
                 if not data:
                   raise ConnectionError("No data received")
 
-                if self.remote_addr is None:
-                  print("Connected to: ", remote_addr)
-                self.remote_addr = remote_addr
                 try:
-                  json_obj = json.loads(data.decode())
-                  self.carrot_serv.update(json_obj)
-                except Exception as e:
-                  print(f"carrot_man_thread: json error...: {e}")
-                  print(data)
+                  discovery = handle_navigation_udp_datagram(
+                    sock,
+                    data,
+                    remote_addr,
+                    self.get_local_ip(remote_addr[0]),
+                    self.carrot_serv.update,
+                  )
+                  if not discovery:
+                    if self.remote_addr is None:
+                      print("Connected to: ", remote_addr)
+                    self._set_navigation_peer("udp", remote_addr)
+                except NavigationIngressError as e:
+                  print(f"carrot_man_thread: datagram rejected: {e.code}")
+                except Exception:
+                  print("carrot_man_thread: datagram rejected")
 
                 # 응답 메시지 생성 및 송신 (UDP는 sendto 사용)
                 #try:
@@ -737,22 +805,22 @@ class CarrotMan:
 
               except TimeoutError:
                 #print("Waiting for data (timeout)...")
-                self.remote_addr = None
+                self._clear_navigation_peer("udp")
                 time.sleep(1)
 
               except Exception as e:
                 print(f"carrot_man_thread: error...: {e}")
-                self.remote_addr = None
+                self._clear_navigation_peer("udp")
                 break
 
             except Exception as e:
               print(f"carrot_man_thread: recv error...: {e}")
-              self.remote_addr = None
+              self._clear_navigation_peer("udp")
               break
 
           time.sleep(1)
       except Exception as e:
-        self.remote_addr = None
+        self._clear_navigation_peer("udp")
         print(f"Network error, retrying...: {e}")
         time.sleep(2)
 
@@ -1483,7 +1551,143 @@ class CarrotMan:
     return turnSpeed * curv_direction
 
   def carrot_navi_thread(self):
-    self.carrot_navi_tcp_server(7712)
+    self.carrot_navi_tcp_server(NAVER_NAVIGATION_TCP_PORT)
+
+  def _navigation_ingress_rejected(self, code: str) -> None:
+    print(f"navigation ingress rejected: {code}")
+
+  def _record_navigation_transport_loss(self, source: NavigationSource,
+                                        session_id: str, now_s: float) -> bool:
+    source_store = getattr(self.carrot_serv, "navigation_sources", None)
+    record_transport_loss = getattr(source_store, "record_transport_loss", None)
+    if not callable(record_transport_loss):
+      return False
+    return bool(record_transport_loss(source, session_id, now_s))
+
+  def _set_navigation_peer(self, transport: str, addr: object,
+                           token: object | None = None):
+    if not isinstance(addr, tuple) or not addr:
+      return self.remote_addr
+    with self._remote_addr_lock:
+      if transport == "tcp":
+        self.remote_addr = self._navigation_peers.set_tcp(token, addr)
+      else:
+        self.remote_addr = self._navigation_peers.set_fallback(transport, addr)
+      return self.remote_addr
+
+  def _clear_navigation_peer(self, transport: str, token: object | None = None):
+    with self._remote_addr_lock:
+      if transport == "tcp":
+        self.remote_addr = self._navigation_peers.clear_tcp(token)
+      else:
+        self.remote_addr = self._navigation_peers.clear_fallback(transport)
+      return self.remote_addr
+
+  def _clear_all_navigation_peers(self) -> None:
+    with self._remote_addr_lock:
+      self._navigation_peers.clear()
+      self.remote_addr = None
+
+  def _dispatch_legacy_navi_frame(self, obj: dict, peer: object,
+                                  received_mono_s: float, session_id: str) -> bool:
+    bound = bind_tmap_legacy_frame(obj, session_id, received_mono_s)
+    bound["_navigation_source"] = NavigationSource.TMAP_LEGACY.value
+    bound["_navigation_session_id"] = session_id
+    bound["_navigation_received_mono_s"] = received_mono_s
+    self._dispatch_obj(bound)
+    return True
+
+  @staticmethod
+  def _legacy_navigation_binding(obj):
+    try:
+      source = NavigationSource(obj.get("_navigation_source"))
+      session_id = str(obj.get("_navigation_session_id") or "")
+      received_mono_s = float(obj.get("_navigation_received_mono_s"))
+    except (TypeError, ValueError, OverflowError):
+      return None
+    if source is not NavigationSource.TMAP_LEGACY or not session_id or not math.isfinite(received_mono_s):
+      return None
+    return source, session_id, received_mono_s
+
+  def _handle_bound_legacy_route(self, payload, binding):
+    points = self._extract_route_points(payload)
+    if points is None:
+      return False
+    route_points = tuple((lat, lon) for lon, lat in self._limited_route_points(points))
+    return self.carrot_serv.update_legacy_navigation_aux(
+      "route", {"route_points": route_points}, *binding,
+    )
+
+  @staticmethod
+  def _legacy_traffic_state(payload, detailed=False):
+    if not isinstance(payload, dict):
+      return None
+    lamp = None
+    remain = 0
+    if detailed:
+      for field, candidate, remain_field in (
+        ("left", "left", "left_remain_time"),
+        ("straight", "green", "straight_remain_time"),
+        ("right", "right", "right_remain_time"),
+        ("uturn", "uturn", "uturn_remain_time"),
+      ):
+        if str(payload.get(field, "")).upper() == "GREEN_LIGHT_ON":
+          lamp, remain = candidate, payload.get(remain_field, 0)
+          break
+      if lamp is None:
+        red_values = []
+        for field in ("straight", "left", "right", "uturn"):
+          if str(payload.get(field, "")).upper() == "RED_LIGHT_ON":
+            try:
+              red_values.append(int(payload.get(f"{field}_remain_time", 0) or 0))
+            except (TypeError, ValueError, OverflowError):
+              pass
+        if red_values:
+          lamp, remain = "red", max(red_values)
+    else:
+      for on_field, candidate, remain_field in (
+        ("redLightOn", "red", "redLightRemainTime"),
+        ("leftLightOn", "left", "leftLightRemainTime"),
+        ("greenLightOn", "green", "greenLightRemainTime"),
+        ("rightLightOn", "right", "rightLightRemainTime"),
+        ("uturnLightOn", "uturn", "uturnLightRemainTime"),
+      ):
+        if payload.get(on_field):
+          lamp, remain = candidate, payload.get(remain_field, 0)
+          break
+    try:
+      remain_s = int(float(remain or 0))
+      distance_m = float(payload.get("distance", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+      return None
+    if lamp is None or remain_s <= 0 or not math.isfinite(distance_m):
+      return None
+    return {
+      "traffic_present": True,
+      "traffic_visible": True,
+      "traffic_distance_m": distance_m,
+      "traffic_source": "ssinf" if detailed else "sinf",
+      "traffic_lamp": lamp,
+      "traffic_remain_s": remain_s,
+    }
+
+  def _handle_bound_legacy_traffic(self, payload, binding, detailed=False):
+    state = self._legacy_traffic_state(payload, detailed=detailed)
+    if state is None:
+      return False
+    return self.carrot_serv.update_legacy_navigation_aux("traffic", state, *binding)
+
+  def _dispatch_navi_frame(self, obj: dict, peer: object,
+                           received_mono_s: float) -> NavigationSource | None:
+    return self._navigation_ingress.dispatch_frame(obj, peer, received_mono_s)
+
+  def _serve_navi_client(self, conn, addr) -> None:
+    token = object()
+    self._set_navigation_peer("tcp", addr, token)
+    try:
+      self._navigation_ingress.serve_client(conn, addr)
+    finally:
+      self._clear_navigation_peer("tcp", token)
 
   def _route_point_to_lon_lat(self, point: Any):
     if isinstance(point, dict):
@@ -1882,7 +2086,13 @@ class CarrotMan:
 
   def handle_carrot_state(self, d: dict):
     try:
-      self.carrot_serv.update(d)
+      source_value = d.get("_navigation_source", NavigationSource.TMAP_LEGACY.value)
+      source = NavigationSource(source_value)
+      self.carrot_serv.update(
+        d,
+        source=source,
+        received_mono_s=d.get("_navigation_received_mono_s"),
+      )
     except Exception as e:
       print("carrot_state update error:", e)
 
@@ -2149,6 +2359,8 @@ class CarrotMan:
     if not isinstance(obj, dict):
       return self.handle_unknown(obj)
 
+    legacy_binding = self._legacy_navigation_binding(obj)
+
     event_type = self._detect_navi_event_type(obj)
     event_time_ms = self._get_timestamp_ms(obj)
     try:
@@ -2171,21 +2383,33 @@ class CarrotMan:
       handled = True
 
     if "vrtx" in obj:
-      self._safe_dispatch_handler("vrtx", self.handle_route, obj["vrtx"])
+      if legacy_binding is not None:
+        self._safe_dispatch_handler("vrtx", self._handle_bound_legacy_route, obj["vrtx"], legacy_binding)
+      else:
+        print("[NAVI vrtx DROP] missing legacy source/session binding")
       handled = True
 
     if "ssinf" in obj:
       print(f"[NAVI ssinf RX] {json.dumps(obj['ssinf'], ensure_ascii=False)}", flush=True)
-      self._safe_dispatch_handler("ssinf", self.handle_traffic_light_detail, obj["ssinf"])
+      if legacy_binding is not None:
+        self._safe_dispatch_handler("ssinf", self._handle_bound_legacy_traffic, obj["ssinf"], legacy_binding, True)
+      else:
+        print("[NAVI ssinf DROP] missing legacy source/session binding")
       handled = True
 
     if "sinf" in obj:
       print(f"[NAVI sinf RX] {json.dumps(obj['sinf'], ensure_ascii=False)}", flush=True)
-      self._safe_dispatch_handler("sinf", self.handle_traffic_light, obj["sinf"])
+      if legacy_binding is not None:
+        self._safe_dispatch_handler("sinf", self._handle_bound_legacy_traffic, obj["sinf"], legacy_binding, False)
+      else:
+        print("[NAVI sinf DROP] missing legacy source/session binding")
       handled = True
 
     if "route" in obj:
-      self._safe_dispatch_handler("route", self.handle_route, obj["route"])
+      if legacy_binding is not None:
+        self._safe_dispatch_handler("route", self._handle_bound_legacy_route, obj["route"], legacy_binding)
+      else:
+        print("[NAVI route DROP] missing legacy source/session binding")
       handled = True
 
     if handled:
@@ -2213,53 +2437,17 @@ class CarrotMan:
         queue_carrot_exception_tmux_send("navi http server")
         time.sleep(2)
 
-  def carrot_navi_tcp_server(self, port: int = 7712):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("0.0.0.0", port))
-    server.listen(5)
-    print("TCP server listening", port)
-
-    while True:
-      conn, addr = server.accept()
-      self.remote_addr = addr
-      print("Connected:", addr)
-      conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-      try:
-        f = conn.makefile("r", encoding="utf-8", errors="ignore")
-        while True:
-          try:
-            line = f.readline()
-          except socket.timeout:
-            print("TCP timeout: closing connection", addr)
-            break
-
-          if not line:
-            break
-
-          s = line.strip()
-          if not s:
-            continue
-
-          try:
-            obj = json.loads(s)
-          except Exception:
-            obj = s
-
-          try:
-            self._dispatch_obj(obj)
-          except Exception as e:
-            print("dispatch error:", e, "raw:", repr(s[:200]))
-
-      except Exception as e:
-        print("TCP error:", e)
-
-      finally:
-        try:
-          conn.close()
-        except Exception:
-          pass
-        self.remote_addr = None
+  def carrot_navi_tcp_server(self, port: int = NAVER_NAVIGATION_TCP_PORT):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+      server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      server.bind(("0.0.0.0", port))
+      server.listen(NAVI_TCP_MAX_CLIENTS)
+      print("TCP server listening", port)
+      serve_navigation_tcp(
+        server,
+        self._serve_navi_client,
+        on_reject=self._navigation_ingress_rejected,
+      )
 
   async def carrot_http_post(self, request: web.Request):
     tmap_version = request.match_info.get("tmap_version", "")
@@ -2290,10 +2478,11 @@ class CarrotMan:
     if isinstance(obj, dict):
       obj["_tmap_version"] = tmap_version
     if isinstance(peer, tuple) and len(peer) >= 1 and peer[0]:
-      self.remote_addr = (peer[0], self.broadcast_port)
+      self._set_navigation_peer("http", (peer[0], self.broadcast_port))
 
     try:
-      self._dispatch_obj(obj)
+      session_id = build_legacy_http_session_id(peer, tmap_version)
+      self._dispatch_legacy_navi_frame(obj, peer, time.monotonic(), session_id)
       #print(f"[HTTP] dispatch ok version={tmap_version}")
       #print(obj)
       return web.json_response({

@@ -115,6 +115,10 @@ window.CarrotVisionCompact = (() => {
       ["xPosLon", "f32"], ["xPosAngle", "f32"], ["xPosSpeed", "f32"],
       ["trafficState", "i32"], ["nGoPosDist", "i32"], ["nGoPosTime", "i32"],
       ["szSdiDescr", "text"], ["naviPaths", "text"], ["desiredSource", "text"],
+      ["naviOwner", "text"], ["naviSessionId", "text"], ["naviSequence", "u64decimal"],
+      ["naviOwnerAgeMs", "i32"], ["naviSafetyAgeMs", "i32"], ["naviLifecycle", "text"],
+      ["naviControlAllowed", "bool"], ["naviSafetyRejection", "text"],
+      ["decelProvider", "text"], ["decelReason", "text"],
     ]]],
     [6, ["selfdriveState", [
       ["enabled", "bool"], ["personality", "u8"], ["alertStatus", "u8"],
@@ -225,6 +229,12 @@ window.CarrotVisionCompact = (() => {
       this.offset += 8;
       return Number(v);
     }
+    readU64Decimal() {
+      this.ensure(8);
+      const value = this.view.getBigUint64(this.offset, true);
+      this.offset += 8;
+      return value.toString();
+    }
     readF32() { this.ensure(4); const v = this.view.getFloat32(this.offset, true); this.offset += 4; return v; }
     readF64() { this.ensure(8); const v = this.view.getFloat64(this.offset, true); this.offset += 8; return v; }
 
@@ -285,6 +295,7 @@ window.CarrotVisionCompact = (() => {
       case "i32": return cursor.readI32();
       case "u32": return cursor.readU32();
       case "u64": return cursor.readU64();
+      case "u64decimal": return cursor.readU64Decimal();
       case "f32": return cursor.readF32();
       case "f64": return cursor.readF64();
       case "text": return cursor.readText();
@@ -306,9 +317,11 @@ window.CarrotVisionCompact = (() => {
     }
   }
 
-  function readSchema(cursor, schema) {
+  function readSchema(cursor, schema, compatibleEndIndex = null) {
     const out = {};
-    for (const [name, type, nestedSchema] of schema) {
+    for (let index = 0; index < schema.length; index += 1) {
+      if (index === compatibleEndIndex && cursor.offset === cursor.bytes.byteLength) break;
+      const [name, type, nestedSchema] = schema[index];
       out[name] = readField(cursor, type, nestedSchema);
     }
     return out;
@@ -331,7 +344,11 @@ window.CarrotVisionCompact = (() => {
     const definition = schemas.get(serviceId);
     if (!definition) throw new Error(`unknown compact state service ${serviceId}`);
     const [service, schema] = definition;
-    const decoded = readSchema(cursor, schema);
+    // Service 5 predates the appended navigation diagnostics and has no compact
+    // schema version. Accept only an exact legacy field boundary; any bytes
+    // after it must form every appended field or the normal truncation/trailing
+    // checks below reject the frame.
+    const decoded = readSchema(cursor, schema, service === "carrotMan" ? 23 : null);
     if (cursor.offset !== bytes.byteLength) throw new Error(`compact state trailing bytes for ${service}`);
     return { service, sequence, decoded, byteLength: bytes.byteLength };
   }

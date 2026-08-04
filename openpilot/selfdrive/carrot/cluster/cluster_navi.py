@@ -5,6 +5,8 @@ import time
 from dataclasses import replace
 from typing import Any
 
+from openpilot.selfdrive.carrot.carrot_navi_control import V2_ITEM_TTL_S
+
 from cluster_models import (
     NaviCrossroadInfo,
     NaviGuidanceInfo,
@@ -97,8 +99,8 @@ def _meta(item: Any, now: float) -> NaviItemMeta | None:
     if meta is None or not bool(_get(meta, "present", False)):
         return None
     received_mono_s = _int(meta, "receivedMonoTimeNanos") / 1_000_000_000.0
-    if received_mono_s <= 0.0 or received_mono_s > now + 60.0:
-        received_mono_s = now
+    if received_mono_s <= 0.0 or received_mono_s > now:
+        return None
     return NaviItemMeta(
         sequence=max(0, _int(meta, "sequence")),
         source_timestamp_ms=max(0, _int(meta, "sourceTimestampMillis")),
@@ -368,11 +370,11 @@ def fresh_carrot_navi(state: NaviLiveState | None, now: float | None = None) -> 
         return item
 
     vehicle = fresh(state.vehicle, LIVE_TTL_S)
-    current = fresh(state.current, LIVE_TTL_S)
-    next_guidance = fresh(state.next, LIVE_TTL_S)
-    lane_current = fresh(state.lane_current, LIVE_TTL_S)
-    lane_ahead = tuple(item for item in state.lane_ahead if fresh(item, LIVE_TTL_S) is not None)
-    speed = fresh(state.speed, LIVE_TTL_S)
+    current = fresh(state.current, V2_ITEM_TTL_S)
+    next_guidance = fresh(state.next, V2_ITEM_TTL_S)
+    lane_current = fresh(state.lane_current, V2_ITEM_TTL_S)
+    lane_ahead = tuple(item for item in state.lane_ahead if fresh(item, V2_ITEM_TTL_S) is not None)
+    speed = fresh(state.speed, V2_ITEM_TTL_S)
     traffic = fresh(state.traffic_light, TRAFFIC_TTL_S)
     crossroad = fresh(state.crossroad, LIVE_TTL_S)
     route = fresh(state.route, ROUTE_TTL_S)
