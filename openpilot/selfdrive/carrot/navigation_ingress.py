@@ -139,6 +139,59 @@ def strict_json_loads(frame: bytes) -> dict:
   return value
 
 
+def _legacy_json_loads(frame: bytes) -> dict:
+  if type(frame) is not bytes:
+    _fail("invalid_utf8")
+  if len(frame) > NAVI_TCP_MAX_FRAME_BYTES:
+    _fail("frame_too_large")
+  if frame.startswith(b"\xef\xbb\xbf"):
+    _fail("invalid_utf8")
+  try:
+    text = frame.decode("utf-8")
+  except UnicodeDecodeError:
+    _fail("invalid_utf8")
+  if not text.strip():
+    _fail("empty_frame")
+  _check_json_nesting(text)
+  try:
+    value = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+  except NavigationIngressError:
+    raise
+  except RecursionError:
+    _fail("nesting_too_deep")
+  except (TypeError, ValueError, json.JSONDecodeError):
+    _fail("invalid_json")
+  if type(value) is not dict:
+    _fail("non_object")
+  return value
+
+
+def _discovery_shaped(value: dict) -> bool:
+  message_type = value.get("type")
+  return (
+    frozenset(value) == _DISCOVERY_REQUEST_KEYS
+    or (type(message_type) is str and message_type.startswith(NAVER_DISCOVERY_REQUEST_TYPE))
+  )
+
+
+def _raw_discovery_shaped(frame: bytes) -> bool:
+  try:
+    pairs = json.loads(frame.decode("utf-8"), object_pairs_hook=lambda items: items)
+  except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError):
+    return False
+  if type(pairs) is not list:
+    return False
+  keys = []
+  for pair in pairs:
+    if type(pair) is not tuple or len(pair) != 2:
+      return False
+    key, value = pair
+    keys.append(key)
+    if key == "type" and type(value) is str and value.startswith(NAVER_DISCOVERY_REQUEST_TYPE):
+      return True
+  return frozenset(keys) == _DISCOVERY_REQUEST_KEYS
+
+
 def _validate_discovery_request(value: dict) -> dict:
   if (
     frozenset(value) != _DISCOVERY_REQUEST_KEYS
@@ -223,13 +276,21 @@ def _requester_ip(remote_addr: object) -> str:
 
 def handle_navigation_udp_datagram(sock, data: bytes, remote_addr: object, local_ip: object,
                                    legacy_update: Callable[[dict], object]) -> bool:
-  value = strict_json_loads(data)
-  message_type = value.get("type")
-  discovery_shaped = (
-    frozenset(value) == _DISCOVERY_REQUEST_KEYS
-    or (type(message_type) is str and message_type.startswith(NAVER_DISCOVERY_REQUEST_TYPE))
-  )
-  if discovery_shaped:
+  try:
+    value = strict_json_loads(data)
+  except NavigationIngressError:
+    try:
+      value = _legacy_json_loads(data)
+    except NavigationIngressError as error:
+      if error.code == "duplicate_key" and _raw_discovery_shaped(data):
+        _fail("invalid_discovery")
+      raise
+    if _discovery_shaped(value) or _raw_discovery_shaped(data):
+      _fail("invalid_discovery")
+    legacy_update(value)
+    return False
+
+  if _discovery_shaped(value):
     _validate_discovery_request(value)
     sock.sendto(
       build_naver_discovery_response(local_ip),

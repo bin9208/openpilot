@@ -4,6 +4,7 @@ import ast
 from collections import Counter
 import ipaddress
 import json
+import math
 from pathlib import Path
 import socket
 import threading
@@ -828,6 +829,24 @@ def test_invalid_typed_discovery_is_not_forwarded_to_legacy_update():
   assert sock.sent == []
 
 
+def test_duplicate_discovery_type_is_not_downgraded_to_legacy_update():
+  class DatagramSocket:
+    def sendto(self, data: bytes, destination: tuple[str, int]) -> None:
+      raise AssertionError("invalid discovery datagram must not send a response")
+
+  updates = []
+  with pytest.raises(NavigationIngressError) as exc_info:
+    handle_navigation_udp_datagram(
+      DatagramSocket(),
+      b'{"type":"carrot.navigation.discover","type":"legacy","source":"naver",'
+      b'"schema_version":1,"extra":0}',
+      ("192.0.2.20", 43000),
+      "192.168.43.1", updates.append,
+    )
+  assert exc_info.value.code == "invalid_discovery"
+  assert updates == []
+
+
 @pytest.mark.parametrize("remote_addr", [
   None,
   (),
@@ -902,6 +921,42 @@ def test_general_legacy_type_still_reaches_udp_update_path():
     "192.168.43.1", updates.append,
   )
   assert updates == [legacy]
+
+
+def test_udp_legacy_flat_position_nan_reaches_update_path():
+  class DatagramSocket:
+    def sendto(self, data: bytes, destination: tuple[str, int]) -> None:
+      raise AssertionError("legacy datagram must not send discovery response")
+
+  updates = []
+  assert not handle_navigation_udp_datagram(
+    DatagramSocket(),
+    b'{"nRoadLimitSpeed":80,"vpPosPointLat":NaN,"vpPosPointLon":127.1}',
+    ("192.0.2.20", 43000),
+    "192.168.43.1", updates.append,
+  )
+  assert updates[0]["nRoadLimitSpeed"] == 80
+  assert math.isnan(updates[0]["vpPosPointLat"])
+  assert updates[0]["vpPosPointLon"] == 127.1
+
+
+@pytest.mark.parametrize("payload", [
+  b'{"nRoadLimitSpeed":80,"nRoadLimitSpeed":90}',
+  b'{"nRoadLimitSpeed":80,"vpPosPointLat":NaN,"vpPosPointLat":37.5}',
+])
+def test_udp_legacy_duplicate_keys_are_rejected(payload):
+  class DatagramSocket:
+    def sendto(self, data: bytes, destination: tuple[str, int]) -> None:
+      raise AssertionError("legacy datagram must not send discovery response")
+
+  updates = []
+  with pytest.raises(NavigationIngressError) as exc_info:
+    handle_navigation_udp_datagram(
+      DatagramSocket(), payload, ("192.0.2.20", 43000),
+      "192.168.43.1", updates.append,
+    )
+  assert exc_info.value.code == "duplicate_key"
+  assert updates == []
 
 
 def test_cross_transport_peer_selection_and_restore_policy():

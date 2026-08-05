@@ -50,6 +50,7 @@ _ABSENT_KEYS = frozenset(("present",))
 _INSTRUCTION_KEYS = frozenset(("present", "maneuver", "distanceM", "roadName", "mainText"))
 _CAMERA_KEYS = frozenset(("present", "kind", "distanceM", "speedKph"))
 _BUMP_KEYS = frozenset(("present", "kind", "distanceM"))
+_SAFETY_REVISION_KEY = "revision"
 _ROAD_BASE_KEYS = frozenset(("limitValid", "categoryValid"))
 _ROUTE_BASE_KEYS = frozenset((
   "present", "remainingDistanceM", "remainingTimeSec", "offRoute", "destinationValid",
@@ -214,8 +215,15 @@ def _parse_safety(value: object, received_mono_s: int | float) -> tuple[SafetyIt
     return None, None
 
   kind = _text_field(safety, "kind", 32, "safety")
+  expected_keys = _BUMP_KEYS if kind == "speed_bump" else _CAMERA_KEYS
+  actual_keys = frozenset(safety)
+  if actual_keys not in (expected_keys, expected_keys | frozenset((_SAFETY_REVISION_KEY,))):
+    _fail("safety")
+  revision = (
+    None if _SAFETY_REVISION_KEY not in safety
+    else _integer_field(safety, _SAFETY_REVISION_KEY, 1, MAX_SEQUENCE, "safety")
+  )
   if kind == "speed_bump":
-    _exact_keys(safety, _BUMP_KEYS, "safety")
     distance_m = _number_field(
       safety, "distanceM", 0, MAX_DISTANCE_M, "safety", minimum_inclusive=False,
     )
@@ -225,13 +233,13 @@ def _parse_safety(value: object, received_mono_s: int | float) -> tuple[SafetyIt
       speed_limit_kph=0.0,
       received_mono_s=received_mono_s,
       reason="bump",
+      revision=revision,
     )
 
   try:
     safety_type, section, reason = _CAMERA_TYPES[kind]
   except KeyError:
     _fail("safety")
-  _exact_keys(safety, _CAMERA_KEYS, "safety")
   distance_m = _number_field(
     safety, "distanceM", 0, MAX_DISTANCE_M, "safety", minimum_inclusive=False,
   )
@@ -245,6 +253,7 @@ def _parse_safety(value: object, received_mono_s: int | float) -> tuple[SafetyIt
     received_mono_s=received_mono_s,
     reason=reason,
     section=section,
+    revision=revision,
   ), None
 
 

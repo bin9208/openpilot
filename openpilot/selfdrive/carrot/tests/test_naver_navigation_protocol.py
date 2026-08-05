@@ -16,6 +16,7 @@ from openpilot.selfdrive.carrot.navigation_sources import (
   NavigationSnapshot,
   NavigationSource,
   NavigationSourceStore,
+  choose_safety,
 )
 
 
@@ -148,6 +149,51 @@ def test_destination_survives_parser_store_projection_with_actual_receipt():
   assert selection.snapshot is not None
   assert selection.snapshot.control.destination_present
   assert selection.snapshot.control.destination == (37.5, 127.1)
+
+
+def test_safety_revision_prevents_heartbeat_rewind_expires_and_falls_back_to_hda():
+  store = NavigationSourceStore()
+  first = valid_frame(sequence=1)
+  first["safety"]["revision"] = 1
+  assert store.accept(parse_naver_navigation_v1(first, 10.0), 10.0)
+
+  heartbeat = valid_frame(sequence=2)
+  heartbeat["guidance"]["current"]["distanceM"] = 200
+  heartbeat["safety"]["revision"] = 1
+  assert store.accept(parse_naver_navigation_v1(heartbeat, 10.5), 10.5)
+
+  live = store.select(11.0)
+  assert live.snapshot is not None
+  assert live.snapshot.control.safety is not None
+  assert live.snapshot.control.safety.distance_m == 420.0
+  assert live.safety_age_s == pytest.approx(1.0)
+
+  stale = store.select(12.0)
+  assert stale.snapshot is not None
+  assert stale.snapshot.source is NavigationSource.NAVER_V1
+  assert stale.snapshot.control.safety is None
+  fallback = choose_safety(stale, hda_limit_kph=50.0, hda_distance_m=150.0)
+  assert fallback is not None
+  assert (fallback.provider, fallback.rejection) == ("hda", "safety_stale")
+
+  changed = valid_frame(sequence=3)
+  changed["safety"]["revision"] = 2
+  changed["safety"]["distanceM"] = 300
+  assert store.accept(parse_naver_navigation_v1(changed, 12.1), 12.1)
+  assert store.select(12.1).snapshot.control.safety.distance_m == 300.0
+
+  absent = valid_frame(sequence=4)
+  absent["safety"] = {"present": False}
+  assert store.accept(parse_naver_navigation_v1(absent, 12.2), 12.2)
+  assert store.select(12.2).snapshot.control.safety is None
+
+
+@pytest.mark.parametrize("revision", [0, -1, MAX_SEQUENCE + 1, 1.5, True])
+def test_rejects_invalid_safety_revision_without_accepting_extra_safety_keys(revision):
+  frame = valid_frame()
+  frame["safety"]["revision"] = revision
+
+  assert assert_protocol_error(frame).code == "safety"
 
 
 @pytest.mark.parametrize("schema", ["naver.navigation.v2", "", 1, True, None])

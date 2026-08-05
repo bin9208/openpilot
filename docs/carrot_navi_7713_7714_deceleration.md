@@ -64,6 +64,20 @@ curve 후보는 외부 내비 lease로 gate하지 않는다.
 3. 실제 내비 감속 필드 갱신은 payload에 `nRoadLimitSpeed` key가 있을 때만 수행된다.
 4. route/vrtx는 별도 `handle_route()`로 경로를 저장한다.
 
+### 7706 legacy UDP
+
+7706은 Naver discovery와 기존 Tmap UDP가 같은 수신 port를 공유한다. Naver discovery 모양(정확한
+`type`/`source`/`schema_version` key 또는 `carrot.navigation.discover` prefix)은 크기, UTF-8, 중첩,
+root object, duplicate key, non-finite number까지 strict JSON으로 검사한 뒤 requester와 port를
+검증한다. 이 모양의 malformed frame은 Tmap으로 downgrade하거나 전달하지 않는다.
+
+그 외 Tmap legacy datagram은 같은 byte-size, UTF-8, non-empty, 중첩, root-object 제한과 duplicate
+key 거부를 유지하되 기존 호환 JSON decoder를 사용한다. 따라서 위치 필드의 `NaN` 같은 Python
+legacy non-finite 값이 있어도 평면 root payload가 update path에 도달할 수 있다. 이 UDP 7706
+호환 처리는 Naver discovery나 TCP envelope의 strict 검증을 완화하지 않는다. UDP payload는 HTTP
+7713과 달리 `rgdata` wrapper를 넣지 않으며, 실제 navigation snapshot 갱신에는 평면
+`nRoadLimitSpeed` key가 필요하다.
+
 ### 7714 Carrot Navi v2
 
 1. 상시 `carrot_navi` 프로세스가 WebSocket v2 스트림을 수신한다.

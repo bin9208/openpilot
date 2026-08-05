@@ -59,6 +59,16 @@ APN은 현재 안내 중인 앱을 나타내며 HDA만 사용하는 상태를 �
 `arrived`가 수신되면 해당 session은 종료 tombstone으로 남아 더 큰 sequence가 와도 다시 활성화되지
 않으며, 새 안내에는 새 session ID가 필요합니다.
 
+Naver의 500ms 전송 heartbeat는 안내 소유권만 유지하며, 같은 `safety.revision`의 카메라·방지턱
+정보를 새로 관측한 것으로 처리하지 않습니다. 따라서 차량 주행으로 줄어든 남은 거리가 heartbeat
+때문에 원래 값으로 되돌아가지 않고, 새 safety callback이 없으면 안전정보 TTL 만료 후 안내 소유자는
+Naver로 유지된 채 감속 제공자만 HDA로 바뀔 수 있습니다.
+
+Legacy Tmap의 UDP 7706 입력은 기존 앱이 보내는 flat root JSON 호환성을 유지합니다. 호환 parser는
+`NaN` 같은 Python legacy 수치를 허용하면서도 duplicate key는 계속 거부합니다. 이 UDP 7706 호환
+처리는 Naver discovery나 TCP envelope의 strict 검증을 완화하지 않으며, 잘못된 discovery 요청을
+Tmap 안내로 강등시키지도 않습니다.
+
 이 C3 소스 선택 변경에는 수정된 Tmap APK가 필요하지 않습니다. Naver 입력에 대한 설명은 유효한
 `naver.navigation.v1` 프레임이 수신되는 경우의 C3 동작을 뜻하며, 특정 Naver APK나 실차 수신 검증
 완료를 뜻하지 않습니다.

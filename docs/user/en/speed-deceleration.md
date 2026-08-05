@@ -61,6 +61,17 @@ time. TCP EOF, reset, or timeout records transport loss for the exact source/ses
 immediately clear guidance. A `stopped` or `arrived` envelope tombstones that session, so a later
 frame cannot reactivate it even with a higher sequence; new guidance requires a new session ID.
 
+Naver's 500 ms transport heartbeat keeps guidance ownership alive but does not make camera or bump
+data with the same `safety.revision` a newly observed item. Distance already consumed by vehicle
+travel is therefore not reset to the original value by a heartbeat. If no new safety callback
+arrives, the safety item can expire while Naver still owns guidance, and only the deceleration
+provider can change to HDA.
+
+Legacy Tmap UDP 7706 retains compatibility with the flat root JSON sent by existing apps. Its
+compatibility parser accepts Python legacy numeric values such as `NaN` while continuing to reject
+duplicate keys. This UDP 7706 compatibility does not relax strict Naver discovery or TCP envelope
+validation, and it cannot downgrade a malformed discovery request into Tmap guidance.
+
 No patched Tmap APK is required by this C3 source-selection change. The Naver behavior described
 here is conditional on receiving a valid `naver.navigation.v1` frame; it does not claim that a
 particular Naver APK or real-vehicle reception has been validated.

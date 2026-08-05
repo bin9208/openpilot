@@ -62,6 +62,8 @@ from openpilot.selfdrive.carrot.navigation_sources import (
   choose_safety,
   safety_rejection,
 )
+from openpilot.selfdrive.carrot.naver_navigation_protocol import parse_naver_navigation_v1
+from openpilot.selfdrive.carrot.navigation_ingress import handle_navigation_udp_datagram
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
 import openpilot.selfdrive.carrot.carrot_serv as carrot_serv_module
 
@@ -325,6 +327,29 @@ def _service(selection, *, mode=3):
   return serv
 
 
+def _naver_camera_frame(sequence, revision):
+  return {
+    "schema": "naver.navigation.v1",
+    "sessionId": "019f0000-0000-7000-8000-000000000001",
+    "sequence": sequence,
+    "sentMonotonicMs": 123456,
+    "lifecycle": "guiding",
+    "guidance": {
+      "current": {"present": False},
+      "next": {"present": False},
+    },
+    "safety": {
+      "present": True,
+      "kind": "fixed_camera",
+      "distanceM": 420,
+      "speedKph": 60,
+      "revision": revision,
+    },
+    "road": {"limitValid": False, "categoryValid": False},
+    "route": {"present": False},
+  }
+
+
 def test_no_navigation_owner_uses_hda_without_apn_activation():
   serv = _service(_no_owner_selection())
 
@@ -467,6 +492,74 @@ def test_real_status_only_guiding_owner_keeps_apn_two():
   decision = serv._apply_navigation_safety(40.0, 100.0)
 
   assert (serv.navigation_owner, decision.provider, serv.active_carrot) == ("naver_v1", "hda", 2)
+
+
+def test_naver_terminal_then_flat_udp_tmap_nan_restores_owner_and_apn(monkeypatch):
+  class DatagramSocket:
+    def sendto(self, data: bytes, destination: tuple[str, int]) -> None:
+      raise AssertionError("Tmap legacy datagram must not send discovery response")
+
+  serv, _ = _published_cycle(monkeypatch, _no_owner_selection())
+  serv.carrotIndex = 1
+  guiding = parse_naver_navigation_v1(_naver_camera_frame(1, 1), 10.0)
+  assert serv.accept_navigation_snapshot(guiding)
+  serv.prepare_navigation(_CycleSM(), now_s=10.0)
+  assert serv.navigation_selection.snapshot is not None
+
+  terminal_frame = _naver_camera_frame(2, 2)
+  terminal_frame["lifecycle"] = "stopped"
+  terminal_frame["safety"] = {"present": False}
+  terminal = parse_naver_navigation_v1(terminal_frame, 10.1)
+  assert serv.accept_navigation_snapshot(terminal)
+  serv.prepare_navigation(_CycleSM(), now_s=10.1)
+  assert serv.navigation_selection.snapshot is None
+  assert not serv.accept_navigation_snapshot(guiding)
+
+  monkeypatch.setattr(carrot_serv_module.time, "monotonic", lambda: 10.2)
+  assert not handle_navigation_udp_datagram(
+    DatagramSocket(),
+    b'{"nRoadLimitSpeed":80,"nSdiType":1,"nSdiDist":250,"nSdiSpeedLimit":60,'
+    b'"vpPosPointLat":NaN,"vpPosPointLon":127.1,"roadcate":8}',
+    ("192.0.2.20", 43000),
+    "192.168.43.1", serv.update,
+  )
+  serv.prepare_navigation(_CycleSM(), now_s=10.2)
+  publisher = _Publisher()
+  serv.update_navi("", _CycleSM(), publisher, 0.0, (), (), 250.0, "gpsLocationExternal", navigation_prepared=True)
+  message = publisher.messages["carrotMan"].carrotMan
+
+  assert (message.naviOwner, message.activeCarrot) == ("tmap_legacy", 3)
+
+
+def test_naver_same_safety_revision_preserves_projected_distance_until_hda_fallback(monkeypatch):
+  serv, _ = _published_cycle(monkeypatch, _no_owner_selection())
+  first = parse_naver_navigation_v1(_naver_camera_frame(1, 1), 10.0)
+  assert serv.accept_navigation_snapshot(first)
+  serv.prepare_navigation(_CycleSM(), now_s=10.0)
+  first_publisher = _Publisher()
+  serv.update_navi("", _CycleSM(), first_publisher, 0.0, (), (), 250.0, "gpsLocationExternal", navigation_prepared=True)
+  first_message = first_publisher.messages["carrotMan"].carrotMan
+  assert (first_message.xSpdDist, first_message.naviOwner, first_message.decelProvider) == (420, "naver_v1", "naver_v1")
+
+  serv.xSpdDist = 400.0
+  heartbeat = parse_naver_navigation_v1(_naver_camera_frame(2, 1), 10.5)
+  assert serv.accept_navigation_snapshot(heartbeat)
+  serv.prepare_navigation(_CycleSM(), now_s=10.5)
+  heartbeat_publisher = _Publisher()
+  serv.update_navi("", _CycleSM(), heartbeat_publisher, 0.0, (), (), 250.0, "gpsLocationExternal", navigation_prepared=True)
+  heartbeat_message = heartbeat_publisher.messages["carrotMan"].carrotMan
+  assert (heartbeat_message.xSpdDist, heartbeat_message.naviOwner, heartbeat_message.decelProvider) == (
+    400, "naver_v1", "naver_v1",
+  )
+
+  serv.prepare_navigation(_CycleSM(), now_s=12.0)
+  fallback_publisher = _Publisher()
+  serv.update_navi("", _CycleSM(hda_limit=50.0, hda_distance=150.0), fallback_publisher, 0.0, (), (), 250.0,
+                   "gpsLocationExternal", navigation_prepared=True)
+  fallback_message = fallback_publisher.messages["carrotMan"].carrotMan
+  assert (fallback_message.naviOwner, fallback_message.decelProvider, fallback_message.desiredSource) == (
+    "naver_v1", "hda", "hda",
+  )
 
 
 class _Node:

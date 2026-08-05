@@ -45,6 +45,7 @@ class SafetyItem:
   block_type: int = -1
   block_speed_kph: float = 0.0
   block_distance_m: float = 0.0
+  revision: int | None = None
 
   @property
   def limit_kph(self) -> float:
@@ -309,6 +310,34 @@ class NavigationSourceStore:
       self._last_activation_mono_s = now_s
     return self._activation_epoch
 
+  @staticmethod
+  def _retain_unchanged_naver_safety(
+      candidate: NavigationSnapshot, current: NavigationSnapshot | None,
+  ) -> NavigationSnapshot:
+    if (
+      candidate.source is not NavigationSource.NAVER_V1
+      or current is None
+      or current.session_id != candidate.session_id
+      or current.lifecycle is not NavigationLifecycle.GUIDING
+      or candidate.lifecycle is not NavigationLifecycle.GUIDING
+    ):
+      return candidate
+    updates: dict[str, SafetyItem] = {}
+    for field_name in ("safety", "secondary_safety"):
+      incoming = getattr(candidate.control, field_name)
+      cached = getattr(current.control, field_name)
+      if (
+        incoming is not None
+        and cached is not None
+        and incoming.revision is not None
+        and incoming.revision == cached.revision
+        and replace(incoming, received_mono_s=cached.received_mono_s) == cached
+      ):
+        updates[field_name] = cached
+    if not updates:
+      return candidate
+    return replace(candidate, control=replace(candidate.control, **updates))
+
   def accept(self, candidate: NavigationSnapshot, now_s: float) -> bool:
     if not self._valid_candidate(candidate, now_s):
       return False
@@ -326,6 +355,7 @@ class NavigationSourceStore:
       current = self._snapshots.get(candidate.source)
       if current is not None and now_s < current.received_mono_s:
         return False
+      candidate = self._retain_unchanged_naver_safety(candidate, current)
       control = self._normalize_control(candidate, now_s)
       if control is None:
         return False

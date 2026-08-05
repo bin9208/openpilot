@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import math
 import threading
 
@@ -252,6 +252,44 @@ def test_duplicate_and_backward_sequences_are_rejected_without_mutation():
   assert selected.snapshot is not None
   assert selected.snapshot.sequence == 10
   assert selected.snapshot.received_mono_s == 1.0
+
+
+@pytest.mark.parametrize(("field_name", "changed_value"), (
+  ("type", 7),
+  ("distance_m", 300.0),
+  ("speed_limit_kph", 40.0),
+  ("reason", "section"),
+  ("section", True),
+  ("section_type", 2),
+  ("block_type", 3),
+  ("block_speed_kph", 50.0),
+  ("block_distance_m", 250.0),
+))
+def test_same_naver_safety_revision_accepts_semantic_change(field_name, changed_value):
+  store = NavigationSourceStore()
+  original = SafetyItem(1, 420.0, 60.0, 10.0, revision=7)
+  first = _snapshot(
+    NavigationSource.NAVER_V1,
+    "semantic-conflict",
+    1,
+    10.0,
+    control=NavigationControlState(safety=original),
+  )
+  assert store.accept(first, 10.0)
+
+  changed = replace(original, received_mono_s=10.5, **{field_name: changed_value})
+  update = _snapshot(
+    NavigationSource.NAVER_V1,
+    "semantic-conflict",
+    2,
+    10.5,
+    control=NavigationControlState(safety=changed),
+  )
+  assert store.accept(update, 10.5)
+
+  selected = store.select(10.5)
+  assert selected.snapshot is not None
+  assert selected.snapshot.control.safety == changed
 
 
 def test_terminal_owner_falls_back_atomically():
