@@ -18,6 +18,19 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - Mapping audit confirmed gaps and created #19-#24. Route-before-guiding loss
   is recorded in #7. Production bump source pairing needs same-session, bounded
   age and ambiguity rejection before this task is complete.
+- JVM RED 36013169310 confirmed three retained-source bugs (66 passed, 3 failed).
+  36013547591 then exposed an empty diagnostic outcome token; use explicit
+  bounded inactive/ambiguous reason tokens instead of the empty sentinel.
+- GitHub receive-pack returned repeated HTTP 500 for e1e464e3. Local fallback
+  used Android Studio JBR21 and checksum-verified JUnit1.11.4 on D: only to
+  reproduce review cases. Three expected pairing failures reproduced; the
+  unchanged discoveryUsesBoundClientPortAndConnectsToValidatedPacketSource test
+  additionally failed on Windows JBR's loopback selector initialization.
+- Review fix: ambiguity persists across time/session boundaries and through all
+  outstanding finals, not only the first one. Single-use capture has a <1000ms
+  budget. Ruling: lost final callbacks may suppress later bumps until restart;
+  do not guess correlation. Cost: availability, which needs real hook-order
+  confirmation in #9/#11 before production acceptance.
 
 - #1 and #15 complete; exact Actions evidence is in EVIDENCE.md.
 - #2 complete: PR #16 merged as 156ffd94; 389 input tests passed in run

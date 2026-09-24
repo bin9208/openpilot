@@ -78,10 +78,12 @@ public class ProductionRuntime {
       // in the same construction window are ambiguous, even with equal codes.
       if (!"guiding".equals(state.lifecycle)) {
         source = Naver6805ObjectMapper.SafetySource.absent("safety_source_inactive");
-      } else if (previous != null && previous.matches(state, now)) {
+      } else if (previous != null) {
         source = Naver6805ObjectMapper.SafetySource.absent("safety_source_ambiguous");
       }
-      pendingSafetySource.set(new PendingSafetySource(source, state.sessionId, now));
+      long outstanding = previous == null ? 1L
+          : previous.outstanding == Long.MAX_VALUE ? Long.MAX_VALUE : previous.outstanding + 1L;
+      pendingSafetySource.set(new PendingSafetySource(source, state.sessionId, now, outstanding));
       captureMappingOutcome(new MappingOutcome(
           "safety", source.outcome, rootDescriptor(item), 0, 0, state.safetyRevision,
           source.present, source.present && source.distanceM > 0.0, state.isFrameEligible()));
@@ -105,7 +107,16 @@ public class ProductionRuntime {
             state.isFrameEligible()));
       }
     } finally {
-      pendingSafetySource.remove();
+      PendingSafetySource pending = pendingSafetySource.get();
+      if (pending != null && pending.outstanding > 1L) {
+        // Do not let an older outstanding final consume a newly captured source.
+        long remaining = pending.outstanding == Long.MAX_VALUE ? Long.MAX_VALUE : pending.outstanding - 1L;
+        pendingSafetySource.set(new PendingSafetySource(
+            Naver6805ObjectMapper.SafetySource.absent("safety_source_ambiguous"),
+            pending.sessionId, pending.receivedMs, remaining));
+      } else {
+        pendingSafetySource.remove();
+      }
     }
   }
 
@@ -169,16 +180,18 @@ public class ProductionRuntime {
     final Naver6805ObjectMapper.SafetySource source;
     final String sessionId;
     final long receivedMs;
+    final long outstanding;
 
-    PendingSafetySource(Naver6805ObjectMapper.SafetySource source, String sessionId, long receivedMs) {
+    PendingSafetySource(Naver6805ObjectMapper.SafetySource source, String sessionId, long receivedMs, long outstanding) {
       this.source = source;
       this.sessionId = sessionId;
       this.receivedMs = receivedMs;
+      this.outstanding = outstanding;
     }
 
     boolean matches(NaverNavigationState state, long now) {
       long age = now - receivedMs;
-      return "guiding".equals(state.lifecycle) && sessionId.equals(state.sessionId)
+      return outstanding == 1L && "guiding".equals(state.lifecycle) && sessionId.equals(state.sessionId)
           && age >= 0L && age < SAFETY_PAIR_MAX_AGE_MS;
     }
   }

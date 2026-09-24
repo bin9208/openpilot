@@ -141,6 +141,37 @@ final class ProductionHooksTest {
   }
 
   @Test
+  void newerSessionSourceCannotMakeAnOlderFinalObjectLookCurrent() {
+    RecordingSender sender = new RecordingSender();
+    ProductionRuntime runtime = new ProductionRuntime(new NaverNavigationAggregator(), sender);
+    runtime.onStatus(new NaviStatusBroadcaster.Status.Guiding());
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 35.0));
+    runtime.onStatus(new NaviStatusBroadcaster.Status.Stopped());
+    runtime.onStatus(new NaviStatusBroadcaster.Status.Guiding());
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 350.0));
+    runtime.onSafety(finalBump());
+    assertFalse(sender.offered.get(sender.offered.size() - 1).safety.present);
+  }
+
+  @Test
+  void ambiguityPersistsUntilAllOutstandingFinalObjectsDrain() {
+    RecordingSender sender = new RecordingSender();
+    ProductionRuntime runtime = new ProductionRuntime(new NaverNavigationAggregator(), sender);
+    runtime.onStatus(new NaviStatusBroadcaster.Status.Guiding());
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 35.0));
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 350.0));
+    runtime.onSafety(finalBump());
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 700.0));
+    runtime.onSafety(finalBump());
+    assertFalse(sender.offered.get(sender.offered.size() - 1).safety.present);
+    runtime.onSafety(finalBump());
+    assertFalse(sender.offered.get(sender.offered.size() - 1).safety.present);
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 18.0));
+    runtime.onSafety(finalBump());
+    assertEquals(18.0, sender.offered.get(sender.offered.size() - 1).safety.distanceM);
+  }
+
+  @Test
   void delayedUnconsumedSourceCannotBeReplacedBeforeItsFinalObjectArrives() throws Exception {
     RecordingSender sender = new RecordingSender();
     ProductionRuntime runtime = new ProductionRuntime(new NaverNavigationAggregator(), sender);

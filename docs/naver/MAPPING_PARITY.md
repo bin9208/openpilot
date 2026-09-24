@@ -28,8 +28,12 @@ investigation; production must not invent a distance from those absent extras.
 
 Only the reduced immutable source values are retained, not the source object.
 Pairing is same-thread, same-guiding-session, single-use and time bounded.
-Ambiguous multiple unconsumed sources must fail closed; the next complete pair
-can recover. A rejected pair emits safety absence, not an older bump.
+Ambiguous multiple unconsumed sources fail closed until all expected final
+callbacks drain; a later complete pair can then recover. Lost final callbacks
+may suppress subsequent bump mapping on that thread until the app is restarted.
+This availability trade-off must be checked in #9/#11 against actual injected
+hook ordering; it is safer than guessing which old/new equal-code object belongs
+to a distance. A rejected pair emits safety absence, not an older bump.
 
 C3 permits this verified bump without a road category, while explicitly provided
 0/1 still means highway and blocks bump control. The stored road category is not
