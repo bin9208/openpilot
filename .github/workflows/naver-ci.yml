@@ -12,6 +12,20 @@ concurrency:
   group: naver-ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  naver-input:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest==9.0.2
+      - name: Naver input regression
+        run: python -m pytest -c /dev/null --rootdir=. --confcutdir=openpilot/selfdrive/carrot/tests -q openpilot/selfdrive/carrot/tests/test_naver_input_smoke.py
   infrastructure:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
