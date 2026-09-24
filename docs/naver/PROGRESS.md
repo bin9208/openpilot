@@ -11,6 +11,9 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - #9 RED36023160593: Linux LOCALAPPDATA eager lookup and diagnostic-only
   compilation of the production BumpWireFixture. Fix OS-aware synthetic tools
   and restrict that cross-language fixture to production/field compositions.
+- #9 run 36023502376: all three Java/DEX compositions passed; host toolkit
+  passed 452 tests and exposed four remaining keytool.exe-only alias fixtures.
+  Use the same OS-aware executable suffix for those real synthetic signing tests.
 - Ruling: replace historical public-release documentation assertions with the
   current source-only/test boundary. Public #12 remains gated by #11; do not
   publish old capture-derived fixture or old claims as current acceptance.

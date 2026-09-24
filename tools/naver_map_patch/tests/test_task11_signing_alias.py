@@ -12,6 +12,7 @@ from tools.naver_map_patch.split_packaging import build_release
 import tools.naver_map_patch.split_tools as split_tools
 
 from conftest import (
+  EXECUTABLE_SUFFIX,
   TEST_PASSWORD,
   SyntheticSet,
   _add_trusted_certificate,
@@ -85,7 +86,7 @@ def test_single_private_key_alias_is_resolved_once_and_signs_all_apks(
   keytool_commands = _keytool_commands(commands)
   assert len(keytool_commands) == 1
   assert keytool_commands[0] == (
-    str(request.tools.java_home / "bin" / "keytool.exe"),
+    str(request.tools.java_home / "bin" / ("keytool" + EXECUTABLE_SUFFIX)),
     "-J-Duser.language=en",
     "-J-Duser.country=US",
     "-list",
@@ -107,7 +108,7 @@ def test_certificate_only_pkcs12_is_rejected_before_signing_or_publication(
   keystore = tmp_path / "certificate-only.p12"
   output = tmp_path / "release"
   request = _request(synthetic_set, output)
-  keytool = request.tools.java_home / "bin" / "keytool.exe"
+  keytool = request.tools.java_home / "bin" / ("keytool" + EXECUTABLE_SUFFIX)
   _make_certificate_only_keystore(keytool, keystore, "trusted", synthetic_set.environment)
   request = replace(request, signer=replace(request.signer, keystore=keystore, alias="trusted"))
   commands = _record_tool_commands(monkeypatch)
@@ -124,7 +125,7 @@ def test_private_key_plus_trusted_certificate_is_rejected_before_signing_or_publ
 ) -> None:
   keystore = tmp_path / "mixed-entries.p12"
   request = _request(synthetic_set, tmp_path / "release")
-  keytool = request.tools.java_home / "bin" / "keytool.exe"
+  keytool = request.tools.java_home / "bin" / ("keytool" + EXECUTABLE_SUFFIX)
   _make_key(keytool, keystore, "patch", synthetic_set.environment)
   _add_trusted_certificate(keytool, keystore, "trusted", synthetic_set.environment)
   request = replace(request, signer=replace(request.signer, keystore=keystore, alias="patch"))
@@ -142,7 +143,7 @@ def test_two_private_key_pkcs12_is_rejected_before_signing_or_publication(
 ) -> None:
   keystore = tmp_path / "two-private-keys.p12"
   request = _request(synthetic_set, tmp_path / "release")
-  keytool = request.tools.java_home / "bin" / "keytool.exe"
+  keytool = request.tools.java_home / "bin" / ("keytool" + EXECUTABLE_SUFFIX)
   _make_key(keytool, keystore, "first", synthetic_set.environment)
   _make_key(keytool, keystore, "second", synthetic_set.environment)
   request = replace(request, signer=replace(request.signer, keystore=keystore, alias="first"))
