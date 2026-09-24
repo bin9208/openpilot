@@ -19,6 +19,7 @@
           <testInclude>ai/comma/naver/payload/NaverNavigationEnvelopeTest.java</testInclude>
           <testInclude>ai/comma/naver/payload/NaverNavigationSenderTest.java</testInclude>
           <testInclude>ai/comma/naver/payload/ProductionHooksTest.java</testInclude>
+          <testInclude>ai/comma/naver/payload/BumpWireFixture.java</testInclude>
         </testIncludes></configuration>
       </plugin>
       <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version>

@@ -26,6 +26,11 @@ jobs:
           java-version: '21'
       - name: Pure JVM mapping and runtime contract (not APK or device acceptance)
         run: mvn -B --no-transfer-progress -f tools/naver_ci/java/pom.xml test
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Java-produced bump envelope through strict C3 input
+        run: python -m tools.naver_ci.check_bump_wire
   runtime-controller:
     runs-on: ubuntu-24.04
     timeout-minutes: 8

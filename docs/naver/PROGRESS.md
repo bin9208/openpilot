@@ -31,6 +31,12 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   budget. Ruling: lost final callbacks may suppress later bumps until restart;
   do not guess correlation. Cost: availability, which needs real hook-order
   confirmation in #9/#11 before production acceptance.
+- Local focused GREEN: ProductionHooksTest 14/14 passed after the overlap fix.
+  GitHub push recovered and published both retained local commits normally,
+  without force or alternative ref writes. Cloud re-validation follows.
+- Added a cross-language check: synthetic exact-class Java objects pass through
+  ProductionRuntime/real envelope encoding, then strict Python parsing and the
+  canonical type-22 adapter; a terminal frame then clears the session.
 
 - #1 and #15 complete; exact Actions evidence is in EVIDENCE.md.
 - #2 complete: PR #16 merged as 156ffd94; 389 input tests passed in run
