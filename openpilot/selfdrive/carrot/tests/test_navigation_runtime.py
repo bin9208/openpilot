@@ -1,4 +1,3 @@
-from dataclasses import replace
 import importlib.util
 
 import pytest
@@ -18,6 +17,7 @@ def runtime():
 
 def naver(runtime, now=10., sequence=42, session=None):
   frame = valid_frame(sequence=sequence)
+  frame['safety']['revision'] = 7
   if session is not None:
     frame['sessionId'] = session
   assert runtime.accept_snapshot(parse_naver_navigation_v1(frame, now))
