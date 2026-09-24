@@ -4,6 +4,9 @@ Base: upstream `43203371004e035bdb70a00a8dad29a4b657c6c3`.
 GitHub status is authoritative. Update this index at verified checkpoints;
 link CI evidence rather than copying full logs into chat.
 
+Verified checkpoint: #1, #2, #3, #4 and #15 are complete. Next is #5.
+Issue #4 landed via PR #18; test and review evidence is in EVIDENCE.md.
+
 | Issue | Scope | Dependency |
 |---|---|---|
 | [#1](https://github.com/bin9208/openpilot/issues/1) | Branches, mirror, CI and records | none |

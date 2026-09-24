@@ -11,8 +11,12 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   must fail before adding diagnostic fields. Preserve upstream ordinals 29-32.
 - #3 complete: PR #17 merged as 238fbc85. GREEN run 36004264992 and PR runs
   36004519269/36004519276 passed: 4 real wire tests and 389 input tests.
-- Next task: #4 runtime provider binding. Current modules are not yet connected
-  to CarrotMan/CarrotServ, so do not install this branch as a Naver driving fix.
+- #4 complete: PR #18 merged as 530e3dbf. Exact code HEAD eb18a4ba passed
+  Actions 36010063200, PR Actions 36010312912 and docs 36010312913:
+  403 input + 107 controller + 4 real wire + 8 infrastructure tests.
+- Next task: #5 bump mapping/common control. Runtime binding is connected, but
+  bump/camera/route/UI and actual device acceptance remain open. Do not treat
+  this milestone as a demonstrated fix for the historical driving incident.
 - #4 started from 4aa63bfe on codex/naver-issue-4-runtime. RED covers canonical
   controller projection, sticky owner switching, guiding-only sessions, exact
   lease expiry, terminal tombstones and item freshness independent of heartbeat.
