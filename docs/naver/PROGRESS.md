@@ -8,6 +8,10 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - #6 intermediate run 36019015267: all new regressions passed. Four old
   assertions still assumed connection-only suppression / a display speed not
   present in the HDA fixture. Update expectations, retaining hazard exclusion.
+- #6 first GREEN: 36019254878 / PR 36019324247 passed 403 input, 128
+  controller, 73 JVM, 4 wire and 8 infrastructure tests. Fresh review identified
+  category-only camera replay; RED 36019691832 confirms it. Category now affects
+  speed revision only for bump eligibility, not unrelated camera metadata.
 - Ruling: guidance connection no longer suppresses stock safety by itself;
   preserve external positive-distance bump ownership and rear-camera holds.
   This intentionally updates upstream's no-hazard suppression test to the
