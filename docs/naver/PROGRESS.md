@@ -9,6 +9,10 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   remains #4 and actual APN incident confirmation remains #14.
 - #3 started: real Capnp roundtrip and compiled native/Python/browser comparison
   must fail before adding diagnostic fields. Preserve upstream ordinals 29-32.
+- #3 complete: PR #17 merged as 238fbc85. GREEN run 36004264992 and PR runs
+  36004519269/36004519276 passed: 4 real wire tests and 389 input tests.
+- Next task: #4 runtime provider binding. Current modules are not yet connected
+  to CarrotMan/CarrotServ, so do not install this branch as a Naver driving fix.
 - #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact
