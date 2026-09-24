@@ -76,8 +76,10 @@ public class ProductionRuntime {
       PendingSafetySource previous = pendingSafetySource.get();
       // The final display object has no event identity. Multiple source objects
       // in the same construction window are ambiguous, even with equal codes.
-      if (!"guiding".equals(state.lifecycle) || (previous != null && previous.matches(state, now))) {
-        source = Naver6805ObjectMapper.SafetySource.absent();
+      if (!"guiding".equals(state.lifecycle)) {
+        source = Naver6805ObjectMapper.SafetySource.absent("safety_source_inactive");
+      } else if (previous != null && previous.matches(state, now)) {
+        source = Naver6805ObjectMapper.SafetySource.absent("safety_source_ambiguous");
       }
       pendingSafetySource.set(new PendingSafetySource(source, state.sessionId, now));
       captureMappingOutcome(new MappingOutcome(

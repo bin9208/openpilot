@@ -141,6 +141,35 @@ final class ProductionHooksTest {
   }
 
   @Test
+  void delayedUnconsumedSourceCannotBeReplacedBeforeItsFinalObjectArrives() throws Exception {
+    RecordingSender sender = new RecordingSender();
+    ProductionRuntime runtime = new ProductionRuntime(new NaverNavigationAggregator(), sender);
+    runtime.onStatus(new NaviStatusBroadcaster.Status.Guiding());
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 35.0));
+    Thread.sleep(1100L);
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 350.0));
+    runtime.onSafety(finalBump());
+    assertFalse(sender.offered.get(sender.offered.size() - 1).safety.present);
+  }
+
+  @Test
+  void aStatusTransitionOnAnotherThreadInvalidatesTheOriginalThreadSource() throws Exception {
+    RecordingSender sender = new RecordingSender();
+    ProductionRuntime runtime = new ProductionRuntime(new NaverNavigationAggregator(), sender);
+    runtime.onStatus(new NaviStatusBroadcaster.Status.Guiding());
+    runtime.onSafetySource(guidanceSafety(SafetyCode.SpeedBump, 35.0));
+    Thread status = new Thread(() -> {
+      runtime.onStatus(new NaviStatusBroadcaster.Status.Stopped());
+      runtime.onStatus(new NaviStatusBroadcaster.Status.Guiding());
+    });
+    status.start();
+    status.join(2000L);
+    assertFalse(status.isAlive());
+    runtime.onSafety(finalBump());
+    assertFalse(sender.offered.get(sender.offered.size() - 1).safety.present);
+  }
+
+  @Test
   void nullAndInvalidSafetySourcesAreSingleUseAndRecoverable() {
     RecordingSender sender = new RecordingSender();
     ProductionRuntime runtime = new ProductionRuntime(

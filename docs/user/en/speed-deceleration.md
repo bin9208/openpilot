@@ -10,6 +10,13 @@
 > The navigation owner and actual deceleration provider can differ. Bump, camera,
 > route and device validation remain in progress; this is not driving acceptance.
 
+A verified current Naver bump with positive remaining distance uses the same
+target, approach, endpoint and accelerator behavior as Tmap. Missing road
+category is not treated as highway, but explicit highway categories (0/1) still
+block bump control. Stale or ambiguously paired distances are not reused, so
+deceleration may be unavailable. Full mapping and real-drive acceptance remain
+separate work.
+
 > [!NOTE]
 > This is the canonical English user guide maintained with the `carrot-wip` code. When user-visible behavior changes, update this document together with the related code and tests.
 
