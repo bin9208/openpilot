@@ -1,0 +1,359 @@
+{
+  "schema_version": 1,
+  "profile_id": "6.8.0.5",
+  "package_name": "com.nhn.android.nmap",
+  "version_code": 60800007,
+  "version_name": "6.8.0.5",
+  "package_signer_sha256": "0b8b8523bb4aeffa346e4bdd4fbf7d193450569aa14aaad4adfd94a3f7b227bb",
+  "source_stamp_sha256": "3257d599a49d2c961a471ca9843f59d341a405884583fc087df4237b733bbd6d",
+  "base": {
+    "size": 220751499,
+    "sha256": "a31c21fa9c1e17fcfd0695867f64b4b29b9e3abf7e8400a5ee46f14ae77e704b",
+    "dex_count": 42,
+    "native_library_count": 0,
+    "required_split_types": [
+      "base__abi",
+      "base__density"
+    ]
+  },
+  "dex_entries": {
+    "classes4.dex": {
+      "size": 2575784,
+      "sha256": "1a9f51a1c9778780976ad8e94a72024b9ca92050a9f0a1214d338da74ec33b9a"
+    },
+    "classes6.dex": {
+      "size": 3474604,
+      "sha256": "7954680561ebf0acc24577fcb90e52e8308353c4c394afe46e8ca4296a0d4c72"
+    },
+    "classes11.dex": {
+      "size": 5471308,
+      "sha256": "37cb3063ff38478eae7ac48f782d325ce78b8abae2396fd8adbb3121e8549a3a"
+    }
+  },
+  "payload_modes": [
+    "diagnostic",
+    "production"
+  ],
+  "diagnostic_payload": {
+    "accessor_allowlists": {
+      "status": [],
+      "tbt_current": [
+        "com.naver.map.core.navigation.model.TbtItem#h()D",
+        "com.naver.map.core.navigation.model.TbtItem#i()Lcom/naver/map/core/navigation/model/TbtDataItem;",
+        "com.naver.map.core.navigation.model.TbtItem#j()Lcom/naver/map/core/navigation/model/TbtItem$Type;",
+        "com.naver.map.core.navigation.model.TbtDataItem#s()Lcom/naver/maps/navi/v2/shared/api/route/constants/TurnPointType;",
+        "com.naver.map.core.navigation.model.TbtDataItem#n()Ljava/lang/String;",
+        "com.naver.map.core.navigation.model.TbtDataItem#o()Ljava/lang/Integer;",
+        "com.naver.map.core.navigation.model.TbtDataItem#u()I",
+        "com.naver.map.core.navigation.model.TbtDataItem#v()Ljava/lang/String;"
+      ],
+      "tbt_next": [
+        "com.naver.map.core.navigation.model.TbtItem#h()D",
+        "com.naver.map.core.navigation.model.TbtItem#i()Lcom/naver/map/core/navigation/model/TbtDataItem;",
+        "com.naver.map.core.navigation.model.TbtItem#j()Lcom/naver/map/core/navigation/model/TbtItem$Type;",
+        "com.naver.map.core.navigation.model.TbtDataItem#s()Lcom/naver/maps/navi/v2/shared/api/route/constants/TurnPointType;",
+        "com.naver.map.core.navigation.model.TbtDataItem#n()Ljava/lang/String;",
+        "com.naver.map.core.navigation.model.TbtDataItem#o()Ljava/lang/Integer;",
+        "com.naver.map.core.navigation.model.TbtDataItem#u()I",
+        "com.naver.map.core.navigation.model.TbtDataItem#v()Ljava/lang/String;"
+      ],
+      "safety": [
+        "com.naver.maps.navi.v2.api.guidance.model.GuidanceSafety#getCode()Lcom/naver/maps/navi/v2/shared/api/route/constants/SafetyCode;",
+        "com.naver.maps.navi.v2.api.guidance.model.GuidanceSafety#distance()D",
+        "com.naver.map.core.common.model.SafeControlItem#getSign()Lcom/naver/map/core/common/model/SafetySign;",
+        "com.naver.map.core.common.model.SafeControlItem#getExtra()Lcom/naver/map/core/common/model/SafetyExtra;",
+        "com.naver.map.core.common.model.SafeControlItem#getSectionExtra()Lcom/naver/map/core/common/model/SafetyExtra;",
+        "com.naver.map.core.common.model.SafetySign#getSpeed()Ljava/lang/Integer;",
+        "com.naver.map.core.common.model.SafetySign#getType()Lcom/naver/map/core/common/model/SafetySign$SignType;",
+        "com.naver.map.core.common.model.SafetyExtra$Distance#getDistance()D",
+        "com.naver.map.core.common.model.SafetyExtra$SchoolZone#getDistance()D",
+        "com.naver.map.core.common.model.SafetyExtra$SchoolZone#getSpeedLimit()I",
+        "com.naver.map.core.common.model.SafetySign$SignType$Safety#getCode()Lcom/naver/maps/navi/v2/shared/api/route/constants/SafetyCode;",
+        "com.naver.maps.navi.v2.shared.api.route.constants.SafetyCode#isAllSpeedCameras()Z",
+        "com.naver.maps.navi.v2.shared.api.route.constants.SafetyCode#isSpeedBump()Z"
+      ],
+      "route": [
+        "com.naver.map.core.navigation.model.CurrentRoute#e()Lcom/naver/map/core/navigation/model/NaviRouteData;",
+        "com.naver.map.core.navigation.model.CurrentRoute#c()Lcom/naver/map/core/common/model/RouteParam;",
+        "com.naver.map.core.navigation.model.CurrentRoute#d()Lcom/naver/map/core/common/model/RouteParam;",
+        "com.naver.map.core.navigation.model.NaviRouteData#c()Lcom/naver/maps/navi/v2/shared/api/route/model/RouteInfo;",
+        "com.naver.map.core.navigation.model.NaviRouteData#h()Lcom/naver/maps/navi/v2/shared/api/route/model/RouteInfo;"
+      ],
+      "lane": [
+        "com.naver.map.core.navigation.lane.NaviLaneItem#g()D",
+        "com.naver.map.core.navigation.lane.NaviLaneItem#h()Z",
+        "com.naver.map.core.navigation.lane.NaviLaneItem#i()Ljava/util/List;",
+        "com.naver.map.core.navigation.lane.NaviLaneItem#j()Ljava/util/List;"
+      ]
+    },
+    "android_platform_api": 36,
+    "build_tools_version": "36.0.0",
+    "hook_class_descriptor": "Lai/comma/naver/payload/DiagnosticHooks;",
+    "main_process": "com.nhn.android.nmap",
+    "max_accessors": 16,
+    "max_collection_items": 4,
+    "max_sample_chars": 160,
+    "min_api": 26,
+    "network_thread_name": "naver-diagnostic-network",
+    "payload_dex_entry": "classes43.dex",
+    "queue_capacity": 16,
+    "receiver_host": "127.0.0.1",
+    "receiver_port": 7712,
+    "socket_timeout_ms": 100,
+    "capture_sharing": {
+      "authority": "com.nhn.android.nmap.fileprovider",
+      "external_files_root_path": "NaverNavi",
+      "export_database_name": "capture-v3-export.sqlite3",
+      "file_provider_root_name": "navi_trace",
+      "grantee_package": "com.android.shell",
+      "quiesce_timeout_ms": 5000,
+      "infrastructure_anchor": {
+        "name": "capture_export_quiesce",
+        "dex_entry": "classes.dex",
+        "class_descriptor": "Landroidx/core/content/FileProvider;",
+        "method_descriptor": "openFile(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;",
+        "instruction_window": [
+          "invoke-virtual Landroidx/core/content/FileProvider;->f()Landroidx/core/content/FileProvider$PathStrategy;",
+          "move-result-object",
+          "invoke-interface Landroidx/core/content/FileProvider$PathStrategy;->b(Landroid/net/Uri;)Ljava/io/File;"
+        ],
+        "expected_count": 1,
+        "diagnostic_hook": {
+          "argument": {
+            "index": 0,
+            "kind": "parameter"
+          },
+          "method_descriptor": "beforeCaptureRead(Ljava/lang/Object;)V",
+          "placement": {
+            "index": 0,
+            "kind": "method_entry"
+          }
+        }
+      }
+    },
+    "offline_capture": {
+      "batch_size": 32,
+      "channel_quotas": {
+        "lane": 1536,
+        "route": 256,
+        "safety": 6144,
+        "status": 256,
+        "tbt_current": 1536,
+        "tbt_next": 1536
+      },
+      "database_name": "capture-v3.sqlite3",
+      "database_recovery_name": "capture-v3-recovery.sqlite3",
+      "directory_name": "naver-diagnostic",
+      "flush_interval_ms": 250,
+      "journal_size_limit_bytes": 4194304,
+      "local_queue_capacity": 256,
+      "max_database_bytes": 67108864,
+      "network_queue_capacity": 64,
+      "payload_build_id": "naver-6.8.0.5-diagnostic-offline-v3",
+      "pinned_per_channel": 64,
+      "retry_initial_ms": 1000,
+      "retry_max_ms": 30000,
+      "schema_version": 1,
+      "wal_autocheckpoint_pages": 256
+    }
+  },
+  "companion": {
+    "base_entry": "base.apk",
+    "splits": [
+      {
+        "entry": "split_config.arm64_v8a.apk",
+        "split_name": "config.arm64_v8a",
+        "split_type": "base__abi",
+        "size": 78928766,
+        "sha256": "6b2f163d007c71de42c150217580b68e4e516aa3feaeb0e7322049bcf7a48204"
+      },
+      {
+        "entry": "split_config.xxhdpi.apk",
+        "split_name": "config.xxhdpi",
+        "split_type": "base__density",
+        "size": 18631220,
+        "sha256": "172da40c864089b0e1778c0192ca723cb279ba572c60bc5b01c559ed792c3d1a"
+      }
+    ]
+  },
+  "anchors": [
+    {
+      "name": "status",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/NaviStatusBroadcaster;",
+      "method_descriptor": "g(Lcom/naver/map/core/navigation/NaviStatusBroadcaster$Status;)V",
+      "instruction_window": [
+        "invoke-interface Lcom/naver/map/core/navigation/NaviStatusBroadcaster$HasGoal;->getCoord()Lcom/naver/maps/geometry/LatLng;",
+        "move-result-object",
+        "iget-wide Lcom/naver/maps/geometry/LatLng;->latitude:D"
+      ],
+      "expected_count": 1,
+    "diagnostic_hook": {
+        "argument": {
+          "index": 0,
+          "kind": "parameter"
+        },
+        "method_descriptor": "onStatus(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 0,
+          "kind": "method_entry"
+        }
+      }
+    },
+    {
+      "name": "tbt_current",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/model/TbtData;",
+      "method_descriptor": "<init>(Lcom/naver/map/core/navigation/model/TbtItem;Lcom/naver/map/core/navigation/model/TbtItem;)V",
+      "instruction_window": [
+        "invoke-static Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object;Ljava/lang/String;)V",
+        "invoke-direct Ljava/lang/Object;-><init>()V",
+        "iput-object Lcom/naver/map/core/navigation/model/TbtData;->a:Lcom/naver/map/core/navigation/model/TbtItem;"
+      ],
+      "expected_count": 1,
+      "diagnostic_hook": {
+        "argument": {
+          "index": 0,
+          "kind": "parameter"
+        },
+        "method_descriptor": "onCurrentTbt(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 1,
+          "kind": "after_instruction"
+        }
+      }
+    },
+    {
+      "name": "tbt_next",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/model/TbtData;",
+      "method_descriptor": "<init>(Lcom/naver/map/core/navigation/model/TbtItem;Lcom/naver/map/core/navigation/model/TbtItem;)V",
+      "instruction_window": [
+        "invoke-direct Ljava/lang/Object;-><init>()V",
+        "iput-object Lcom/naver/map/core/navigation/model/TbtData;->a:Lcom/naver/map/core/navigation/model/TbtItem;",
+        "iput-object Lcom/naver/map/core/navigation/model/TbtData;->b:Lcom/naver/map/core/navigation/model/TbtItem;"
+      ],
+      "expected_count": 1,
+      "diagnostic_hook": {
+        "argument": {
+          "index": 1,
+          "kind": "parameter"
+        },
+        "method_descriptor": "onNextTbt(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 2,
+          "kind": "before_instruction"
+        }
+      }
+    },
+    {
+      "name": "safety_source",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/NaviSafetyControllItemManager;",
+      "method_descriptor": "l(Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceSafety;)Lcom/naver/map/core/common/model/SafetyExtra;",
+      "instruction_window": [
+        "invoke-interface Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceSafety;->getCode()Lcom/naver/maps/navi/v2/shared/api/route/constants/SafetyCode;",
+        "move-result-object",
+        "invoke-interface Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceSafety;->distance()D"
+      ],
+      "expected_count": 1,
+      "diagnostic_hook": {
+        "argument": {
+          "index": 0,
+          "kind": "parameter"
+        },
+        "method_descriptor": "onSafetySource(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 0,
+          "kind": "method_entry"
+        }
+      }
+    },
+    {
+      "name": "safety",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/SafeControlItemStore;",
+      "method_descriptor": "k()Lcom/naver/map/core/common/model/SafeControlItem;",
+      "instruction_window": [
+        "invoke-virtual/range Lcom/naver/map/core/navigation/NaviSafetyControllItemManager;->m(Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceSafety;Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceSafety;ZZZ)Lcom/naver/map/core/common/model/SafeControlItem;",
+        "move-result-object",
+        "return-object"
+      ],
+      "expected_count": 1,
+      "diagnostic_hook": {
+        "argument": {
+          "index": 2,
+          "kind": "window_register"
+        },
+        "method_descriptor": "onSafety(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 2,
+          "kind": "before_instruction"
+        }
+      }
+    },
+    {
+      "name": "route",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/NaviStore;",
+      "method_descriptor": "q1(Lcom/naver/map/core/navigation/model/CurrentRoute;)V",
+      "instruction_window": [
+        "iget-object Lcom/naver/map/core/navigation/NaviStore;->T0:Lcom/naver/map/base/common/lifecycle/MutableLiveData;",
+        "invoke-virtual Lcom/naver/map/base/common/lifecycle/MutableLiveData;->setValue(Ljava/lang/Object;)V",
+        "return-void"
+      ],
+      "expected_count": 1,
+      "diagnostic_hook": {
+        "argument": {
+          "index": 0,
+          "kind": "parameter"
+        },
+        "method_descriptor": "onRoute(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 0,
+          "kind": "method_entry"
+        }
+      }
+    },
+    {
+      "name": "lane",
+      "dex_entry": "classes11.dex",
+      "class_descriptor": "Lcom/naver/map/core/navigation/NaviStore;",
+      "method_descriptor": "M0(Lcom/naver/maps/navi/v2/api/GuidanceSession;)V",
+      "instruction_window": [
+        "new-instance Lcom/naver/map/core/navigation/lane/NaviLaneItem;",
+        "invoke-interface Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceLane;->getDistance-Y4BO_gI()D",
+        "move-result-wide",
+        "invoke-interface Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceLane;->getInfo()Lcom/naver/maps/navi/v2/shared/api/route/model/RouteLane;",
+        "move-result-object",
+        "invoke-interface Lcom/naver/maps/navi/v2/shared/api/route/model/RouteLane;->getUnits()Ljava/util/List;",
+        "move-result-object",
+        "invoke-static Lcom/naver/map/AppContext;->c()Lcom/naver/map/core/common/util/AppType;",
+        "move-result-object",
+        "invoke-virtual Lcom/naver/map/core/common/util/AppType;->i()Z",
+        "move-result",
+        "xor-int/2addr",
+        "invoke-static Lcom/naver/map/core/navigation/lane/NaviLaneItemKt;->f(Ljava/util/List;Lcom/naver/maps/navi/v2/shared/api/route/model/RouteGuideImage;Z)Ljava/util/List;",
+        "move-result-object",
+        "invoke-interface Lcom/naver/maps/navi/v2/api/guidance/model/GuidanceLane;->getInfo()Lcom/naver/maps/navi/v2/shared/api/route/model/RouteLane;",
+        "move-result-object",
+        "invoke-interface Lcom/naver/maps/navi/v2/shared/api/route/model/RouteLane;->getUnits()Ljava/util/List;",
+        "move-result-object",
+        "iget-boolean Lcom/naver/map/core/navigation/NaviStore;->h1:Z",
+        "invoke-direct/range Lcom/naver/map/core/navigation/lane/NaviLaneItem;-><init>(DLjava/util/List;Ljava/util/List;Z)V"
+      ],
+      "expected_count": 1,
+      "diagnostic_hook": {
+        "argument": {
+          "index": 0,
+          "kind": "window_register"
+        },
+        "method_descriptor": "onLane(Ljava/lang/Object;)V",
+        "placement": {
+          "index": 19,
+          "kind": "after_instruction"
+        }
+      }
+    }
+  ]
+}

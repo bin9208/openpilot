@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "profile_id": "6.8.0.5-production",
+  "source_profile_id": "6.8.0.5",
+  "package_name": "com.nhn.android.nmap",
+  "version_code": 60800007,
+  "payload_build_id": "naver-6.8.0.5-public-beta-v2",
+  "payload_dex_entry": "classes43.dex",
+  "hook_class_descriptor": "Lai/comma/naver/payload/ProductionHooks;",
+  "transport": {
+    "discovery_host": "255.255.255.255",
+    "discovery_port": 7706,
+    "response_port": 7705,
+    "tcp_port": 7712,
+    "discovery_timeout_ms": 500,
+    "connect_timeout_ms": 500,
+    "write_timeout_ms": 500,
+    "reconnect_min_ms": 1000,
+    "reconnect_max_ms": 30000,
+    "heartbeat_ms": 500,
+    "max_frame_bytes": 262144
+  },
+  "accessors": [
+    {
+      "id": "TBT_ITEM_DISTANCE",
+      "channel": "guidance",
+      "field": "distanceM",
+      "key": "com.naver.map.core.navigation.model.TbtItem#h()D",
+      "unit": "metres",
+      "nullable": false,
+      "evidence": "live_value"
+    },
+    {
+      "id": "TBT_ITEM_DATA",
+      "channel": "guidance",
+      "field": "data",
+      "key": "com.naver.map.core.navigation.model.TbtItem#i()Lcom/naver/map/core/navigation/model/TbtDataItem;",
+      "unit": "object",
+      "nullable": false,
+      "evidence": "live_value"
+    },
+    {
+      "id": "TBT_ITEM_TYPE",
+      "channel": "guidance",
+      "field": "itemType",
+      "key": "com.naver.map.core.navigation.model.TbtItem#j()Lcom/naver/map/core/navigation/model/TbtItem$Type;",
+      "unit": "enum_name",
+      "nullable": false,
+      "evidence": "live_value"
+    },
+    {
+      "id": "TBT_DATA_MANEUVER",
+      "channel": "guidance",
+      "field": "maneuver",
+      "key": "com.naver.map.core.navigation.model.TbtDataItem#s()Lcom/naver/maps/navi/v2/shared/api/route/constants/TurnPointType;",
+      "unit": "enum_name",
+      "nullable": false,
+      "evidence": "live_value"
+    },
+    {
+      "id": "TBT_DATA_MAIN_TEXT",
+      "channel": "guidance",
+      "field": "mainText",
+      "key": "com.naver.map.core.navigation.model.TbtDataItem#n()Ljava/lang/String;",
+      "unit": "text",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "TBT_DATA_ROAD_NAME",
+      "channel": "guidance",
+      "field": "roadName",
+      "key": "com.naver.map.core.navigation.model.TbtDataItem#v()Ljava/lang/String;",
+      "unit": "text",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "GUIDANCE_SAFETY_CODE",
+      "channel": "safety",
+      "field": "sourceCode",
+      "key": "com.naver.maps.navi.v2.api.guidance.model.GuidanceSafety#getCode()Lcom/naver/maps/navi/v2/shared/api/route/constants/SafetyCode;",
+      "unit": "enum_name",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "GUIDANCE_SAFETY_DISTANCE",
+      "channel": "safety",
+      "field": "sourceDistanceM",
+      "key": "com.naver.maps.navi.v2.api.guidance.model.GuidanceSafety#distance()D",
+      "unit": "metres",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "SAFETY_SIGN",
+      "channel": "safety",
+      "field": "sign",
+      "key": "com.naver.map.core.common.model.SafeControlItem#getSign()Lcom/naver/map/core/common/model/SafetySign;",
+      "unit": "object",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "SAFETY_EXTRA",
+      "channel": "safety",
+      "field": "extra",
+      "key": "com.naver.map.core.common.model.SafeControlItem#getExtra()Lcom/naver/map/core/common/model/SafetyExtra;",
+      "unit": "object",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "SAFETY_SECTION_EXTRA",
+      "channel": "safety",
+      "field": "sectionExtra",
+      "key": "com.naver.map.core.common.model.SafeControlItem#getSectionExtra()Lcom/naver/map/core/common/model/SafetyExtra;",
+      "unit": "object",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "SAFETY_SPEED",
+      "channel": "safety",
+      "field": "speedKph",
+      "key": "com.naver.map.core.common.model.SafetySign#getSpeed()Ljava/lang/Integer;",
+      "unit": "kilometres_per_hour",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "SAFETY_TYPE",
+      "channel": "safety",
+      "field": "type",
+      "key": "com.naver.map.core.common.model.SafetySign#getType()Lcom/naver/map/core/common/model/SafetySign$SignType;",
+      "unit": "object",
+      "nullable": true,
+      "evidence": "live_value"
+    },
+    {
+      "id": "SAFETY_DISTANCE",
+      "channel": "safety",
+      "field": "distanceM",
+      "key": "com.naver.map.core.common.model.SafetyExtra$Distance#getDistance()D",
+      "unit": "metres",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "SAFETY_CODE",
+      "channel": "safety",
+      "field": "code",
+      "key": "com.naver.map.core.common.model.SafetySign$SignType$Safety#getCode()Lcom/naver/maps/navi/v2/shared/api/route/constants/SafetyCode;",
+      "unit": "enum_name",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "SAFETY_ALL_SPEED_CAMERAS",
+      "channel": "safety",
+      "field": "isAllSpeedCameras",
+      "key": "com.naver.maps.navi.v2.shared.api.route.constants.SafetyCode#isAllSpeedCameras()Z",
+      "unit": "boolean",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "SAFETY_SPEED_BUMP",
+      "channel": "safety",
+      "field": "isSpeedBump",
+      "key": "com.naver.maps.navi.v2.shared.api.route.constants.SafetyCode#isSpeedBump()Z",
+      "unit": "boolean",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "CURRENT_ROUTE_DATA",
+      "channel": "route",
+      "field": "routeData",
+      "key": "com.naver.map.core.navigation.model.CurrentRoute#e()Lcom/naver/map/core/navigation/model/NaviRouteData;",
+      "unit": "object",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "NAVI_ROUTE_INFO",
+      "channel": "route",
+      "field": "routeInfo",
+      "key": "com.naver.map.core.navigation.model.NaviRouteData#h()Lcom/naver/maps/navi/v2/shared/api/route/model/RouteInfo;",
+      "unit": "object",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "ROUTE_PATH_POINTS",
+      "channel": "route",
+      "field": "pathPoints",
+      "key": "com.naver.maps.navi.v2.shared.api.route.model.RouteInfo#getPathPoints()Ljava/util/List;",
+      "unit": "ordered_points",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "ROUTE_POINT_LATITUDE",
+      "channel": "route",
+      "field": "latitude",
+      "key": "com.naver.maps.geometry.LatLng#latitude:D",
+      "unit": "degrees",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    },
+    {
+      "id": "ROUTE_POINT_LONGITUDE",
+      "channel": "route",
+      "field": "longitude",
+      "key": "com.naver.maps.geometry.LatLng#longitude:D",
+      "unit": "degrees",
+      "nullable": false,
+      "evidence": "static_dex_pending_runtime"
+    }
+  ],
+  "runtime_subtypes": {
+    "lifecycle": {
+      "com.naver.map.core.navigation.NaviStatusBroadcaster$Status$Guiding": {
+        "value": "guiding",
+        "evidence": "live_root"
+      },
+      "com.naver.map.core.navigation.NaviStatusBroadcaster$Status$Stopped": {
+        "value": "stopped",
+        "evidence": "live_root"
+      },
+      "com.naver.map.core.navigation.NaviStatusBroadcaster$Status$Arrived": {
+        "value": "arrived",
+        "evidence": "static_dex_pending_runtime"
+      }
+    },
+    "maneuver": {
+      "Direction11": "slight_left",
+      "Left": "left",
+      "Right": "right",
+      "RightDirection": "slight_right",
+      "UTurn": "u_turn",
+      "Goal": "arrive"
+    },
+    "safety": {
+      "MoveSpeedCam": "mobile_camera",
+      "StartSectionSpeedCam": "section_camera",
+      "EndSectionSpeedCam": "section_camera",
+      "VariableSectionStart": "section_camera",
+      "VariableSectionEnd": "section_camera",
+      "isSpeedBump": "speed_bump",
+      "isAllSpeedCameras": "fixed_camera"
+    }
+  },
+  "omitted": {
+    "road": "no live accessor contract",
+    "destination": "CurrentRoute.c/d start-goal meaning is unproved",
+    "lane": "no envelope field and nested lane semantics are unproved",
+    "off_route": "no exact runtime accessor contract",
+    "exit_number": "no envelope field",
+    "path_point_index": "no envelope field",
+    "school_zone": "not a requested camera or speed-bump control item"
+  },
+  "acceptance": {
+    "requires_live_safety_before_complete": true,
+    "requires_live_arrived_before_complete": false,
+    "arrived_substitute": "real stopped plus stopped/arrived tombstone tests"
+  }
+}

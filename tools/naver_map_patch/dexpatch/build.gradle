@@ -1,0 +1,61 @@
+plugins {
+    id "application"
+    id "java"
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    implementation "com.android.tools.smali:smali-dexlib2:3.0.9"
+    testImplementation platform("org.junit:junit-bom:5.11.4")
+    testImplementation "org.junit.jupiter:junit-jupiter"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = "ai.comma.naver.dexpatch.DexPatchMain"
+}
+
+tasks.named("test") {
+    useJUnitPlatform()
+}
+
+tasks.register("scan", JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "ai.comma.naver.dexpatch.DexPatchMain"
+    doFirst {
+        if (!providers.gradleProperty("apk").isPresent() || !providers.gradleProperty("rules").isPresent()) {
+            throw new GradleException("scan requires -Papk and -Prules")
+        }
+        args([providers.gradleProperty("apk").get()]
+            + providers.gradleProperty("rules").get().split(",").toList())
+    }
+}
+def payloadMode = providers.gradleProperty("payloadMode").orElse("diagnostic").get()
+def rawFieldAcceptance = providers.gradleProperty("fieldAcceptance").orElse("false").get()
+if (!(rawFieldAcceptance in ["true", "false"])) {
+    throw new GradleException("fieldAcceptance must be true or false")
+}
+def fieldAcceptance = rawFieldAcceptance == "true"
+ext.fieldAcceptanceEnabled = fieldAcceptance
+if (payloadMode == "diagnostic") {
+    apply from: "diagnostic-payload.gradle"
+} else if (payloadMode == "production") {
+    if (fieldAcceptance) {
+        throw new GradleException(
+            "field acceptance requires -PpayloadMode=diagnostic")
+    }
+    apply from: "production-payload.gradle"
+    sourceSets.test.java.exclude("**/FieldAcceptance*.java")
+} else {
+    throw new GradleException("payloadMode must be diagnostic or production")
+}
