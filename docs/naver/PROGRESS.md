@@ -7,6 +7,12 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   disable cases retained cached SDI (140 other controller tests passed).
   Invalidate disallowed SDI before selection without re-running raw distance.
   Re-enable requires fresh safety update; owner and setting-gated HDA survive.
+- #28 fresh review found same-revision bump rearm via category-only projection
+  after re-enable. RED36024710135 confirms it. Retain one disabled safety identity
+  per session; only an actual changed safety item may project again.
+- #27 local focused RED (D host-tests venv): missing field_test_release module.
+  Full final host/Java regression remains in Actions; local scope is only the
+  small packaging guard tests, no device acceptance or installation.
 
 - #8 complete: PR #30 at a9daa38a; 36021787798 / 36021963273, docs
   36021963382 passed 697 tests including rendered web/native HUD and bundle parity.
