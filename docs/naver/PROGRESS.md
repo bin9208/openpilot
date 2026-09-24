@@ -3,6 +3,11 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #28 RED36024087800 at 788a43a6: all four Naver/Tmap camera/bump live
+  disable cases retained cached SDI (140 other controller tests passed).
+  Invalidate disallowed SDI before selection without re-running raw distance.
+  Re-enable requires fresh safety update; owner and setting-gated HDA survive.
+
 - #8 complete: PR #30 at a9daa38a; 36021787798 / 36021963273, docs
   36021963382 passed 697 tests including rendered web/native HUD and bundle parity.
 - #9 source-only import 440cd47a excludes binary/private/capture-derived files.

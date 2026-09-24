@@ -1390,6 +1390,13 @@ class CarrotServ:
     self.bearing = self._update_gps(v_ego, sm, gps_service)
 
     self.xSpdDist = max(self.xSpdDist - delta_dist, -1000)
+    # Live disable must invalidate cached SDI without replaying its original
+    # distance. Re-enabling waits for a fresh safety update.
+    if (self.autoNaviSpeedCtrlMode <= 0 or
+        (self.xSpdType == 22 and self.autoNaviSpeedCtrlMode < 2) or
+        (self.xSpdType == 7 and self.autoNaviSpeedCtrlMode < 3)):
+      self.xSpdType = -1
+      self.xSpdLimit = self.xSpdDist = 0
     self.xDistToTurn = self.xDistToTurn - delta_dist
     self.xDistToTurnNext = self.xDistToTurnNext - delta_dist
     self.active_count = max(self.active_count - 1, 0)
