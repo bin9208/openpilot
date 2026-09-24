@@ -9,6 +9,10 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   remains #4 and actual APN incident confirmation remains #14.
 - #3 started: real Capnp roundtrip and compiled native/Python/browser comparison
   must fail before adding diagnostic fields. Preserve upstream ordinals 29-32.
+- #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
+  and one upstream-ordinal test passed. Initial runner include-path error was
+  corrected before interpreting RED. Added fields use ordinals 33-42; compact
+  fields are append-only after all existing upstream fields.
 - #2 started from ff9a26a3. RED: route-revision input smoke test on fresh upstream.
 - RED: https://github.com/bin9208/openpilot/actions/runs/36002651544 (912f4ec5), one expected failure.
 - GREEN candidate: preserved parser, ingress and immutable store ported without

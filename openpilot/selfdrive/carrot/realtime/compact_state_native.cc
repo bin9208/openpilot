@@ -656,6 +656,16 @@ void encode_carrot_man(std::string &out, const DynamicReader &value) {
   append_i32(out, value, "vehicleNaviSpeed");
   append_bool(out, value, "vehicleNaviSectionActive");
   append_bool(out, value, "vehicleNaviAvailable");
+  append_text(out, value, "naviOwner");
+  append_text(out, value, "naviSessionId");
+  append_u64(out, value, "naviSequence");
+  append_i32(out, value, "naviOwnerAgeMs");
+  append_i32(out, value, "naviSafetyAgeMs");
+  append_text(out, value, "naviLifecycle");
+  append_bool(out, value, "naviControlAllowed");
+  append_text(out, value, "naviSafetyRejection");
+  append_text(out, value, "decelProvider");
+  append_text(out, value, "decelReason");
 }
 
 void encode_selfdrive_state(std::string &out, const DynamicReader &value) {
