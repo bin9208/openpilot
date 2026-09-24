@@ -21,6 +21,7 @@ from openpilot.common.constants import CV
 from openpilot.common.gps import get_gps_location_service
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl
 from openpilot.selfdrive.carrot.navigation_runtime import NavigationRuntime
+from openpilot.selfdrive.carrot.navigation_sources import NavigationSource
 
 nav_type_mapping = {
   12: ("turn", "left", 1),
@@ -873,6 +874,18 @@ class CarrotServ:
 
     return sdi_map.get(nSdiType, "")
 
+  def _bump_road_category_allowed(self):
+    if self.roadcate > 1:
+      return True
+    selection = getattr(self, 'navigation_selection', None)
+    snapshot = selection.snapshot if selection is not None else None
+    # Naver's exact bump object is usable without road-category mapping. Do not
+    # invent a road category or override an explicitly reported highway (0/1).
+    return (snapshot is not None and snapshot.source is NavigationSource.NAVER_V1
+            and snapshot.control.road_category is None
+            and any(item is not None and item.type == 22 and item.distance_m > 0
+                    for item in (snapshot.control.safety, snapshot.control.secondary_safety)))
+
   def _update_sdi(self):
     #sdiBlockType
     # 1: startOSEPS: 구간단속시작
@@ -888,7 +901,7 @@ class CarrotServ:
         self.xSpdType = 4
       elif self.nSdiType == 7 and self.autoNaviSpeedCtrlMode < 3: #이동식카메라
         self.xSpdLimit = self.xSpdDist = 0
-    elif (self.nSdiPlusType == 22 or self.nSdiType == 22) and self.roadcate > 1 and self.autoNaviSpeedCtrlMode >= 2: # speed bump, roadcate:0,1: highway
+    elif (self.nSdiPlusType == 22 or self.nSdiType == 22) and self._bump_road_category_allowed() and self.autoNaviSpeedCtrlMode >= 2:
       self.xSpdLimit = self.autoNaviSpeedBumpSpeed
       self.xSpdDist = self.nSdiPlusDist if self.nSdiPlusType == 22 else self.nSdiDist
       self.xSpdType = 22

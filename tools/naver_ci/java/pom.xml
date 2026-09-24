@@ -1,0 +1,28 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>ai.comma.naver</groupId><artifactId>mapping-contract-tests</artifactId><version>1.0-SNAPSHOT</version>
+  <properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
+  <dependencies>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.11.4</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <sourceDirectory>${project.basedir}/../../naver_map_patch/payload/src/main/java</sourceDirectory>
+    <testSourceDirectory>${project.basedir}/../../naver_map_patch/dexpatch/src/test/java</testSourceDirectory>
+    <plugins>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version>
+        <configuration><testIncludes>
+          <testInclude>com/naver/**/*.java</testInclude>
+          <testInclude>ai/comma/naver/payload/Naver6805ObjectMapperTest.java</testInclude>
+          <testInclude>ai/comma/naver/payload/NaverNavigationAggregatorTest.java</testInclude>
+          <testInclude>ai/comma/naver/payload/NaverNavigationEnvelopeTest.java</testInclude>
+          <testInclude>ai/comma/naver/payload/NaverNavigationSenderTest.java</testInclude>
+          <testInclude>ai/comma/naver/payload/ProductionHooksTest.java</testInclude>
+        </testIncludes></configuration>
+      </plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version>
+        <configuration><failIfNoTests>true</failIfNoTests></configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
