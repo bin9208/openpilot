@@ -385,12 +385,12 @@ def test_vehicle_section_mode_two_uses_accelerator_speed_floor():
 
 
 @pytest.mark.parametrize("connection", ("active_count", "active_kisa_count", "carrot_navi_active"))
-def test_external_connection_excludes_all_stock_navigation_until_disconnect(connection):
+def test_external_hazard_excludes_stock_but_connection_alone_does_not(connection):
   serv = _serv(1)
   serv.vehicleNaviSchoolZoneControl = True
   serv.autoNaviCountDownMode = 2
   serv.xSpdType = -1
-  serv.xSpdDist = 0  # Connected without an external hazard must still exclude stock data.
+  serv.xSpdDist = 0  # Guidance ownership alone must not exclude usable stock data.
   CS = _car_state(distance=30)
   CS.vehicleNaviActive = CS.vehicleNaviSectionActive = CS.schoolZoneActive = True
   CS.vehicleNaviSpeed = 50
@@ -399,14 +399,19 @@ def test_external_connection_excludes_all_stock_navigation_until_disconnect(conn
   setattr(serv, connection, 1)
   assert serv._update_navigation_source()
   assert not serv._update_navigation_source()
+  assert serv._vehicle_speed_camera_enabled(CS)
+  assert serv._vehicle_speed_bump_enabled(CS)
+  assert serv._vehicle_school_zone_enabled(CS)
+  assert serv._vehicle_section_zone_enabled(CS)
+  assert serv._vehicle_navigation_display(CS) == (True, 30, True)
+  assert serv._speed_countdown_distance(CS) == 20
+
+  serv.xSpdType, serv.xSpdLimit, serv.xSpdDist = 22, 22, 13
   assert not serv._vehicle_speed_camera_enabled(CS)
   assert not serv._vehicle_speed_bump_enabled(CS)
   assert not serv._vehicle_school_zone_enabled(CS)
   assert not serv._vehicle_section_zone_enabled(CS)
   assert serv._vehicle_navigation_display(CS) == (False, 0, False)
-  assert serv._speed_countdown_distance(CS) == 0
-
-  serv.xSpdType, serv.xSpdDist = 22, 13
   assert serv._speed_countdown_distance(CS) == 13
   serv.autoNaviCountDownMode = 1
   assert serv._speed_countdown_distance(CS) == 0

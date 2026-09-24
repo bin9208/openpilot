@@ -145,7 +145,7 @@ def test_connected_external_without_hazard_falls_back_to_stock(navigation_update
   result = update()
   assert result.desiredSource == stock_source
   assert result.desiredSpeed in (22, 30, 50)
-  assert result.vehicleNaviActive
+  assert result.vehicleNaviActive == (stock_source != 'hda')  # HDA fixture has no vehicleNaviSpeed.
   assert result.nRoadLimitSpeed == 30
 
   serv.active_count = 1  # The existing connection timer expires on this update.

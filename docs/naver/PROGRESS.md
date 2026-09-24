@@ -5,6 +5,9 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
 - #6 started at 46203e30. RED run 36018220755 at ea818868: six expected
   camera replay / HDA fallback failures, 122 controller tests passed.
+- #6 intermediate run 36019015267: all new regressions passed. Four old
+  assertions still assumed connection-only suppression / a display speed not
+  present in the HDA fixture. Update expectations, retaining hazard exclusion.
 - Ruling: guidance connection no longer suppresses stock safety by itself;
   preserve external positive-distance bump ownership and rear-camera holds.
   This intentionally updates upstream's no-hazard suppression test to the
