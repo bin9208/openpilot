@@ -24,6 +24,14 @@ Issue #4 landed via PR #18; test and review evidence is in EVIDENCE.md.
 | [#13](https://github.com/bin9208/openpilot/issues/13) | Future upstream integration procedure | #1 |
 | [#14](https://github.com/bin9208/openpilot/issues/14) | Actual APN loss incident diagnosis | device evidence |
 | [#15](https://github.com/bin9208/openpilot/issues/15) | Actions runtime deprecation | #1 |
+| [#19](https://github.com/bin9208/openpilot/issues/19) | Road limit/category source mapping | #5, #9 |
+| [#20](https://github.com/bin9208/openpilot/issues/20) | Full TBT maneuver parity | #9 |
+| [#21](https://github.com/bin9208/openpilot/issues/21) | Trip/ETA/destination/off-route mapping | #7, #9 |
+| [#22](https://github.com/bin9208/openpilot/issues/22) | Lane mapping and consumers | #8, #9 |
+| [#23](https://github.com/bin9208/openpilot/issues/23) | Traffic signal availability/mapping | #9 |
+| [#24](https://github.com/bin9208/openpilot/issues/24) | Detailed/secondary/section camera mapping | #6, #9 |
+
+The functional target and current evidence levels are in [MAPPING_PARITY.md](MAPPING_PARITY.md).
 
 ## Initial evidence
 

@@ -3,12 +3,13 @@ package ai.comma.naver.payload;
 import java.util.Optional;
 
 public class ProductionRuntime {
+  private static final long SAFETY_PAIR_MAX_AGE_MS = 1000L;
   private final NaverNavigationAggregator aggregator;
   private final NaverNavigationSender sender;
   private final boolean captureMappingOutcomes;
   private final Object enqueueLock = new Object();
-  private final ThreadLocal<Naver6805ObjectMapper.SafetySource> pendingSafetySource =
-      new ThreadLocal<Naver6805ObjectMapper.SafetySource>();
+  private final ThreadLocal<PendingSafetySource> pendingSafetySource =
+      new ThreadLocal<PendingSafetySource>();
   private final ThreadLocal<MappingOutcome> mappingOutcome =
       new ThreadLocal<MappingOutcome>();
 
@@ -68,44 +69,39 @@ public class ProductionRuntime {
 
   public void onSafetySource(Object item) {
     clearMappingOutcome();
-    Naver6805ObjectMapper.SafetySource source =
-        Naver6805ObjectMapper.mapSafetySource(item);
-    pendingSafetySource.set(source);
-    NaverNavigationState state = aggregator.snapshot(nowMs());
-    captureMappingOutcome(new MappingOutcome(
-        "safety",
-        source.outcome,
-        rootDescriptor(item),
-        0,
-        0,
-        state.safetyRevision,
-        source.present,
-        source.present && source.distanceM > 0.0,
-        state.isFrameEligible()));
+    synchronized (enqueueLock) {
+      long now = nowMs();
+      NaverNavigationState state = aggregator.snapshot(now);
+      Naver6805ObjectMapper.SafetySource source = Naver6805ObjectMapper.mapSafetySource(item);
+      PendingSafetySource previous = pendingSafetySource.get();
+      // The final display object has no event identity. Multiple source objects
+      // in the same construction window are ambiguous, even with equal codes.
+      if (!"guiding".equals(state.lifecycle) || (previous != null && previous.matches(state, now))) {
+        source = Naver6805ObjectMapper.SafetySource.absent();
+      }
+      pendingSafetySource.set(new PendingSafetySource(source, state.sessionId, now));
+      captureMappingOutcome(new MappingOutcome(
+          "safety", source.outcome, rootDescriptor(item), 0, 0, state.safetyRevision,
+          source.present, source.present && source.distanceM > 0.0, state.isFrameEligible()));
+    }
   }
 
   public void onSafety(Object item) {
     clearMappingOutcome();
-    Naver6805ObjectMapper.SafetySource source = pendingSafetySource.get();
     try {
-      long now = nowMs();
-      Naver6805ObjectMapper.Safety mapped = Naver6805ObjectMapper.mapSafety(
-          item,
-          source == null
-              ? Naver6805ObjectMapper.SafetySource.absent()
-              : source);
-      NaverNavigationState state = apply(
-          Naver6805ObjectMapper.MappedUpdate.safety(mapped), now);
-      captureMappingOutcome(new MappingOutcome(
-          "safety",
-          mapped.present ? "safety_ok" : "safety_rejected",
-          rootDescriptor(item),
-          0,
-          0,
-          state.safetyRevision,
-          mapped.present,
-          mapped.present && mapped.distanceM > 0.0,
-          state.isFrameEligible()));
+      synchronized (enqueueLock) {
+        long now = nowMs();
+        PendingSafetySource pending = pendingSafetySource.get();
+        NaverNavigationState current = aggregator.snapshot(now);
+        Naver6805ObjectMapper.SafetySource source = pending != null && pending.matches(current, now)
+            ? pending.source : Naver6805ObjectMapper.SafetySource.absent();
+        Naver6805ObjectMapper.Safety mapped = Naver6805ObjectMapper.mapSafety(item, source);
+        NaverNavigationState state = apply(Naver6805ObjectMapper.MappedUpdate.safety(mapped), now);
+        captureMappingOutcome(new MappingOutcome(
+            "safety", mapped.present ? "safety_ok" : "safety_rejected", rootDescriptor(item),
+            0, 0, state.safetyRevision, mapped.present, mapped.present && mapped.distanceM > 0.0,
+            state.isFrameEligible()));
+      }
     } finally {
       pendingSafetySource.remove();
     }
@@ -165,6 +161,24 @@ public class ProductionRuntime {
 
   private static long nowMs() {
     return System.nanoTime() / 1000000L;
+  }
+
+  private static final class PendingSafetySource {
+    final Naver6805ObjectMapper.SafetySource source;
+    final String sessionId;
+    final long receivedMs;
+
+    PendingSafetySource(Naver6805ObjectMapper.SafetySource source, String sessionId, long receivedMs) {
+      this.source = source;
+      this.sessionId = sessionId;
+      this.receivedMs = receivedMs;
+    }
+
+    boolean matches(NaverNavigationState state, long now) {
+      long age = now - receivedMs;
+      return "guiding".equals(state.lifecycle) && sessionId.equals(state.sessionId)
+          && age >= 0L && age < SAFETY_PAIR_MAX_AGE_MS;
+    }
   }
 
   public static final class MappingOutcome {

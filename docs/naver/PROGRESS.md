@@ -3,6 +3,22 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #5 started from 3a35c615 on codex/naver-issue-5-bump. C3 RED run
+  36012296572 at 9098d8e2 reproduced four absent-category bump failures;
+  explicit highway, settings and invalid-distance cases remained blocked.
+- C3 GREEN run 36012913714 at af24ae14: 121 controller tests passed. This run's
+  new JVM job failed to compile because the synthetic Android Log fixture was
+  not yet included; no Java mapping success is inferred from that failure.
+- Ruling: retain the approved exact-Naver-bump category-missing exception, but
+  never substitute category 8 or override explicit 0/1. Cost if wrong: false
+  bump acceptance, bounded by exact source mapping, freshness and real-drive gate.
+- Ruling: publish only the pure-JVM production/fixture subset early from #9 so
+  #5 can test source-to-envelope mapping in Actions; full APK/DEX/signing and
+  capture tooling remain unpublished and #9 stays open.
+- Mapping audit confirmed gaps and created #19-#24. Route-before-guiding loss
+  is recorded in #7. Production bump source pairing needs same-session, bounded
+  age and ambiguity rejection before this task is complete.
+
 - #1 and #15 complete; exact Actions evidence is in EVIDENCE.md.
 - #2 complete: PR #16 merged as 156ffd94; 389 input tests passed in run
   36002977499, plus PR checks 36003032281 and 36003032364. Runtime binding
