@@ -372,6 +372,12 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 [Back to Understanding Settings](settings.md)
 # Naver test-branch camera lifetime
 
+The existing status area displays `NAVER` / `TMAP` for the guidance owner.
+Reduction labels identify the actual provider: `N bump`, `T route`, or
+`HDA cam`, for example. A brief TCP disconnection does not remove the owner
+before its lease expires; explicit stop/arrival does. `vNAVI` means vehicle
+navigation availability, not Naver guidance. Older recordings retain legacy labels.
+
 Naver route coordinates feed the same curve-speed and accelerator override
 controller as Tmap. The current curve-control settings and brake/reset rules
 apply. Identical geometry does not restart route progress. A route received

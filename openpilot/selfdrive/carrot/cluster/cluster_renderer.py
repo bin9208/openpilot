@@ -4224,6 +4224,7 @@ class ClusterUiRenderer:
         navi_status = navigation_status_presentation(
             getattr(state, "vehicle_navi_available", False),
             state.external_nav_active or navi_connected,
+            getattr(state, 'navi_owner', ''), getattr(state, 'navi_lifecycle', ''),
         )
         if navi_status is not None:
             navi_label, navi_color_mode = navi_status

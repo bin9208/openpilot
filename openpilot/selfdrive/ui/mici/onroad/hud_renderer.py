@@ -79,7 +79,7 @@ class SetSpeedOverride:
       desired_source = ""
 
     if desired_speed is not None and 0 < desired_speed < 200 and desired_speed < set_speed_kph:
-      label, speed_color_mode = deceleration_source_presentation(desired_source)
+      label, speed_color_mode = deceleration_source_presentation(desired_source, getattr(sm['carrotMan'], 'decelProvider', ''))
       return SetSpeedOverrideState(
         active=True,
         speed_kph=desired_speed,
@@ -840,7 +840,8 @@ class HudRenderer(Widget):
     external_navi_connected = external_navigation_connected(
       getattr(carrot_man, "remote", ""), carrot_navi_connected,
     )
-    navi_status = navigation_status_presentation(vehicle_navi_available, external_navi_connected)
+    navi_status = navigation_status_presentation(vehicle_navi_available, external_navi_connected,
+      str(getattr(carrot_man, 'naviOwner', '')), str(getattr(carrot_man, 'naviLifecycle', '')))
     if navi_status is not None:
       navi_label, navi_color_mode = navi_status
       x = int(panel_x + panel_w * 0.60 - 26)

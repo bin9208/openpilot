@@ -675,6 +675,10 @@ km/h다.
 - Windows 환경에는 전체 openpilot Linux 의존성과 pytest가 없어 전체 test suite는 실행하지 못했다.
 # Naver integration branch override (#6)
 
+Existing UI status slots now prefer selected owner/lifecycle over TCP/remote
+presence. Guidance (NAVER/TMAP) and final reduction provider (N/T/HDA prefix)
+are independent; older records without diagnostics retain legacy behavior.
+
 Route geometry revision is independent of remaining-distance/time updates.
 CarrotMan retains its progress cursor while CarrotServ updates trip counters.
 Naver uses the existing shared route speed candidate and gas-floor/reset logic.

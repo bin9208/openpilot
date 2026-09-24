@@ -159,6 +159,7 @@ export function withVehicleHudFields(payload = {}, source = {}) {
   });
   return {
     ...payload,
+    navigationLabel: String(source.navigationLabel || ""),
     evActive: source.evActive === true,
     activeLaneLine: laneMode.controlled,
     laneModeRequested: laneMode.requested,
@@ -175,6 +176,7 @@ export function withVehicleHudFields(payload = {}, source = {}) {
 export function vehicleHudSignature(payload = {}) {
   const override = cruiseOverridePayload(payload.cruiseOverride);
   return [
+    payload.navigationLabel || "",
     payload.evActive === true ? 1 : 0,
     payload.activeLaneLine == null ? "-" : (payload.activeLaneLine === true ? 1 : 0),
     payload.laneModeRequested == null ? "-" : (payload.laneModeRequested === true ? 1 : 0),
@@ -198,7 +200,7 @@ const DECEL_SOURCE_LABELS = Object.freeze({
   gas: "gas", vturn: "turn", model: "turn", turn: "turn",
 });
 
-function decelerationSourcePresentation(source) {
+function decelerationReasonPresentation(source) {
   const normalized = String(source || "").trim().toLowerCase();
   if (!normalized) return { label: "apply", mode: 2 };
   if (VEHICLE_NAVI_SOURCES.has(normalized)) {
@@ -275,7 +277,9 @@ export function deriveCruiseOverride(state = {}) {
 
   const desiredSpeed = finite(state.carrotMan?.desiredSpeed);
   if (desiredSpeed != null && desiredSpeed > 0 && desiredSpeed < 200 && desiredSpeed < cruiseKph) {
-    const presentation = decelerationSourcePresentation(state.carrotMan?.desiredSource);
+    const presentation = decelerationReasonPresentation(state.carrotMan?.desiredSource);
+    const prefix = { hda: "HDA", naver_v1: "N", tmap_legacy: "T" }[state.carrotMan?.decelProvider];
+    if (prefix) presentation.label = `${prefix} ${presentation.label}`;
     return { kph: desiredSpeed, ...presentation };
   }
   return null;
@@ -295,6 +299,12 @@ export function resolveTrafficState(state = {}) {
 // consume this stable payload and never need to know the cereal layout.
 export function deriveVehicleHudPayload(state = {}) {
   const carState = state.carState || {};
+  const cm = state.carrotMan || {};
+  const navigationLabel = cm.naviLifecycle
+    ? (cm.naviLifecycle === "guiding" && cm.naviOwner
+      ? ({ naver_v1: "NAVER", tmap_legacy: "TMAP" }[cm.naviOwner] || "NAVI")
+      : (cm.vehicleNaviAvailable ? "vNAVI" : ""))
+    : (cm.remote ? "NAVI" : (cm.vehicleNaviAvailable ? "vNAVI" : ""));
   const controlsState = state.controlsState || {};
   const selfdriveState = state.selfdriveState || {};
   const carControl = state.carControl || {};
@@ -313,6 +323,7 @@ export function deriveVehicleHudPayload(state = {}) {
   return {
     gear,
     gearStep,
+    navigationLabel,
     evActive,
     activeLaneLine: laneMode.controlled,
     laneModeRequested: laneMode.requested,

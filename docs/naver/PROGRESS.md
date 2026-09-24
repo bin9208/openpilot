@@ -3,6 +3,12 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #7 complete: PR #29 at aa0c0ba9; Actions 36020322484 / 36020410745 and
+  docs 36020410471 passed (623 tests). Fresh review found no Important issue.
+- #8 RED 36020787381 at d44ab156: seven missing owner-aware helper failures
+  and two rendered-web owner/provider failures. Native/cluster/web will use
+  selected owner/lifecycle, retaining legacy fallback only without diagnostics.
+
 - #6 complete: PR #26, exact head eb6f1494 passed 36019899030 and
   36019902027, docs 36019902159 (617 tests). Live setting invalidation follow-up #28.
 - #7 started from eb6f1494. RED 36020040359 at fe68ba2b reproduced initial

@@ -188,7 +188,7 @@
     root.classList.toggle("is-three-digit", String(model.speed).length >= 3 || String(model.setSpeed).length >= 3);
 
     syncCpuTemperature();
-    setText(elements.source, model.source.toUpperCase());
+    setText(elements.source, model.sourceLabel || model.source.toUpperCase());
     setText(elements.speed, model.speed);
     setText(elements.setSpeed, model.setSpeed);
 
