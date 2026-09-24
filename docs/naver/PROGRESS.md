@@ -19,6 +19,11 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - Ruling: normalize inputs into existing CarrotNaviControl rather than copying
   the old controller. Preserve upstream speed candidates and gas behavior;
   safety policy refinements remain #5/#6 and route acceptance remains #7.
+- #4 RED: run 36006904050 at 0a13c6e6 confirms missing runtime adapter;
+  existing 389 tests pass. First adapter run 36007357358: 397 pass, two fixture
+  defects. Lease assertion must inspect one selection (the transition reason
+  is consumed); road-width fixture must contain a present turn instruction.
+  Revised-safety freshness fixture explicitly supplies its source revision.
 - #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact

@@ -55,7 +55,9 @@ def test_transport_loss_retains_owner_until_exact_lease_boundary(runtime):
   naver(runtime)
   assert runtime.store.record_transport_loss(Source.NAVER_V1, valid_frame()['sessionId'], 10.5)
   assert runtime.select(11.999)[0].snapshot.source == Source.NAVER_V1
-  assert runtime.select(12.) == (runtime.store.select(12.), None)
+  expired, control = runtime.select(12.)
+  assert expired.snapshot is None and expired.reason == 'owner_expired'
+  assert control is None
 
 
 @pytest.mark.parametrize('terminal', ['stopped', 'arrived'])
@@ -94,7 +96,7 @@ def test_legacy_bump_and_secondary_data_keep_common_controller_fields(runtime):
   assert runtime.accept_legacy({'nRoadLimitSpeed': 60, 'roadcate': 8,
     'nSdiType': 22, 'nSdiDist': 70, 'nSdiSpeedLimit': 30,
     'nSdiPlusType': 1, 'nSdiPlusDist': 400, 'nSdiPlusSpeedLimit': 50,
-    'nTBTNextRoadWidth': 12}, 'tmap', 10.)
+    'nTBTTurnType': 12, 'nTBTNextRoadWidth': 12}, 'tmap', 10.)
   selected, control = runtime.select(10.)
   assert control.speed.sdi_type == 22 and control.speed.sdi_distance_m == 70
   assert control.speed.secondary_sdi_type == 1

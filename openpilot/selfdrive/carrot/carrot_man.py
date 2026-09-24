@@ -35,6 +35,11 @@ from openpilot.common.constants import CV
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
 from openpilot.selfdrive.carrot.curve_speed import VisionCurveSpeed, curve_speed
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
+from openpilot.selfdrive.carrot.navigation_ingress import (
+  NavigationIngress, NavigationPeerState, bind_tmap_legacy_frame,
+  build_legacy_http_session_id, handle_navigation_udp_datagram, serve_navigation_tcp,
+)
+from openpilot.selfdrive.carrot.navigation_sources import NavigationSource
 from openpilot.selfdrive.carrot.server.services.web_settings import read_web_settings
 from openpilot.selfdrive.carrot.web_upload import (
   carrot_logs_web_target,
@@ -324,6 +329,7 @@ class CarrotMan:
 
     self.ip_address = "0.0.0.0"
     self.remote_addr = None
+    self._init_navigation_ingress()
 
     self.vision_curve_speed = VisionCurveSpeed()
     self.carrot_curve_speed_params()
@@ -377,11 +383,11 @@ class CarrotMan:
       print(f"[carrot_man] failed to resolve broadcast address: {e}")
     return "255.255.255.255"
 
-  def get_local_ip(self):
+  def get_local_ip(self, destination_ip='8.8.8.8'):
       try:
           # 외부 서버와의 연결을 통해 로컬 IP 확인
           with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-              s.connect(("8.8.8.8", 80))  # Google DNS로 연결 시도
+              s.connect((destination_ip, 80))
               return s.getsockname()[0]
       except Exception:
           return None
@@ -404,13 +410,8 @@ class CarrotMan:
         navd_route_updated = self.sm.updated['navRouteNavd']
         if navd_route_updated:
           self.send_routes(self.sm['navRouteNavd'].coordinates, True)
-        carrot_navi_service_active = self.sm.alive['carrotNavi'] and self.sm.valid['carrotNavi']
-        if (
-          self.sm.updated['carrotNavi'] or navd_route_updated
-          or (self.carrot_navi_route_session_id and not carrot_navi_service_active)
-        ):
-          carrot_navi = parse_carrot_navi_control(self.sm['carrotNavi']) if carrot_navi_service_active else None
-          self._update_carrot_navi_route(carrot_navi, force=navd_route_updated)
+        self.carrot_serv._update_carrot_navi(self.sm)
+        self._update_carrot_navi_route(self.carrot_serv.carrot_navi_control, force=navd_route_updated)
         remote_addr = self.remote_addr
         remote_ip = remote_addr[0] if remote_addr is not None else ""
         vturn_speed = self.carrot_curve_speed(self.sm)
@@ -418,7 +419,7 @@ class CarrotMan:
 
         #print("coords=", coords)
         #print("curvatures=", curvatures)
-        self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speed, self.gps_location_service)
+        self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speed, self.gps_location_service, navigation_prepared=True)
 
         now = time.monotonic()
         if now >= next_broadcast_time:
@@ -705,7 +706,7 @@ class CarrotMan:
 
           while True:
             try:
-              #self.remote_addr = None
+              #self._clear_navigation_peer('udp')
               # 데이터 수신 (UDP는 recvfrom 사용)
               try:
                 data, remote_addr = sock.recvfrom(4096)  # 최대 4096 바이트 수신
@@ -714,15 +715,10 @@ class CarrotMan:
                 if not data:
                   raise ConnectionError("No data received")
 
-                if self.remote_addr is None:
-                  print("Connected to: ", remote_addr)
-                self.remote_addr = remote_addr
                 try:
-                  json_obj = json.loads(data.decode())
-                  self.carrot_serv.update(json_obj)
-                except Exception as e:
-                  print(f"carrot_man_thread: json error...: {e}")
-                  print(data)
+                  self._handle_navigation_udp(data, remote_addr, sock)
+                except Exception:
+                  self._navigation_ingress_rejected('invalid_navigation')
 
                 # 응답 메시지 생성 및 송신 (UDP는 sendto 사용)
                 #try:
@@ -733,22 +729,22 @@ class CarrotMan:
 
               except TimeoutError:
                 #print("Waiting for data (timeout)...")
-                self.remote_addr = None
+                self._clear_navigation_peer('udp')
                 time.sleep(1)
 
               except Exception as e:
                 print(f"carrot_man_thread: error...: {e}")
-                self.remote_addr = None
+                self._clear_navigation_peer('udp')
                 break
 
             except Exception as e:
               print(f"carrot_man_thread: recv error...: {e}")
-              self.remote_addr = None
+              self._clear_navigation_peer('udp')
               break
 
           time.sleep(1)
       except Exception as e:
-        self.remote_addr = None
+        self._clear_navigation_peer('udp')
         print(f"Network error, retrying...: {e}")
         time.sleep(2)
 
@@ -2076,16 +2072,19 @@ class CarrotMan:
     return merged
 
 
-  def _is_stale_rgdata(self, timestamp_ms: int):
+  def _is_stale_rgdata(self, timestamp_ms: int, session_id: str = ''):
     if timestamp_ms <= 0:
       return False, 0
 
     with self._rgdata_ts_lock:
-      last_ts = self._last_rgdata_timestamp_ms
+      timestamps = self._legacy_rgdata_timestamps
+      last_ts = timestamps.get(session_id, 0)
       if timestamp_ms <= last_ts:
         return True, last_ts
 
-      self._last_rgdata_timestamp_ms = timestamp_ms
+      if len(timestamps) >= 16 and session_id not in timestamps:
+        timestamps.pop(next(iter(timestamps)))
+      timestamps[session_id] = timestamp_ms
       return False, last_ts
 
   def _dispatch_obj(self, obj: Any):
@@ -2115,16 +2114,22 @@ class CarrotMan:
 
     handled = False
 
-    if "complexCrossroad" in obj:
-      self._safe_dispatch_handler("complexCrossroad", self.handle_complex_crossroad, obj["complexCrossroad"])
-      handled = True
-
     if "rgdata" in obj:
-      stale, last_ts = self._is_stale_rgdata(event_time_ms)
+      stale, last_ts = self._is_stale_rgdata(event_time_ms, obj.get('_navigation_session_id', ''))
       if stale:
         print(f"[STALE DROP] rgdata ts={event_time_ms} <= last={last_ts}")
       else:
         self._safe_dispatch_handler("rgdata", self.handle_carrot_state, self._normalize_rgdata(obj["rgdata"]))
+      handled = True
+
+    # Auxiliary Tmap content must not overwrite another app's selected route/UI.
+    with self.carrot_serv.navigation_runtime.lock:
+      selected = self.carrot_serv.navigation_sources.select(time.monotonic()).snapshot
+      if selected is not None and selected.source is not NavigationSource.TMAP_LEGACY:
+        return
+
+    if "complexCrossroad" in obj:
+      self._safe_dispatch_handler("complexCrossroad", self.handle_complex_crossroad, obj["complexCrossroad"])
       handled = True
 
     if "vrtx" in obj:
@@ -2170,53 +2175,67 @@ class CarrotMan:
         queue_carrot_exception_tmux_send("navi http server")
         time.sleep(2)
 
+  def _init_navigation_ingress(self):
+    self._remote_addr_lock = threading.RLock()
+    self._navigation_peers = NavigationPeerState()
+    self._legacy_rgdata_timestamps = {}
+    self._navigation_ingress = NavigationIngress(
+      carrot_serv=self.carrot_serv, legacy_dispatch=self._dispatch_legacy_navi_frame,
+      record_transport_loss=self.carrot_serv.navigation_sources.record_transport_loss,
+      monotonic=lambda: time.monotonic(), reject=self._navigation_ingress_rejected)
+
+  @staticmethod
+  def _navigation_ingress_rejected(code):
+    print(f'navigation ingress rejected: {code}')
+
+  def _set_navigation_peer(self, transport, addr, token=None):
+    with self._remote_addr_lock:
+      if transport == 'tcp':
+        self.remote_addr = self._navigation_peers.set_tcp(token, addr)
+      else:
+        self.remote_addr = self._navigation_peers.set_fallback(transport, addr)
+      return self.remote_addr
+
+  def _clear_navigation_peer(self, transport, token=None):
+    with self._remote_addr_lock:
+      if transport == 'tcp':
+        self.remote_addr = self._navigation_peers.clear_tcp(token)
+      else:
+        self.remote_addr = self._navigation_peers.clear_fallback(transport)
+      return self.remote_addr
+
+  def _dispatch_legacy_navi_frame(self, obj, peer, received_mono_s, session_id):
+    if not isinstance(obj, dict) or 'schema' in obj:
+      return False
+    bound = bind_tmap_legacy_frame(obj, session_id, received_mono_s)
+    bound['_navigation_session_id'] = session_id
+    self._dispatch_obj(bound)
+    return True
+
+  def _serve_navi_client(self, conn, addr):
+    token = object()
+    self._set_navigation_peer('tcp', addr, token)
+    try:
+      self._navigation_ingress.serve_client(conn, addr)
+    finally:
+      self._clear_navigation_peer('tcp', token)
+
+  def _handle_navigation_udp(self, data, addr, sock):
+    def legacy_update(payload):
+      self._set_navigation_peer('udp', addr)
+      payload = dict(payload)
+      payload['_navigation_session_id'] = build_legacy_http_session_id(addr, 'udp')
+      self.carrot_serv.update(payload)
+    return handle_navigation_udp_datagram(sock, data, addr,
+      self.get_local_ip(addr[0]), legacy_update)
+
   def carrot_navi_tcp_server(self, port: int = 7712):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("0.0.0.0", port))
-    server.listen(5)
-    print("TCP server listening", port)
-
-    while True:
-      conn, addr = server.accept()
-      self.remote_addr = addr
-      print("Connected:", addr)
-      conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-      try:
-        f = conn.makefile("r", encoding="utf-8", errors="ignore")
-        while True:
-          try:
-            line = f.readline()
-          except socket.timeout:
-            print("TCP timeout: closing connection", addr)
-            break
-
-          if not line:
-            break
-
-          s = line.strip()
-          if not s:
-            continue
-
-          try:
-            obj = json.loads(s)
-          except Exception:
-            obj = s
-
-          try:
-            self._dispatch_obj(obj)
-          except Exception as e:
-            print("dispatch error:", e, "raw:", repr(s[:200]))
-
-      except Exception as e:
-        print("TCP error:", e)
-
-      finally:
-        try:
-          conn.close()
-        except Exception:
-          pass
-        self.remote_addr = None
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+      server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      server.bind(("0.0.0.0", port))
+      server.listen(5)
+      serve_navigation_tcp(server, self._serve_navi_client,
+                           on_reject=self._navigation_ingress_rejected)
 
   async def carrot_http_post(self, request: web.Request):
     tmap_version = request.match_info.get("tmap_version", "")
@@ -2233,6 +2252,8 @@ class CarrotMan:
       if not raw_body:
         raise ValueError("empty body")
       obj = json.loads(raw_body)
+      if not isinstance(obj, dict) or 'schema' in obj:
+        raise ValueError('only legacy Tmap objects are accepted on HTTP')
       #if isinstance(obj, dict):
       #  print(f"[HTTP] json keys={list(obj.keys())[:10]}")
       #else:
@@ -2247,10 +2268,11 @@ class CarrotMan:
     if isinstance(obj, dict):
       obj["_tmap_version"] = tmap_version
     if isinstance(peer, tuple) and len(peer) >= 1 and peer[0]:
-      self.remote_addr = (peer[0], self.broadcast_port)
+      self._set_navigation_peer('http', (peer[0], self.broadcast_port))
 
     try:
-      self._dispatch_obj(obj)
+      self._dispatch_legacy_navi_frame(obj, peer, time.monotonic(),
+                                     build_legacy_http_session_id(peer, tmap_version))
       #print(f"[HTTP] dispatch ok version={tmap_version}")
       #print(obj)
       return web.json_response({

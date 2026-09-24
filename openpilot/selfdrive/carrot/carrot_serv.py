@@ -20,6 +20,7 @@ from openpilot.selfdrive.navd.helpers import Coordinate
 from openpilot.common.constants import CV
 from openpilot.common.gps import get_gps_location_service
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
+from openpilot.selfdrive.carrot.navigation_runtime import NavigationRuntime
 
 nav_type_mapping = {
   12: ("turn", "left", 1),
@@ -85,6 +86,9 @@ SCHOOL_ZONE_GAS_OVERRIDE_TIMEOUT_S = 3.0
 
 class CarrotServ:
   def __init__(self):
+    self.navigation_runtime = NavigationRuntime()
+    self.navigation_sources = self.navigation_runtime.store
+    self.navigation_selection = self.navigation_sources.select(time.monotonic())
     self.params = Params()
     self.params_memory = Params("/dev/shm/params")
 
@@ -1064,15 +1068,25 @@ class CarrotServ:
     if not next_changed:
       self.xDistToTurnNext = old_next_dist
 
-  def _update_carrot_navi(self, sm):
-    service_active = sm.alive['carrotNavi'] and sm.valid['carrotNavi']
-    if service_active and not sm.updated['carrotNavi']:
-      if self.carrot_navi_active and self.carrot_navi_has_control:
-        self.active_count = 80
-        self.active_sdi_count = self.active_sdi_count_max
-      return self.carrot_navi_active and self.carrot_navi_has_control
+  def accept_navigation_snapshot(self, snapshot):
+    return self.navigation_runtime.accept_snapshot(snapshot)
 
-    navi = parse_carrot_navi_control(sm['carrotNavi']) if service_active else None
+  def _update_carrot_navi(self, sm):
+    now_s = time.monotonic()
+    with self.navigation_runtime.lock:
+      service_active = sm.alive['carrotNavi'] and sm.valid['carrotNavi']
+      if service_active and sm.updated['carrotNavi']:
+        self.navigation_runtime.accept_v2(sm['carrotNavi'], now_s)
+      elif not service_active:
+        self.navigation_runtime.v2_transport_lost(now_s)
+      self.navigation_selection, navi = self.navigation_runtime.select(now_s)
+      snapshot = self.navigation_selection.snapshot
+      self.nTBTNextRoadWidth = snapshot.control.current.next_road_width if snapshot is not None else 0
+      if snapshot is not None and snapshot.control.destination_present:
+        self.goalPosY, self.goalPosX = snapshot.control.destination
+      return self._project_carrot_navi_control(navi)
+
+  def _project_carrot_navi_control(self, navi):
     was_active = self.carrot_navi_active
     self.carrot_navi_active = navi is not None
     if navi is None:
@@ -1083,6 +1097,8 @@ class CarrotServ:
     self.carrot_navi_control = navi
     new_session = navi.session_id != self.carrot_navi_session_id
     if navi.session_id != self.carrot_navi_session_id:
+      self._clear_carrot_navi_control()
+      self.carrot_navi_control = navi
       self._reset_carrot_navi_sequences(navi.session_id)
     off_route_changed = navi.off_route != self.carrot_navi_off_route
     self.carrot_navi_off_route = navi.off_route
@@ -1092,6 +1108,7 @@ class CarrotServ:
       or navi.guidance_active or navi.route.present
     )
 
+    self.roadcate = navi.road_category if navi.road_category is not None else 0
     if new_session or off_route_changed or navi.speed.sequence != self.carrot_navi_speed_sequence:
       self.carrot_navi_speed_sequence = navi.speed.sequence
       self._apply_carrot_navi_speed(navi)
@@ -1103,8 +1120,6 @@ class CarrotServ:
     if new_session or navi.route.sequence != self.carrot_navi_route_sequence:
       self._apply_carrot_navi_route(navi)
 
-    if navi.road_category is not None:
-      self.roadcate = navi.road_category
     self._apply_carrot_navi_guidance(navi, force=new_session or off_route_changed)
     if self.carrot_navi_has_control:
       self.active_count = 80
@@ -1320,11 +1335,11 @@ class CarrotServ:
         self.xSpdDist = distance
         self.xSpdType = xSpdType
 
-  def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speed, gps_service):
+  def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speed, gps_service, navigation_prepared=False):
 
     self.debugText = ""
     self.update_params()
-    carrot_navi_active = self._update_carrot_navi(sm)
+    carrot_navi_active = self.carrot_navi_has_control if navigation_prepared else self._update_carrot_navi(sm)
     if sm.alive['carState'] and sm.alive['selfdriveState']:
       CS = sm['carState']
       v_ego = CS.vEgo
@@ -1536,6 +1551,21 @@ class CarrotServ:
     msg.carrotMan.szTBTMainText = self.szTBTMainText
     msg.carrotMan.desiredSpeed = int(desired_speed)
     msg.carrotMan.desiredSource = source
+    selection = self.navigation_selection
+    owner = selection.snapshot
+    msg.carrotMan.naviOwner = owner.source.value if owner is not None else ''
+    msg.carrotMan.naviSessionId = owner.session_id if owner is not None else ''
+    msg.carrotMan.naviSequence = owner.sequence if owner is not None else 0
+    msg.carrotMan.naviOwnerAgeMs = -1 if selection.owner_age_s is None else int(selection.owner_age_s * 1000)
+    msg.carrotMan.naviSafetyAgeMs = -1 if selection.safety_age_s is None else int(selection.safety_age_s * 1000)
+    msg.carrotMan.naviLifecycle = owner.lifecycle.value if owner is not None else 'idle'
+    msg.carrotMan.naviControlAllowed = bool(owner is not None and self.carrot_navi_has_control)
+    msg.carrotMan.naviSafetyRejection = ''
+    msg.carrotMan.decelProvider = (
+      'hda' if source in ('hda', 'hda_bump', 'hda_section', 'school') else
+      owner.source.value if owner is not None and source in ('cam', 'bump', 'section', 'navi', 'atc', 'atc2', 'route') else
+      'vision' if source == 'vturn' else 'none')
+    msg.carrotMan.decelReason = source
     vehicle_navi_active, vehicle_navi_speed, vehicle_navi_section_active = self._vehicle_navigation_display(CS)
     msg.carrotMan.vehicleNaviActive = vehicle_navi_active
     msg.carrotMan.vehicleNaviSpeed = vehicle_navi_speed
@@ -1694,90 +1724,10 @@ class CarrotServ:
       self.carrotArg = json.get("carrotArg")
       print(f"carrotCmd = {self.carrotCmd}, {self.carrotArg}")
 
-    self.active_count = 80
     now = time.monotonic()
-
-    if "goalPosX" in json:
-      gx = json.get("goalPosX")
-      gy = json.get("goalPosY")
-      if gx is not None and gy is not None:
-        self.goalPosX = float(json.get("goalPosX", self.goalPosX))
-        self.goalPosY = float(json.get("goalPosY", self.goalPosY))
-        self.szGoalName = json.get("szGoalName", self.szGoalName)
-
     if "nRoadLimitSpeed" in json:
-      #print(json)
-      self.active_sdi_count = self.active_sdi_count_max
-      ### roadLimitSpeed
-      nRoadLimitSpeed = int(json.get("nRoadLimitSpeed", 20))
-      if nRoadLimitSpeed > 0:
-        if nRoadLimitSpeed > 200:
-          nRoadLimitSpeed = (nRoadLimitSpeed - 20) / 10
-        elif nRoadLimitSpeed == 120:
-          nRoadLimitSpeed = 115 # 120 -> 115 fix bug
-      else:
-        nRoadLimitSpeed = 30
-      #self.nRoadLimitSpeed = nRoadLimitSpeed
-      if self.nRoadLimitSpeed != nRoadLimitSpeed:
-        self.nRoadLimitSpeed_counter += 1
-        if self.nRoadLimitSpeed_counter > 5:
-          self.nRoadLimitSpeed = nRoadLimitSpeed
-      else:
-        self.nRoadLimitSpeed_counter = 0
-
-      ### SDI
-      self.nSdiType = _i(json.get("nSdiType"), -1)
-      self.nSdiSpeedLimit = _i(json.get("nSdiSpeedLimit"), 0)
-      self.nSdiSection = _i(json.get("nSdiSection"), -1)
-      self.nSdiDist = _i(json.get("nSdiDist"), -1)
-      self.nSdiBlockType = _i(json.get("nSdiBlockType"), -1)
-      self.nSdiBlockSpeed = _i(json.get("nSdiBlockSpeed"), 0)
-      self.nSdiBlockDist = _i(json.get("nSdiBlockDist"), 0)
-
-      self.nSdiPlusType = _i(json.get("nSdiPlusType"), -1)
-      self.nSdiPlusSpeedLimit = _i(json.get("nSdiPlusSpeedLimit"), 0)
-      self.nSdiPlusDist = _i(json.get("nSdiPlusDist"), 0)
-      self.nSdiPlusBlockType = _i(json.get("nSdiPlusBlockType"), -1)
-      self.nSdiPlusBlockSpeed = _i(json.get("nSdiPlusBlockSpeed"), 0)
-      self.nSdiPlusBlockDist = _i(json.get("nSdiPlusBlockDist"), 0)
-      self.roadcate = _i(json.get("roadcate"), 0)
-
-      ## GuidePoint
-      self.nTBTDist = int(json.get("nTBTDist", 0))
-      self.nTBTTurnType = int(json.get("nTBTTurnType", -1))
-      self.szTBTMainText = _s(json.get("szTBTMainText"))
-      self.szNearDirName = _s(json.get("szNearDirName"))
-      self.szFarDirName = _s(json.get("szFarDirName"))
-
-      self.nTBTNextRoadWidth = int(json.get("nTBTNextRoadWidth", 0))
-      self.nTBTDistNext = int(json.get("nTBTDistNext", 0))
-      self.nTBTTurnTypeNext = int(json.get("nTBTTurnTypeNext", -1))
-      self.szTBTMainTextNext = json.get("szTBTMainText", "")
-
-      self.nGoPosDist = int(json.get("nGoPosDist", 0))
-      self.nGoPosTime = int(json.get("nGoPosTime", 0))
-      self.szPosRoadName = _s(json.get("szPosRoadName"))
-      if self.szPosRoadName == "null":
-        self.szPosRoadName = ""
-
-      self.vpPosPointLatNavi = float(json.get("vpPosPointLat", 0.0))
-      self.vpPosPointLonNavi = float(json.get("vpPosPointLon", 0.0))
-      if self.vpPosPointLatNavi != 0.0:
-        self.last_update_gps_time_navi = self.last_calculate_gps_time = now
-        self.nPosAngle = float(json.get("nPosAngle", self.nPosAngle))
-
-      self.nPosSpeed = float(json.get("nPosSpeed", self.nPosSpeed))
-      self._update_tbt()
-      self._update_sdi()
-      print(
-        f"sdi = {self.nSdiType}, {self.nSdiSpeedLimit}, {self.nSdiPlusType}, " +
-        f"tbt = {self.nTBTTurnType}, {self.nTBTDist}, " +
-        f"next = {self.nTBTTurnTypeNext}, {self.nTBTDistNext}"
-      )
-      #print(json)
-    else:
-      #print(json)
-      pass
+      session_id = str(json.get("_navigation_session_id") or "tmap-udp")
+      self.navigation_runtime.accept_legacy(json, session_id, now)
 
     # 3초간 navi 데이터가 없으면, phone gps로 업데이트
     if "latitude" in json:
