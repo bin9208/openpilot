@@ -79,6 +79,18 @@ def test_fresh_camera_wins_then_stale_camera_falls_back_without_losing_owner(dri
   assert result.naviSafetyRejection == 'safety_stale'
 
 
+def test_category_only_update_does_not_restore_a_passed_camera(drive):
+  serv, CS, now, tick = drive
+  serv.accept_navigation_snapshot(parse_naver_navigation_v1(camera_frame(), now[0]))
+  tick()
+  assert tick(30).xSpdType == -1
+  now[0] = 10.2
+  frame = camera_frame(sequence=2)
+  frame['road'].update(categoryValid=True, category=8)
+  serv.accept_navigation_snapshot(parse_naver_navigation_v1(frame, now[0]))
+  assert tick(30).xSpdType == -1
+
+
 def test_new_revision_replaces_passed_camera_and_terminal_returns_to_hda(drive):
   serv, CS, now, tick = drive
   set_hda(serv, CS)
