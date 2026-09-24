@@ -2310,6 +2310,7 @@ class CarrotMan:
       self._set_navigation_peer('udp', addr)
       payload = dict(payload)
       payload['_navigation_session_id'] = build_legacy_http_session_id(addr, 'udp')
+      payload['_navigation_received_mono_s'] = time.monotonic()
       self.carrot_serv.update(payload)
     return handle_navigation_udp_datagram(sock, data, addr,
       self.get_local_ip(addr[0]), legacy_update)

@@ -1002,7 +1002,8 @@ class CarrotServ:
       self.szPosRoadName = ""
       return
 
-    now = time.monotonic()
+    snapshot = self.navigation_selection.snapshot
+    now = snapshot.control.position_received_mono_s if snapshot is not None else time.monotonic()
     self.vpPosPointLatNavi = vehicle.latitude
     self.vpPosPointLonNavi = vehicle.longitude
     self.nPosAngle = vehicle.heading_deg
@@ -1113,9 +1114,9 @@ class CarrotServ:
       self.carrot_navi_speed_sequence = navi.speed.sequence
       self._apply_carrot_navi_speed(navi)
 
-    # The cereal service repeats at 2 Hz even when item sequences do not change.
-    # Refresh GPS and Params freshness from that heartbeat.
-    self._apply_carrot_navi_vehicle(navi)
+    # A cached sample is not a new position receipt. Keep dead-reckoning time.
+    if new_session or navi.vehicle.sequence != self.carrot_navi_vehicle_sequence:
+      self._apply_carrot_navi_vehicle(navi)
     self._apply_carrot_navi_traffic(navi)
     if new_session or navi.route.sequence != self.carrot_navi_route_sequence:
       self._apply_carrot_navi_route(navi)
@@ -1727,7 +1728,10 @@ class CarrotServ:
     now = time.monotonic()
     if "nRoadLimitSpeed" in json:
       session_id = str(json.get("_navigation_session_id") or "tmap-udp")
-      self.navigation_runtime.accept_legacy(json, session_id, now)
+      receipt = json.get('_navigation_received_mono_s', now)
+      if (not isinstance(receipt, bool) and isinstance(receipt, (int, float))
+          and math.isfinite(receipt) and 0 <= receipt <= now):
+        self.navigation_runtime.accept_legacy(json, session_id, receipt)
 
     # 3초간 navi 데이터가 없으면, phone gps로 업데이트
     if "latitude" in json:

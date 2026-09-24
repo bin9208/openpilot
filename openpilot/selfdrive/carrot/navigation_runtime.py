@@ -65,7 +65,7 @@ class NavigationRuntime:
       updates = {}
       if route_points is not None:
         points = tuple(route_points)
-        if len(points) > 256 or any(len(p) != 2 or not all(math.isfinite(v) for v in p)
+        if len(points) > 4096 or any(len(p) != 2 or not all(math.isfinite(v) for v in p)
           or not (-90 <= p[0] <= 90 and -180 <= p[1] <= 180) for p in points):
           return False
         updates.update(route_present=bool(points), route_points=points,

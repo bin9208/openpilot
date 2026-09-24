@@ -186,3 +186,15 @@ def test_same_frame_guidance_and_route_use_one_local_receipt(bound):
   manager._dispatch_legacy_navi_frame(frame, ('192.0.2.2', 9), 10., 'legacy')
   assert serv._update_carrot_navi(SubMaster())
   assert serv.carrot_navi_control.route.polyline == ((37., 127.), (37.1, 127.1))
+
+
+def test_cached_traffic_does_not_refresh_ui_receipt_timestamp(bound):
+  manager, serv, now = bound
+  frame = {'rgdata': {'nRoadLimitSpeed': 60},
+           'sinf': {'redLightOn': True, 'redLightRemainTime': 30, 'distance': 100}}
+  manager._dispatch_legacy_navi_frame(frame, ('192.0.2.2', 9), 10., 'legacy')
+  assert serv._update_carrot_navi(SubMaster())
+  assert json.loads(serv.params_memory.get('TrafficLight'))['ts'] == 10.
+  now[0] = 10.05
+  assert serv._update_carrot_navi(SubMaster())
+  assert json.loads(serv.params_memory.get('TrafficLight'))['ts'] == 10.
