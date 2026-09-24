@@ -15,3 +15,14 @@ Commit: `56975cf421e6689e568ed64a8f6c11f7ef0c9607`.
 Scope: repository workflow tests and shared-entry-point Python syntax only.
 No Naver controller/phone/vehicle acceptance is claimed. Issues #2-#14 remain
 separate acceptance gates. Node 20 deprecation warnings are tracked in #15.
+
+## Current Actions runtime: issues #1 and #15 complete
+
+Commit: `1838b1f2499bd723ce0ed5639aa875d7644d029d`.
+
+- [Naver CI: success](https://github.com/bin9208/openpilot/actions/runs/36001902423)
+- [Upstream mirror: success](https://github.com/bin9208/openpilot/actions/runs/36001932366)
+- Uses checkout v7 and setup-python v6, matching current upstream versions.
+- Issues #1 and #15 were closed with the above exact-commit evidence.
+- Remaining integration and device issues are open. Next implementation target
+  is #2 (protocol/ingress), followed by #3 (wire schema) and #4 (source lifecycle).
