@@ -13,6 +13,7 @@
       <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version>
         <configuration><testIncludes>
           <testInclude>com/naver/**/*.java</testInclude>
+          <testInclude>android/util/Log.java</testInclude>
           <testInclude>ai/comma/naver/payload/Naver6805ObjectMapperTest.java</testInclude>
           <testInclude>ai/comma/naver/payload/NaverNavigationAggregatorTest.java</testInclude>
           <testInclude>ai/comma/naver/payload/NaverNavigationEnvelopeTest.java</testInclude>
