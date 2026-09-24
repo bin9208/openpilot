@@ -294,6 +294,7 @@ test("final presentation payload retains cluster-only fields", () => {
   assert.deepEqual(payload, {
     vEgoKph: 52,
     gear: "D",
+    navigationLabel: "",
     evActive: true,
     activeLaneLine: false,
     laneModeRequested: true,

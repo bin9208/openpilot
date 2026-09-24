@@ -25,7 +25,14 @@ jobs:
           node-version: '24'
       - name: Rendered web owner and reduction labels
         working-directory: openpilot/selfdrive/carrot/web
-        run: node --test tests/hud_data_bridge.test.mjs tests/hud_render.test.mjs
+        run: node --test tests/hud_data_bridge.test.mjs tests/hud_render.test.mjs tests/naver_mini_hud.test.mjs
+      - name: Shipped browser bundles match source
+        if: always()
+        working-directory: openpilot/selfdrive/carrot/web
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          git diff --exit-code -- js/generated css/generated generated/asset-manifest.json
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
