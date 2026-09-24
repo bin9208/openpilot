@@ -199,8 +199,11 @@ class NavigationRuntime:
       if primary is not None and primary.section:
         fields.update(section_active=True, section_speed_limit_kph=round(primary.speed_limit_kph),
                       section_remaining_distance_m=round(primary.distance_m))
+      # Road category only changes bump eligibility, not a camera's lifetime.
+      bump_category = c.road_category if any(item is not None and item.type == 22
+                                             for item in (primary, secondary)) else None
       speed = NaviSpeedControl(c.speed_present, self._revision('speed',
-        (primary, secondary, c.road_limit_kph, c.road_category, c.off_route)),
+        (primary, secondary, bump_category, c.off_route)),
         None if c.road_limit_kph is None else round(c.road_limit_kph), **fields)
       route_key = (c.route_present, c.route_revision, c.route_points, c.remaining_distance_m, c.remaining_time_s)
       return selection, CarrotNaviControl(

@@ -131,7 +131,7 @@ def test_rear_hold_does_not_arm_distant_or_front_camera(navigation_update):
 
 
 @pytest.mark.parametrize("stock_source", ("hda", "hda_bump", "hda_section", "school"))
-def test_connected_external_without_hazard_never_falls_back_to_stock(navigation_update, stock_source):
+def test_connected_external_without_hazard_falls_back_to_stock(navigation_update, stock_source):
   serv, CS, update = navigation_update
   if stock_source == "hda":
     CS.speedLimit, CS.speedLimitDistance = 50, 10
@@ -143,9 +143,9 @@ def test_connected_external_without_hazard_never_falls_back_to_stock(navigation_
     CS.schoolZoneActive = True
   serv.active_count = 80
   result = update()
-  assert (result.desiredSource, result.desiredSpeed) == ("road", 200)
-  assert not result.vehicleNaviActive
-  assert result.xSpdCountDown == 100
+  assert result.desiredSource == stock_source
+  assert result.desiredSpeed in (22, 30, 50)
+  assert result.vehicleNaviActive == (stock_source != 'hda')  # HDA fixture has no vehicleNaviSpeed.
   assert result.nRoadLimitSpeed == 30
 
   serv.active_count = 1  # The existing connection timer expires on this update.

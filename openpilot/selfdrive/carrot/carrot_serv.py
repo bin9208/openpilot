@@ -21,7 +21,7 @@ from openpilot.common.constants import CV
 from openpilot.common.gps import get_gps_location_service
 from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl
 from openpilot.selfdrive.carrot.navigation_runtime import NavigationRuntime
-from openpilot.selfdrive.carrot.navigation_sources import NavigationSource
+from openpilot.selfdrive.carrot.navigation_sources import NavigationSource, safety_rejection
 
 nav_type_mapping = {
   12: ("turn", "left", 1),
@@ -415,7 +415,7 @@ class CarrotServ:
     return event["speed"], max(0.0, event["target"] + hold_distance - self.totalDistance)
 
   def _vehicle_speed_camera_enabled(self, CS):
-    return (not self.external_navigation_active and
+    return (not self._external_safety_available() and
             self.vehicleSpeedCameraControlMode > 0 and CS.speedLimit > 0 and CS.speedLimitDistance > 0 and
             not (CS.schoolZoneActive and self.school_zone_suppressed) and
             not (self.vehicleSpeedCameraControlMode == 3 and CS.gasPressed))
@@ -423,8 +423,22 @@ class CarrotServ:
   def _speed_bump_control_active(self, distance):
     return distance > self.autoNaviSpeedBumpEndDistance
 
+  def _external_safety_available(self):
+    # Guidance ownership is independent of a usable safety event. Preserve
+    # the external bump endpoint and rear hold before admitting stock data.
+    if not self.external_navigation_active or self.autoNaviSpeedCtrlMode <= 0:
+      return False
+    if getattr(self, 'carrot_navi_off_route', False):
+      return False
+    if self.xSpdType >= 0 and self.xSpdLimit > 0:
+      if self.xSpdDist > 0 or (self.xSpdType in (100, 101) and self.xSpdDist > -250):
+        return True
+    hold = getattr(self, 'autoNaviRearCameraHoldDistance', 0)
+    return hold > 0 and any(event['target'] + hold > self.totalDistance
+                            for event in getattr(self, 'rear_camera_events', ()))
+
   def _vehicle_speed_bump_enabled(self, CS):
-    return (not self.external_navigation_active and self.vehicleNaviCanControl and self.autoNaviSpeedCtrlMode >= 2 and
+    return (not self._external_safety_available() and self.vehicleNaviCanControl and self.autoNaviSpeedCtrlMode >= 2 and
             self._speed_bump_control_active(CS.speedBumpDistance))
 
   def _vehicle_school_zone_enabled(self, CS):
@@ -432,7 +446,7 @@ class CarrotServ:
       self.school_zone_gas_override_started_at = None
       self.school_zone_suppressed = False
       return False
-    return (not self.external_navigation_active and
+    return (not self._external_safety_available() and
             self.vehicleNaviSchoolZoneControl and self.vehicleSpeedCameraControlMode > 0 and not self.school_zone_suppressed and
             not (self.vehicleSpeedCameraControlMode == 3 and CS.gasPressed))
 
@@ -440,12 +454,12 @@ class CarrotServ:
     return 30 if self._vehicle_school_zone_enabled(CS) else 250
 
   def _vehicle_section_zone_enabled(self, CS):
-    return (not self.external_navigation_active and self.vehicleNaviCanControl and self.vehicleSpeedCameraControlMode > 0 and
+    return (not self._external_safety_available() and self.vehicleNaviCanControl and self.vehicleSpeedCameraControlMode > 0 and
             getattr(CS, "vehicleNaviSectionActive", False) and getattr(CS, "vehicleNaviSpeed", 0) > 0 and
             not (self.vehicleSpeedCameraControlMode == 3 and CS.gasPressed))
 
   def _vehicle_navigation_display(self, CS):
-    if self.external_navigation_active or CS is None or not self.vehicleNaviCanControl or not getattr(CS, "vehicleNaviActive", False):
+    if self._external_safety_available() or CS is None or not self.vehicleNaviCanControl or not getattr(CS, "vehicleNaviActive", False):
       return False, 0, False
     if CS.schoolZoneActive:
       speed = 30
@@ -463,7 +477,7 @@ class CarrotServ:
     if self.external_navigation_active and self.xSpdDist > 0 and not legacy_bump_suppressed:
       distances.append(self.xSpdDist)
 
-    vehicle_navi_active = (not self.external_navigation_active and CS is not None and self.vehicleNaviCanControl and
+    vehicle_navi_active = (not self._external_safety_available() and CS is not None and self.vehicleNaviCanControl and
                            getattr(CS, "vehicleNaviActive", False))
     if vehicle_navi_active:
       camera_distance = getattr(CS, "speedLimitDistance", 0)
@@ -1120,6 +1134,8 @@ class CarrotServ:
     off_route_changed = navi.off_route != self.carrot_navi_off_route
     self.carrot_navi_off_route = navi.off_route
     self.carrot_navi_road_limit_valid = navi.speed.road_limit_kph is not None
+    if self.carrot_navi_road_limit_valid:
+      self.nRoadLimitSpeed = navi.speed.road_limit_kph
     self.carrot_navi_has_control = (
       navi.speed.present or navi.current.present or navi.next.present
       or navi.guidance_active or navi.route.present
@@ -1578,7 +1594,9 @@ class CarrotServ:
     msg.carrotMan.naviSafetyAgeMs = -1 if selection.safety_age_s is None else int(selection.safety_age_s * 1000)
     msg.carrotMan.naviLifecycle = owner.lifecycle.value if owner is not None else 'idle'
     msg.carrotMan.naviControlAllowed = bool(owner is not None and self.carrot_navi_has_control)
-    msg.carrotMan.naviSafetyRejection = ''
+    msg.carrotMan.naviSafetyRejection = safety_rejection(
+      selection, self.autoNaviSpeedCtrlMode, self.autoNaviSpeedSafetyFactor, self.autoNaviSpeedBumpSpeed) or (
+        'passed' if owner is not None and not self._external_safety_available() else '')
     msg.carrotMan.decelProvider = (
       'hda' if source in ('hda', 'hda_bump', 'hda_section', 'school') else
       owner.source.value if owner is not None and source in ('cam', 'bump', 'section', 'navi', 'atc', 'atc2', 'route') else

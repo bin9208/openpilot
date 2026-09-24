@@ -330,7 +330,6 @@ class NavigationSourceStore:
       if (
         incoming is not None
         and cached is not None
-        and incoming.revision is not None
         and incoming.revision == cached.revision
         and replace(incoming, received_mono_s=cached.received_mono_s) == cached
       ):
