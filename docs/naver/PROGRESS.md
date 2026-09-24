@@ -3,6 +3,24 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #8 complete: PR #30 at a9daa38a; 36021787798 / 36021963273, docs
+  36021963382 passed 697 tests including rendered web/native HUD and bundle parity.
+- #9 source-only import 440cd47a excludes binary/private/capture-derived files.
+  Initial CI36022224133 exposed missing SDK command path; 36022820055 exposed
+  removed legacy tools package. Provision SDK explicitly with pinned Node24 action.
+- #9 RED36023160593: Linux LOCALAPPDATA eager lookup and diagnostic-only
+  compilation of the production BumpWireFixture. Fix OS-aware synthetic tools
+  and restrict that cross-language fixture to production/field compositions.
+- #9 run 36023502376: all three Java/DEX compositions passed; host toolkit
+  passed 452 tests and exposed four remaining keytool.exe-only alias fixtures.
+  Use the same OS-aware executable suffix for those real synthetic signing tests.
+- Ruling: replace historical public-release documentation assertions with the
+  current source-only/test boundary. Public #12 remains gated by #11; do not
+  publish old capture-derived fixture or old claims as current acceptance.
+- Local signing is blocked: preserved DPAPI password fails CurrentUser decode
+  in both PowerShell7 and Windows PowerShell5 (no secret values printed).
+  User was asked about a separate test key; originals remain untouched.
+
 - #7 complete: PR #29 at aa0c0ba9; Actions 36020322484 / 36020410745 and
   docs 36020410471 passed (623 tests). Fresh review found no Important issue.
 - #8 RED 36020787381 at d44ab156: seven missing owner-aware helper failures

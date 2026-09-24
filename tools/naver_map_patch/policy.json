@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task": 9,
+  "allowed_paths": [
+    "tools/naver_map_patch/**"
+  ],
+  "protected_paths": [
+    "openpilot/**",
+    "docs/**",
+    ".superpowers/**"
+  ],
+  "prohibited_import_paths": [
+    "navigation_control_replay*.py",
+    "tests/test_navigation_control_replay.py",
+    "tests/test_task11_accessor_fixture.py",
+    "tests/fixtures/**",
+    "dexpatch/build/**",
+    "dexpatch/.gradle/**",
+    "**/__pycache__/**"
+  ],
+  "prohibited_material": [
+    "proprietary_apk",
+    "proprietary_dex",
+    "proprietary_resources",
+    "raw_route_location_capture",
+    "logcat",
+    "keystore",
+    "password",
+    "certificate",
+    "private_key"
+  ],
+  "artifact_profile": {
+    "package_name": "com.nhn.android.nmap",
+    "version_name": "6.8.0.5",
+    "version_code": 60800007,
+    "payload_modes": [
+      "diagnostic",
+      "production"
+    ]
+  },
+  "cli_surface": {
+    "operations": [
+      "doctor",
+      "inspect",
+      "build",
+      "verify",
+      "install-command",
+      "extract-capture"
+    ],
+    "accepts_local_artifact_paths": true,
+    "writes_only_to_explicit_output": true
+  }
+}

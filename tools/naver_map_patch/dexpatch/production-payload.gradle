@@ -1,0 +1,225 @@
+import groovy.json.JsonSlurper
+
+def configuredProductionProfile = providers.gradleProperty("profile").orNull
+def productionProfileFile = configuredProductionProfile == null
+    ? file("../profiles/6.8.0.5.json")
+    : (file(configuredProductionProfile).isFile()
+        ? file(configuredProductionProfile)
+        : new File(rootDir, "../../../" + configuredProductionProfile))
+def productionContractFile = file("../profiles/6.8.0.5-production.json")
+def productionDexDirectory = layout.buildDirectory.dir("productionDex")
+def productionPayloadDirectory = layout.buildDirectory.dir("payload")
+def productionSourceDirectory = file("../payload/src/main/java")
+def productionSourceNames = [
+    "Naver6805ObjectMapper.java",
+    "NaverNavigationAggregator.java",
+    "NaverNavigationEnvelope.java",
+    "NaverNavigationSender.java",
+    "NaverNavigationState.java",
+    "ProductionHooks.java",
+    "ProductionRuntime.java",
+] as Set
+def forbiddenProductionSourceTokens = [
+    "NavigationSimulation",
+    "SIMULATION_ENABLED",
+    "DiagnosticRuntime",
+    "DiagnosticSampler",
+    "OfflineCaptureStore",
+    "FieldAcceptanceHooks",
+    "onLane",
+    "NaviLaneItem",
+    "simulation",
+]
+
+def readFullProductionProfile = {
+  return new JsonSlurper().parse(productionProfileFile)
+}
+def readProductionContract = {
+  return new JsonSlurper().parse(productionContractFile)
+}
+
+def requireProductionProfile = {
+  def profile = readFullProductionProfile()
+  def contract = readProductionContract()
+  if (profile.profile_id != "6.8.0.5"
+      || profile.package_name != "com.nhn.android.nmap"
+      || profile.version_code != 60800007
+      || profile.payload_modes != ["diagnostic", "production"]
+      || profile.diagnostic_payload == null
+      || profile.diagnostic_payload.payload_dex_entry != "classes43.dex"
+      || contract.schema_version != 1
+      || contract.profile_id != "6.8.0.5-production"
+      || contract.source_profile_id != profile.profile_id
+      || contract.package_name != profile.package_name
+      || contract.version_code != profile.version_code
+      || contract.payload_dex_entry != "classes43.dex"
+      || contract.payload_build_id != "naver-6.8.0.5-public-beta-v2"
+      || contract.hook_class_descriptor != "Lai/comma/naver/payload/ProductionHooks;"
+      || contract.transport != [
+          discovery_host: "255.255.255.255",
+          discovery_port: 7706,
+          response_port: 7705,
+          tcp_port: 7712,
+          discovery_timeout_ms: 500,
+          connect_timeout_ms: 500,
+          write_timeout_ms: 500,
+          reconnect_min_ms: 1000,
+          reconnect_max_ms: 30000,
+          heartbeat_ms: 500,
+          max_frame_bytes: 262144,
+      ]) {
+    throw new GradleException("production payload requires the exact 6.8.0.5 profile")
+  }
+  return profile
+}
+
+sourceSets {
+  payload {
+    java.setSrcDirs([productionSourceDirectory])
+  }
+  test {
+    java.exclude(
+        "**/AndroidCaptureSnapshotTest.java",
+        "**/AndroidSQLiteCaptureContractTest.java",
+        "**/AsyncDiagnosticSinkTest.java",
+        "**/DiagnosticConfigBehaviorTest.java",
+        "**/DiagnosticPayloadDexTest.java",
+        "**/DiagnosticRuntimeBehaviorTest.java",
+        "**/DiagnosticSamplerTest.java",
+        "**/EncodedDiagnosticFrameTest.java",
+        "**/OfflineCaptureStoreTest.java",
+        "**/DexDiagnosticPatchIntegrationTest.java")
+    compileClasspath += sourceSets.payload.output
+    runtimeClasspath += sourceSets.payload.output
+  }
+}
+
+tasks.register("verifyProductionPayloadSources") {
+  inputs.dir(productionSourceDirectory)
+  inputs.file(productionContractFile)
+  doLast {
+    requireProductionProfile()
+    def sources = fileTree(productionSourceDirectory) {
+      include("**/*.java")
+    }.files
+    def names = sources.collect { it.name } as Set
+    if (names != productionSourceNames) {
+      throw new GradleException(
+          "production payload source allowlist mismatch: " + names)
+    }
+    sources.each { source ->
+      def text = source.getText("UTF-8")
+      forbiddenProductionSourceTokens.each { token ->
+        if (text.contains(token)) {
+          throw new GradleException(
+              "forbidden production payload reference in ${source.name}: ${token}")
+        }
+      }
+    }
+  }
+}
+
+tasks.named("compilePayloadJava", JavaCompile) {
+  dependsOn("verifyProductionPayloadSources")
+  options.release = 8
+}
+
+tasks.register("productionPayloadJar", Jar) {
+  dependsOn("compilePayloadJava")
+  archiveFileName = "production-payload.jar"
+  destinationDirectory = productionPayloadDirectory
+  from(sourceSets.payload.output)
+}
+
+tasks.register("payloadDex", Exec) {
+  dependsOn("productionPayloadJar")
+  inputs.file(tasks.named("productionPayloadJar", Jar).flatMap { it.archiveFile })
+  outputs.file(productionPayloadDirectory.map { it.file("classes43.dex") })
+  doFirst {
+    def profile = requireProductionProfile()
+    def payload = profile.diagnostic_payload
+    def androidHome = System.getenv("ANDROID_HOME")
+    if (androidHome == null || androidHome.isBlank()) {
+      throw new GradleException("ANDROID_HOME is required for D8")
+    }
+    def executableName = System.getProperty("os.name")
+        .toLowerCase().contains("windows") ? "d8.bat" : "d8"
+    def d8 = file(
+        "${androidHome}/build-tools/${payload.build_tools_version}/${executableName}")
+    def androidJar = file(
+        "${androidHome}/platforms/android-${payload.android_platform_api}/android.jar")
+    if (!d8.isFile() || !androidJar.isFile()) {
+      throw new GradleException("configured Android D8/platform is unavailable")
+    }
+    delete(productionDexDirectory)
+    productionDexDirectory.get().asFile.mkdirs()
+    commandLine(
+        d8.absolutePath,
+        "--lib", androidJar.absolutePath,
+        "--min-api", payload.min_api.toString(),
+        "--output", productionDexDirectory.get().asFile.absolutePath,
+        tasks.named("productionPayloadJar", Jar).get()
+            .archiveFile.get().asFile.absolutePath)
+  }
+  doLast {
+    def classesDex = productionDexDirectory.get().file("classes.dex").asFile
+    if (!classesDex.isFile()) {
+      throw new GradleException("D8 did not produce classes.dex")
+    }
+    copy {
+      from(classesDex)
+      into(productionPayloadDirectory)
+      rename { "classes43.dex" }
+    }
+  }
+}
+
+tasks.register("productionPatch", JavaExec) {
+  dependsOn("test")
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = "ai.comma.naver.dexpatch.DexPatchMain"
+  doFirst {
+    def profile = requireProductionProfile()
+    def contract = readProductionContract()
+    def apk = providers.gradleProperty("apk").orNull
+    def output = providers.gradleProperty("output").orNull
+    def rawRules = providers.gradleProperty("productionRules").orNull
+    def rules = rawRules == null ? [] : rawRules.split(",", -1).toList()
+    if (apk == null || output == null || rules.size() != 6
+        || rules.any { it.isBlank() }) {
+      throw new GradleException(
+          "productionPatch requires -Papk, -Poutput, and exactly six production rules")
+    }
+    args = [
+        "patch", apk, output,
+        productionPayloadDirectory.get().file("classes43.dex").asFile.absolutePath,
+        contract.payload_dex_entry, contract.hook_class_descriptor,
+        *rules,
+    ]
+  }
+}
+
+tasks.register("verifyProductionArchive", JavaExec) {
+  dependsOn("classes")
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = "ai.comma.naver.dexpatch.DexPatchMain"
+  doFirst {
+    requireProductionProfile()
+    def apk = providers.gradleProperty("apk").orNull
+    def rawRules = providers.gradleProperty("productionRules").orNull
+    def rules = rawRules == null ? [] : rawRules.split(",", -1).toList()
+    if (apk == null || rules.size() != 6 || rules.any { it.isBlank() }
+        || rules.toSet().size() != 6) {
+      throw new GradleException(
+          "verifyProductionArchive requires -Papk and exactly six unique production rules")
+    }
+    args = ["verify-production", apk, "classes43.dex", *rules]
+  }
+}
+
+tasks.named("test") {
+  dependsOn("compilePayloadJava", "payloadDex")
+  systemProperty(
+      "naver.production.payloadDex",
+      productionPayloadDirectory.get().file("classes43.dex").asFile.absolutePath)
+}

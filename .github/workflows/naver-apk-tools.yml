@@ -1,0 +1,60 @@
+name: Naver APK source tests
+on:
+  push:
+    branches: ['codex/naver-*']
+    paths: ['tools/naver_map_patch/**', '.github/workflows/naver-apk-tools.yml']
+  pull_request:
+    branches: ['codex/naver-support-20260924']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: naver-apk-tools-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host-toolkit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with: {lfs: false, persist-credentials: false}
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: actions/setup-java@v5
+        with: {distribution: temurin, java-version: '21'}
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: python -m pip install pytest==9.0.2
+      - name: Synthetic APK packaging and privacy tests only
+        run: python -m pytest -c /dev/null --rootdir=. --confcutdir=tools/naver_map_patch/tests -q tools/naver_map_patch/tests
+  payload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arguments: ['-PpayloadMode=diagnostic', '-PpayloadMode=diagnostic -PfieldAcceptance=true', '-PpayloadMode=production']
+    steps:
+      - uses: actions/checkout@v7
+        with: {lfs: false, persist-credentials: false}
+      - uses: actions/setup-java@v5
+        with: {distribution: temurin, java-version: '21'}
+      - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
+        with: {gradle-version: '9.0.0'}
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Java payload and synthetic DEX contracts
+        run: gradle -p tools/naver_map_patch/dexpatch clean test --no-daemon --dependency-verification=strict ${{ matrix.arguments }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: synthetic-junit-${{ strategy.job-index }}
+          path: tools/naver_map_patch/dexpatch/build/test-results/test/*.xml
+          retention-days: 7
+          if-no-files-found: warn

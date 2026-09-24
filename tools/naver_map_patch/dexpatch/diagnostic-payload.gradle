@@ -1,0 +1,490 @@
+import groovy.json.JsonSlurper
+
+def configuredDiagnosticProfile = providers.gradleProperty("profile").orNull
+def diagnosticProfileFile = configuredDiagnosticProfile == null
+    ? file("../profiles/6.8.0.5.json")
+    : (file(configuredDiagnosticProfile).isFile()
+        ? file(configuredDiagnosticProfile)
+        : new File(rootDir, "../../../" + configuredDiagnosticProfile))
+def diagnosticGeneratedRoot = layout.buildDirectory.dir("generated/diagnosticConfig")
+def diagnosticTestGeneratedRoot = layout.buildDirectory.dir("generated/diagnosticTestContract")
+def diagnosticDexDirectory = layout.buildDirectory.dir("diagnosticDex")
+def diagnosticPayloadDirectory = layout.buildDirectory.dir("payload")
+def fieldAcceptance = project.ext.fieldAcceptanceEnabled
+def fieldAcceptanceSourceDirectory = file("src/fieldAcceptance/java")
+def productionSourceDirectory = file("../payload/src/main/java")
+def fieldAcceptanceHookDescriptor =
+    "Lai/comma/naver/payload/FieldAcceptanceHooks;"
+def fieldAcceptanceBuildId = "naver-6.8.0.5-field-acceptance-v4"
+def diagnosticSourceNames = [
+    "AndroidApplicationFiles.java",
+    "AndroidCaptureSharing.java",
+    "AndroidProcess.java",
+    "AndroidSQLiteCaptureDatabase.java",
+    "AsyncDiagnosticSink.java",
+    "BoundedMappingDiagnostics.java",
+    "CaptureDatabase.java",
+    "CaptureRetentionPolicy.java",
+    "DiagnosticCounters.java",
+    "DiagnosticFrameSink.java",
+    "DiagnosticHooks.java",
+    "DiagnosticRuntime.java",
+    "DiagnosticSampler.java",
+    "EncodedDiagnosticFrame.java",
+    "FrameBatchConsumer.java",
+    "HookRuntime.java",
+    "NavigationTransport.java",
+    "NetworkFrameConsumer.java",
+    "OfflineCaptureStore.java",
+    "PersistentNavigationTransport.java",
+] as Set
+def fieldAcceptanceSourceNames = [
+    "FieldAcceptanceDiagnosticSampler.java",
+    "FieldAcceptanceHooks.java",
+] as Set
+def productionFamilySourceNames = [
+    "Naver6805ObjectMapper.java",
+    "NaverNavigationAggregator.java",
+    "NaverNavigationEnvelope.java",
+    "NaverNavigationSender.java",
+    "NaverNavigationState.java",
+    "ProductionHooks.java",
+    "ProductionRuntime.java",
+] as Set
+def forbiddenDiagnosticSourceTokens = [
+    "NavigationSimulation",
+    "DirectNavigationTransport",
+    "CanonicalNavigationFrame",
+    "ProductionNavigationSender",
+    "ProductionRuntime",
+]
+
+def readFullDiagnosticProfile = {
+  return new JsonSlurper().parse(diagnosticProfileFile)
+}
+def readDiagnosticProfile = {
+  def profile = readFullDiagnosticProfile()
+  if (profile.diagnostic_payload == null) {
+    throw new GradleException("profile has no diagnostic_payload")
+  }
+  return profile.diagnostic_payload
+}
+def selectedHookDescriptor = { fullProfile ->
+  return fieldAcceptance
+      ? fieldAcceptanceHookDescriptor
+      : fullProfile.diagnostic_payload.hook_class_descriptor
+}
+def encodeDiagnosticPatchRules = { fullProfile ->
+  def payload = fullProfile.diagnostic_payload
+  def anchors = fullProfile.anchors
+  if (!(anchors instanceof List) || anchors.size() != 7
+      || anchors.any { anchor -> !(anchor instanceof Map) || anchor.diagnostic_hook == null
+          || !(anchor.instruction_window instanceof List) }) {
+    throw new GradleException("diagnostic profile must define exactly seven hook anchors")
+  }
+  def encoder = java.util.Base64.getUrlEncoder().withoutPadding()
+  def encode = { anchor ->
+    def hook = anchor.diagnostic_hook
+    def fields = [anchor.name, anchor.dex_entry, anchor.class_descriptor, anchor.method_descriptor,
+        anchor.instruction_window.size().toString(), *anchor.instruction_window,
+        selectedHookDescriptor(fullProfile), hook.method_descriptor, hook.placement.kind,
+        hook.placement.index.toString(), hook.argument.kind, hook.argument.index.toString()]
+    encoder.encodeToString(fields.join(Character.toString(0x1f)).getBytes("UTF-8"))
+  }
+  return anchors.collect(encode)
+}
+def encodeInfrastructurePatchRule = { fullProfile ->
+  def sharing = fullProfile.diagnostic_payload.capture_sharing
+  def anchor = sharing.infrastructure_anchor
+  def hook = anchor.diagnostic_hook
+  def fields = [anchor.name, anchor.dex_entry, anchor.class_descriptor, anchor.method_descriptor,
+      anchor.instruction_window.size().toString(), *anchor.instruction_window,
+      selectedHookDescriptor(fullProfile), hook.method_descriptor,
+      hook.placement.kind, hook.placement.index.toString(), hook.argument.kind,
+      hook.argument.index.toString()]
+  return java.util.Base64.getUrlEncoder().withoutPadding()
+      .encodeToString(fields.join(Character.toString(0x1f)).getBytes("UTF-8"))
+}
+
+def requireDiagnosticMode = {
+  def mode = providers.gradleProperty("payloadMode").orElse("diagnostic").get()
+  if (mode != "diagnostic") {
+    throw new GradleException(
+        "diagnostic payload tasks require -PpayloadMode=diagnostic")
+  }
+}
+
+sourceSets {
+  payload {
+    if (fieldAcceptance) {
+      java.srcDirs(
+          "src/payload/java", fieldAcceptanceSourceDirectory, productionSourceDirectory)
+      java.exclude(
+          "**/DiagnosticHooks.java",
+          "**/DiagnosticSampler.java",
+          "**/ProductionHooks.java")
+    } else {
+      java.srcDir("src/payload/java")
+    }
+    java.srcDir(diagnosticGeneratedRoot)
+  }
+  test {
+    java.srcDir(diagnosticTestGeneratedRoot)
+    if (fieldAcceptance) {
+      java.exclude(
+          "**/DiagnosticConfigBehaviorTest.java",
+          "**/DiagnosticPayloadDexTest.java",
+          "**/DexDiagnosticPatchIntegrationTest.java",
+          "**/ProductionHooksTest.java",
+          "**/ProductionPayloadCompositionTest.java")
+    } else {
+      java.exclude(
+          "**/FieldAcceptance*.java",
+          "**/Naver6805ObjectMapperTest.java",
+          "**/NaverNavigationAggregatorTest.java",
+          "**/NaverNavigationEnvelopeTest.java",
+          "**/NaverNavigationSenderTest.java",
+          "**/BumpWireFixture.java",
+          "**/ProductionHooksTest.java",
+          "**/ProductionPayloadCompositionTest.java")
+    }
+    compileClasspath += sourceSets.payload.output
+    runtimeClasspath += sourceSets.payload.output
+  }
+}
+
+tasks.register("verifyDiagnosticPayloadSources") {
+  inputs.dir("src/payload/java")
+  if (fieldAcceptance) {
+    inputs.dir(fieldAcceptanceSourceDirectory)
+    inputs.dir(productionSourceDirectory)
+  }
+  doLast {
+    requireDiagnosticMode()
+    def diagnosticSources = fileTree("src/payload/java") {
+      include("**/*.java")
+    }.files
+    def diagnosticNames = diagnosticSources.collect { it.name } as Set
+    if (diagnosticNames != diagnosticSourceNames) {
+      throw new GradleException(
+          "diagnostic payload source allowlist mismatch: " + diagnosticNames)
+    }
+    diagnosticSources.each { source ->
+      def text = source.getText("UTF-8")
+      forbiddenDiagnosticSourceTokens.each { token ->
+        if (text.contains(token)) {
+          throw new GradleException(
+              "forbidden diagnostic payload reference in ${source.name}: ${token}")
+        }
+      }
+    }
+    if (fieldAcceptance) {
+      def fieldNames = fileTree(fieldAcceptanceSourceDirectory) {
+        include("**/*.java")
+      }.files.collect { it.name } as Set
+      def productionNames = fileTree(productionSourceDirectory) {
+        include("**/*.java")
+      }.files.collect { it.name } as Set
+      if (fieldNames != fieldAcceptanceSourceNames) {
+        throw new GradleException(
+            "field acceptance source allowlist mismatch: " + fieldNames)
+      }
+      if (productionNames != productionFamilySourceNames) {
+        throw new GradleException(
+            "field production family source allowlist mismatch: " + productionNames)
+      }
+    }
+  }
+}
+
+tasks.register("generateDiagnosticConfig") {
+  inputs.file(diagnosticProfileFile)
+  inputs.property("fieldAcceptance", fieldAcceptance)
+  outputs.dirs(diagnosticGeneratedRoot, diagnosticTestGeneratedRoot)
+  doLast {
+    requireDiagnosticMode()
+    def payload = readDiagnosticProfile()
+    def fullProfile = readFullDiagnosticProfile()
+    def anchors = fullProfile.anchors
+    def offlineCapture = payload.offline_capture
+    def captureSharing = payload.capture_sharing
+    def expectedOfflineCapture = [
+        batch_size: 32,
+        channel_quotas: [
+            lane: 1536,
+            route: 256,
+            safety: 6144,
+            status: 256,
+            tbt_current: 1536,
+            tbt_next: 1536,
+        ],
+        database_name: "capture-v3.sqlite3",
+        database_recovery_name: "capture-v3-recovery.sqlite3",
+        directory_name: "naver-diagnostic",
+        flush_interval_ms: 250,
+        journal_size_limit_bytes: 4194304,
+        local_queue_capacity: 256,
+        max_database_bytes: 67108864,
+        network_queue_capacity: 64,
+        payload_build_id: "naver-6.8.0.5-diagnostic-offline-v3",
+        pinned_per_channel: 64,
+        retry_initial_ms: 1000,
+        retry_max_ms: 30000,
+        schema_version: 1,
+        wal_autocheckpoint_pages: 256,
+    ]
+    def expectedCaptureSharing = [
+        authority: "com.nhn.android.nmap.fileprovider",
+        external_files_root_path: "NaverNavi",
+        export_database_name: "capture-v3-export.sqlite3",
+        file_provider_root_name: "navi_trace",
+        grantee_package: "com.android.shell",
+        quiesce_timeout_ms: 5000,
+        infrastructure_anchor: [
+            name: "capture_export_quiesce",
+            dex_entry: "classes.dex",
+            class_descriptor: "Landroidx/core/content/FileProvider;",
+            method_descriptor:
+                "openFile(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;",
+            instruction_window: [
+                "invoke-virtual Landroidx/core/content/FileProvider;->f()Landroidx/core/content/FileProvider\$PathStrategy;",
+                "move-result-object",
+                "invoke-interface Landroidx/core/content/FileProvider\$PathStrategy;->b(Landroid/net/Uri;)Ljava/io/File;",
+            ],
+            expected_count: 1,
+            diagnostic_hook: [
+                argument: [index: 0, kind: "parameter"],
+                method_descriptor: "beforeCaptureRead(Ljava/lang/Object;)V",
+                placement: [index: 0, kind: "method_entry"],
+            ],
+        ],
+    ]
+    if (payload.main_process != "com.nhn.android.nmap"
+        || payload.min_api != 26
+        || payload.android_platform_api != 36
+        || payload.receiver_host != "127.0.0.1"
+        || payload.receiver_port != 7712
+        || payload.socket_timeout_ms != 100
+        || payload.queue_capacity != 16
+        || payload.max_accessors != 16
+        || payload.max_collection_items != 4
+        || payload.max_sample_chars != 160
+        || offlineCapture != expectedOfflineCapture
+        || captureSharing != expectedCaptureSharing
+        || !(payload.accessor_allowlists instanceof Map)
+        || (payload.accessor_allowlists.keySet() as Set) != (["status", "tbt_current", "tbt_next", "safety", "route", "lane"] as Set)
+        || payload.accessor_allowlists.any { channel, values ->
+          !(values instanceof List) || (channel != "status" && values.isEmpty())
+              || values.any { !(it instanceof String) || it.isBlank() }
+        }
+        || payload.payload_dex_entry != "classes43.dex") {
+      throw new GradleException("diagnostic payload profile is outside fixed bounds")
+    }
+    def packageDirectory = diagnosticGeneratedRoot.get()
+        .dir("ai/comma/naver/payload").asFile
+    packageDirectory.mkdirs()
+    def accessorArray = { values -> values.collect { value ->
+      '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    }.join(", ") }
+    def allowlistConstants = payload.accessor_allowlists.collect { channel, values ->
+      "  static final String[] ${channel.toUpperCase()}_ACCESSOR_ALLOWLIST = new String[] {${accessorArray(values)}};"
+    }.join("\n")
+    def allowlistSelection = payload.accessor_allowlists.keySet().collect { channel ->
+      "    if (\"${channel}\".equals(channel)) return ${channel.toUpperCase()}_ACCESSOR_ALLOWLIST;"
+    }.join("\n")
+    def channelQuotaConstants = offlineCapture.channel_quotas.collect { channel, quota ->
+      "  static final int ${channel.toUpperCase()}_ROW_QUOTA = ${quota};"
+    }.join("\n")
+    def generatedBuildId = fieldAcceptance
+        ? fieldAcceptanceBuildId
+        : offlineCapture.payload_build_id
+    new File(packageDirectory, "DiagnosticConfig.java").setText(
+        """package ai.comma.naver.payload;
+
+final class DiagnosticConfig {
+${allowlistConstants}
+  static final String MAIN_PROCESS = "com.nhn.android.nmap";
+  static final int MIN_API = 26;
+  static final int PLATFORM_API = 36;
+  static final String RECEIVER_HOST = "127.0.0.1";
+  static final int RECEIVER_PORT = 7712;
+  static final int SOCKET_TIMEOUT_MS = 100;
+  static final int QUEUE_CAPACITY = 16;
+  static final int MAX_DEPTH = 4;
+  static final int MAX_ACCESSORS = 16;
+  static final int MAX_COLLECTION_ITEMS = 4;
+  static final int MAX_SAMPLE_CHARS = 160;
+  static final int MAX_CHANNEL_CHARS = 4096;
+  static final String NETWORK_THREAD_NAME = "${payload.network_thread_name}";
+  static final String PAYLOAD_DEX_ENTRY = "classes43.dex";
+  static final String CAPTURE_AUTHORITY = "${captureSharing.authority}";
+  static final String CAPTURE_EXTERNAL_FILES_ROOT_PATH = "${captureSharing.external_files_root_path}";
+  static final String CAPTURE_FILE_PROVIDER_ROOT_NAME = "${captureSharing.file_provider_root_name}";
+  static final String CAPTURE_GRANTEE_PACKAGE = "${captureSharing.grantee_package}";
+  static final int CAPTURE_QUIESCE_TIMEOUT_MS = ${captureSharing.quiesce_timeout_ms};
+  static final String OFFLINE_CAPTURE_EXPORT_DATABASE_NAME = "${captureSharing.export_database_name}";
+  static final int OFFLINE_CAPTURE_BATCH_SIZE = ${offlineCapture.batch_size};
+  static final String OFFLINE_CAPTURE_DATABASE_NAME = "${offlineCapture.database_name}";
+  static final String OFFLINE_CAPTURE_DATABASE_RECOVERY_NAME = "${offlineCapture.database_recovery_name}";
+  static final String OFFLINE_CAPTURE_DIRECTORY_NAME = "${offlineCapture.directory_name}";
+  static final int OFFLINE_CAPTURE_FLUSH_INTERVAL_MS = ${offlineCapture.flush_interval_ms};
+  static final long OFFLINE_CAPTURE_JOURNAL_SIZE_LIMIT_BYTES = ${offlineCapture.journal_size_limit_bytes}L;
+  static final int OFFLINE_CAPTURE_LOCAL_QUEUE_CAPACITY = ${offlineCapture.local_queue_capacity};
+  static final long OFFLINE_CAPTURE_MAX_DATABASE_BYTES = ${offlineCapture.max_database_bytes}L;
+  static final int OFFLINE_CAPTURE_NETWORK_QUEUE_CAPACITY = ${offlineCapture.network_queue_capacity};
+  static final String OFFLINE_CAPTURE_PAYLOAD_BUILD_ID = "${generatedBuildId}";
+  static final int OFFLINE_CAPTURE_PINNED_PER_CHANNEL = ${offlineCapture.pinned_per_channel};
+  static final int OFFLINE_CAPTURE_RETRY_INITIAL_MS = ${offlineCapture.retry_initial_ms};
+  static final int OFFLINE_CAPTURE_RETRY_MAX_MS = ${offlineCapture.retry_max_ms};
+  static final int OFFLINE_CAPTURE_SCHEMA_VERSION = ${offlineCapture.schema_version};
+  static final int OFFLINE_CAPTURE_WAL_AUTOCHECKPOINT_PAGES = ${offlineCapture.wal_autocheckpoint_pages};
+${channelQuotaConstants}
+
+  static String[] accessorAllowlist(String channel) {
+${allowlistSelection}
+    return new String[0];
+  }
+
+  private DiagnosticConfig() {
+  }
+}
+""", "UTF-8")
+    def encodedNavigationRules = encodeDiagnosticPatchRules(fullProfile)
+    def encodedInfrastructureRule = encodeInfrastructurePatchRule(fullProfile)
+    def dexpatchDirectory = diagnosticTestGeneratedRoot.get()
+        .dir("ai/comma/naver/dexpatch").asFile
+    dexpatchDirectory.mkdirs()
+    def encodedNavigationRuleLiterals =
+        encodedNavigationRules.collect { '    "' + it + '"' }.join(",\n")
+    new File(dexpatchDirectory, "DiagnosticProfileContract.java").setText(
+        """package ai.comma.naver.dexpatch;
+
+/** Generated only from the selected diagnostic profile; used by integration tests. */
+public final class DiagnosticProfileContract {
+  public static final String PROFILE_ID = "${fullProfile.profile_id}";
+  public static final String HOOK_CLASS_DESCRIPTOR = "${selectedHookDescriptor(fullProfile)}";
+  public static final String PAYLOAD_BUILD_ID = "${generatedBuildId}";
+  private static final String[] ENCODED_NAVIGATION_PATCH_RULES = new String[] {
+${encodedNavigationRuleLiterals}
+  };
+  private static final String ENCODED_INFRASTRUCTURE_PATCH_RULE =
+      "${encodedInfrastructureRule}";
+
+  public static String[] encodedNavigationPatchRules() {
+    return ENCODED_NAVIGATION_PATCH_RULES.clone();
+  }
+
+  public static String encodedInfrastructurePatchRule() {
+    return ENCODED_INFRASTRUCTURE_PATCH_RULE;
+  }
+
+  private DiagnosticProfileContract() {
+  }
+}
+""", "UTF-8")
+  }
+}
+
+tasks.named("compilePayloadJava", JavaCompile) {
+  dependsOn("verifyDiagnosticPayloadSources", "generateDiagnosticConfig")
+  options.release = 8
+  doFirst {
+    def payload = readDiagnosticProfile()
+    def androidHome = System.getenv("ANDROID_HOME")
+    if (androidHome == null || androidHome.isBlank()) {
+      throw new GradleException("ANDROID_HOME is required for diagnostic payload")
+    }
+    def androidJar = file(
+        "${androidHome}/platforms/android-${payload.android_platform_api}/android.jar")
+    if (!androidJar.isFile()) {
+      throw new GradleException("Android platform API 36 is unavailable")
+    }
+    classpath = files(androidJar)
+  }
+}
+
+tasks.register("diagnosticPayloadJar", Jar) {
+  dependsOn("compilePayloadJava")
+  archiveFileName = "diagnostic-payload.jar"
+  destinationDirectory = diagnosticPayloadDirectory
+  from(sourceSets.payload.output)
+}
+
+tasks.register("payloadDex", Exec) {
+  dependsOn("diagnosticPayloadJar")
+  inputs.file(tasks.named("diagnosticPayloadJar", Jar).flatMap { it.archiveFile })
+  outputs.file(diagnosticPayloadDirectory.map { it.file("classes43.dex") })
+  doFirst {
+    requireDiagnosticMode()
+    def payload = readDiagnosticProfile()
+    def androidHome = System.getenv("ANDROID_HOME")
+    if (androidHome == null || androidHome.isBlank()) {
+      throw new GradleException("ANDROID_HOME is required for D8")
+    }
+    def executableName = System.getProperty("os.name")
+        .toLowerCase().contains("windows") ? "d8.bat" : "d8"
+    def d8 = file(
+        "${androidHome}/build-tools/${payload.build_tools_version}/${executableName}")
+    if (!d8.isFile()) {
+      throw new GradleException("configured Android D8 is unavailable")
+    }
+    delete(diagnosticDexDirectory)
+    diagnosticDexDirectory.get().asFile.mkdirs()
+    commandLine(
+        d8.absolutePath,
+        "--min-api", "26",
+        "--output", diagnosticDexDirectory.get().asFile.absolutePath,
+        tasks.named("diagnosticPayloadJar", Jar).get()
+            .archiveFile.get().asFile.absolutePath)
+  }
+  doLast {
+    def classesDex = diagnosticDexDirectory.get().file("classes.dex").asFile
+    if (!classesDex.isFile()) {
+      throw new GradleException("D8 did not produce classes.dex")
+    }
+    copy {
+      from(classesDex)
+      into(diagnosticPayloadDirectory)
+      rename { "classes43.dex" }
+    }
+  }
+}
+
+tasks.register("diagnosticPatch", JavaExec) {
+  dependsOn("payloadDex")
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = "ai.comma.naver.dexpatch.DexPatchMain"
+  doFirst {
+    requireDiagnosticMode()
+    def apk = providers.gradleProperty("apk").orNull
+    def output = providers.gradleProperty("output").orNull
+    if (apk == null || output == null) {
+      throw new GradleException("diagnosticPatch requires -Papk and -Poutput")
+    }
+    def profile = readFullDiagnosticProfile()
+    def payload = profile.diagnostic_payload
+    def encodedRules = [
+        *encodeDiagnosticPatchRules(profile),
+        encodeInfrastructurePatchRule(profile),
+    ]
+    args = [
+        "patch", apk, output,
+        diagnosticPayloadDirectory.get().file("classes43.dex").asFile.absolutePath,
+        payload.payload_dex_entry, selectedHookDescriptor(profile),
+        *encodedRules,
+    ]
+  }
+}
+
+tasks.named("test") {
+  dependsOn("compilePayloadJava", "payloadDex")
+  systemProperty(
+      "naver.diagnostic.payloadDex",
+      diagnosticPayloadDirectory.get().file("classes43.dex").asFile.absolutePath)
+  systemProperty("naver.fieldAcceptance", fieldAcceptance.toString())
+  if (fieldAcceptance) {
+    systemProperty(
+        "naver.fieldAcceptance.payloadDex",
+        diagnosticPayloadDirectory.get().file("classes43.dex").asFile.absolutePath)
+  }
+}
