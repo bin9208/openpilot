@@ -127,3 +127,21 @@ def test_v2_unchanged_item_does_not_gain_freshness_from_service_heartbeat(runtim
   runtime.accept_v2(payload, 20.1)
   assert runtime.select(20.1)[0].snapshot is not None
   assert not runtime.select(20.1)[1].speed.sdi_present
+
+
+def test_legacy_http_identity_can_return_after_another_legacy_transport(runtime):
+  for index in range(8):
+    assert runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'http', 10. + index / 10)
+  assert runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'tcp', 11.)
+  assert runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'http', 11.1)
+  assert runtime.select(11.1)[0].snapshot.session_id == 'http'
+
+
+def test_legacy_route_aux_is_session_bound_and_does_not_renew_owner_lease(runtime):
+  assert hasattr(runtime, 'accept_legacy_aux'), 'Legacy route is not session-bound'
+  runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'tmap', 10.)
+  assert runtime.accept_legacy_aux('tmap', 11., route_points=((37., 127.), (37.1, 127.1)))
+  assert runtime.select(11.)[1].route.polyline == ((37., 127.), (37.1, 127.1))
+  assert not runtime.accept_legacy_aux('old-session', 11.1, route_points=((38., 128.),))
+  assert runtime.select(11.1)[1].route.polyline == ((37., 127.), (37.1, 127.1))
+  assert runtime.select(14.)[1] is None
