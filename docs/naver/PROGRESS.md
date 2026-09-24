@@ -4,6 +4,11 @@ Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
 - #1 and #15 complete; exact Actions evidence is in EVIDENCE.md.
+- #2 complete: PR #16 merged as 156ffd94; 389 input tests passed in run
+  36002977499, plus PR checks 36003032281 and 36003032364. Runtime binding
+  remains #4 and actual APN incident confirmation remains #14.
+- #3 started: real Capnp roundtrip and compiled native/Python/browser comparison
+  must fail before adding diagnostic fields. Preserve upstream ordinals 29-32.
 - #2 started from ff9a26a3. RED: route-revision input smoke test on fresh upstream.
 - RED: https://github.com/bin9208/openpilot/actions/runs/36002651544 (912f4ec5), one expected failure.
 - GREEN candidate: preserved parser, ingress and immutable store ported without
