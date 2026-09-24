@@ -145,3 +145,11 @@ def test_legacy_route_aux_is_session_bound_and_does_not_renew_owner_lease(runtim
   assert not runtime.accept_legacy_aux('old-session', 11.1, route_points=((38., 128.),))
   assert runtime.select(11.1)[1].route.polyline == ((37., 127.), (37.1, 127.1))
   assert runtime.select(14.)[1] is None
+
+
+def test_legacy_route_before_first_guidance_is_deferred_without_activating_owner(runtime):
+  points = ((37., 127.), (37.1, 127.1))
+  runtime.accept_legacy_aux('tmap', 9.9, route_points=points)
+  assert runtime.select(9.9)[1] is None
+  runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'tmap', 10.)
+  assert runtime.select(10.)[1].route.polyline == points

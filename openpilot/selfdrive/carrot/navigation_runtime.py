@@ -21,7 +21,8 @@ class NavigationRuntime:
   def __init__(self):
     self.lock = threading.RLock()
     self.store = NavigationSourceStore()
-    self._legacy_navigation_sequences = {}
+    self._legacy_sequence = 0
+    self._legacy_snapshot = None
     self._legacy_road_limit_state = {}
     self._legacy_navigation_controls = {}
     self._legacy_navigation_pending = {}
@@ -50,9 +51,37 @@ class NavigationRuntime:
         # Only the most recent legacy session can be a candidate.
         self._legacy_navigation_controls = {session_id: snapshot.control}
         self._legacy_road_limit_state = {session_id: self._legacy_road_limit_state[session_id]}
-        self._legacy_navigation_sequences = {session_id: snapshot.sequence}
+        self._legacy_snapshot = snapshot
         self._legacy_navigation_pending.clear()
       return accepted
+
+  def accept_legacy_aux(self, session_id, now_s, *, route_points=None, traffic=None):
+    with self.lock:
+      previous = self._legacy_snapshot
+      if previous is None or previous.session_id != session_id or now_s < previous.received_mono_s:
+        return False
+      updates = {}
+      if route_points is not None:
+        points = tuple(route_points)
+        if len(points) > 256 or any(len(p) != 2 or not all(math.isfinite(v) for v in p)
+          or not (-90 <= p[0] <= 90 and -180 <= p[1] <= 180) for p in points):
+          return False
+        updates.update(route_present=bool(points), route_points=points,
+                       route_received_mono_s=now_s if points else None)
+      if traffic is not None:
+        updates.update(traffic)
+        updates['traffic_received_mono_s'] = now_s if traffic.get('traffic_present') else None
+      if not updates:
+        return False
+      self._legacy_sequence += 1
+      snapshot = replace(previous, sequence=self._legacy_sequence, received_mono_s=now_s,
+        owner_received_mono_s=previous.received_mono_s if previous.owner_received_mono_s is None else previous.owner_received_mono_s,
+        control=replace(previous.control, **updates))
+      if not self.accept_snapshot(snapshot):
+        return False
+      self._legacy_snapshot = snapshot
+      self._legacy_navigation_controls = {session_id: snapshot.control}
+      return True
 
   def _v2_receipt(self, payload, name, now_s):
     meta = _value(_value(payload, name), 'meta')
@@ -219,8 +248,8 @@ class NavigationRuntime:
   def _legacy_navigation_snapshot(self, data, source, session_id, received_mono_s):
     if source is not NavigationSource.TMAP_LEGACY:
       return None
-    sequence = self._legacy_navigation_sequences.get(session_id, 0) + 1
-    self._legacy_navigation_sequences[session_id] = sequence
+    self._legacy_sequence += 1
+    sequence = self._legacy_sequence
     road_limit = self._legacy_road_limit(data, session_id)
 
     primary_type = self._legacy_integer(data, "nSdiType", -1)

@@ -34,7 +34,7 @@ from openpilot.common.constants import CV
 
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
 from openpilot.selfdrive.carrot.curve_speed import VisionCurveSpeed, curve_speed
-from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl, parse_carrot_navi_control
+from openpilot.selfdrive.carrot.carrot_navi_control import CarrotNaviControl
 from openpilot.selfdrive.carrot.navigation_ingress import (
   NavigationIngress, NavigationPeerState, bind_tmap_legacy_frame,
   build_legacy_http_session_id, handle_navigation_udp_datagram, serve_navigation_tcp,
@@ -434,7 +434,6 @@ class CarrotMan:
               raise OSError(errno.ENETUNREACH, "Network is unreachable")
             if ip_address != self.ip_address:
               self.ip_address = ip_address
-              self.remote_addr = None
             self.params_memory.put_nonblocking("NetworkAddress", self.ip_address)
 
             msg = self.make_send_message()
@@ -459,7 +458,7 @@ class CarrotMan:
               if self.connection:
                 self.connection.close()
               self.connection = None
-              self.remote_addr = None
+              self._clear_navigation_peer('udp')
               self.ip_address = "0.0.0.0"
               self.params_memory.put_nonblocking("NetworkAddress", self.ip_address)
               next_broadcast_time = now + BROADCAST_NETWORK_ERROR_RETRY_INTERVAL
@@ -2122,6 +2121,12 @@ class CarrotMan:
         self._safe_dispatch_handler("rgdata", self.handle_carrot_state, self._normalize_rgdata(obj["rgdata"]))
       handled = True
 
+    if obj.get('_navigation_session_id'):
+      handled = self._store_legacy_aux(obj) or handled
+      if handled:
+        self._write_navi_debug_param(obj, event_type, event_time_ms)
+      return
+
     # Auxiliary Tmap content must not overwrite another app's selected route/UI.
     with self.carrot_serv.navigation_runtime.lock:
       selected = self.carrot_serv.navigation_sources.select(time.monotonic()).snapshot
@@ -2209,8 +2214,88 @@ class CarrotMan:
       return False
     bound = bind_tmap_legacy_frame(obj, session_id, received_mono_s)
     bound['_navigation_session_id'] = session_id
+    bound['_navigation_received_mono_s'] = received_mono_s
     self._dispatch_obj(bound)
     return True
+
+  def _store_legacy_aux(self, obj):
+    runtime = self.carrot_serv.navigation_runtime
+    session = obj['_navigation_session_id']
+    now_s = obj['_navigation_received_mono_s']
+    handled = False
+    for key in ('vrtx', 'route'):
+      if key in obj:
+        points = self._extract_route_points(obj[key])
+        if points is not None:
+          runtime.accept_legacy_aux(session, now_s,
+            route_points=tuple((lat, lon) for lon, lat in self._limited_route_points(points)))
+        handled = True
+    for key in ('sinf', 'ssinf'):
+      if key in obj:
+        traffic = self._legacy_traffic_state(obj[key], detailed=key == 'ssinf')
+        runtime.accept_legacy_aux(session, now_s,
+          traffic=traffic if traffic is not None else {'traffic_present': False, 'traffic_visible': False})
+        handled = True
+    if 'complexCrossroad' in obj:
+      with runtime.lock:
+        selected = runtime.store.select(now_s).snapshot
+        if selected is not None and selected.source is NavigationSource.TMAP_LEGACY and selected.session_id == session:
+          self.handle_complex_crossroad(obj['complexCrossroad'])
+      handled = True
+    return handled
+
+  @staticmethod
+  def _legacy_traffic_state(payload, detailed=False):
+    if not isinstance(payload, dict):
+      return None
+    lamp = None
+    remain = 0
+    if detailed:
+      for field, candidate, remain_field in (
+        ("left", "left", "left_remain_time"),
+        ("straight", "green", "straight_remain_time"),
+        ("right", "right", "right_remain_time"),
+        ("uturn", "uturn", "uturn_remain_time"),
+      ):
+        if str(payload.get(field, "")).upper() == "GREEN_LIGHT_ON":
+          lamp, remain = candidate, payload.get(remain_field, 0)
+          break
+      if lamp is None:
+        red_values = []
+        for field in ("straight", "left", "right", "uturn"):
+          if str(payload.get(field, "")).upper() == "RED_LIGHT_ON":
+            try:
+              red_values.append(int(payload.get(f"{field}_remain_time", 0) or 0))
+            except (TypeError, ValueError, OverflowError):
+              pass
+        if red_values:
+          lamp, remain = "red", max(red_values)
+    else:
+      for on_field, candidate, remain_field in (
+        ("redLightOn", "red", "redLightRemainTime"),
+        ("leftLightOn", "left", "leftLightRemainTime"),
+        ("greenLightOn", "green", "greenLightRemainTime"),
+        ("rightLightOn", "right", "rightLightRemainTime"),
+        ("uturnLightOn", "uturn", "uturnLightRemainTime"),
+      ):
+        if payload.get(on_field):
+          lamp, remain = candidate, payload.get(remain_field, 0)
+          break
+    try:
+      remain_s = int(float(remain or 0))
+      distance_m = float(payload.get("distance", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+      return None
+    if lamp is None or remain_s <= 0 or not math.isfinite(distance_m):
+      return None
+    return {
+      "traffic_present": True,
+      "traffic_visible": True,
+      "traffic_distance_m": distance_m,
+      "traffic_source": "ssinf" if detailed else "sinf",
+      "traffic_lamp": lamp,
+      "traffic_remain_s": remain_s,
+    }
 
   def _serve_navi_client(self, conn, addr):
     token = object()
