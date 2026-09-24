@@ -64,7 +64,7 @@ def test_actual_capnp_roundtrip_and_all_display_encoders_agree(tmp_path):
   source.write_bytes(raw)
   native = subprocess.run([os.environ['NAVER_WIRE_PROBE'], str(source)],
                           capture_output=True, check=True).stdout
-  compact = encode_carrot_state_frame('carrotMan', EXPECTED, 7)
+  compact = encode_carrot_state_frame('carrotMan', message.carrotMan.as_reader(), 7)
   assert native == compact, 'Real C++ and Python compact encoders disagree'
   fixture = tmp_path / 'synthetic-wire.json'
   fixture.write_text(json.dumps({'expected': EXPECTED,

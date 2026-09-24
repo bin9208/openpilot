@@ -13,6 +13,9 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact
   fields are append-only after all existing upstream fields.
+- Wire test correction: the Python compact encoder consumes a Capnp reader,
+  not a dictionary. Use the same real message as C++ (run 36004009626 exposed
+  the fixture mismatch before reaching browser verification).
 - #2 started from ff9a26a3. RED: route-revision input smoke test on fresh upstream.
 - RED: https://github.com/bin9208/openpilot/actions/runs/36002651544 (912f4ec5), one expected failure.
 - GREEN candidate: preserved parser, ingress and immutable store ported without
