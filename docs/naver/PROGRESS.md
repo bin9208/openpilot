@@ -13,6 +13,38 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   36004519269/36004519276 passed: 4 real wire tests and 389 input tests.
 - Next task: #4 runtime provider binding. Current modules are not yet connected
   to CarrotMan/CarrotServ, so do not install this branch as a Naver driving fix.
+- #4 started from 4aa63bfe on codex/naver-issue-4-runtime. RED covers canonical
+  controller projection, sticky owner switching, guiding-only sessions, exact
+  lease expiry, terminal tombstones and item freshness independent of heartbeat.
+- Ruling: normalize inputs into existing CarrotNaviControl rather than copying
+  the old controller. Preserve upstream speed candidates and gas behavior;
+  safety policy refinements remain #5/#6 and route acceptance remains #7.
+- #4 RED: run 36006904050 at 0a13c6e6 confirms missing runtime adapter;
+  existing 389 tests pass. First adapter run 36007357358: 397 pass, two fixture
+  defects. Lease assertion must inspect one selection (the transition reason
+  is consumed); road-width fixture must contain a present turn instruction.
+  Revised-safety freshness fixture explicitly supplies its source revision.
+- #4 intermediate GREEN: run 36008397536 at 021a1c4e passed 399 input,
+  88 controller/upstream, 4 wire and 8 infrastructure tests. The real controller
+  harness uses real Capnp builders, not permissive message mocks.
+- #4 additional RED: run 36008563260 reproduced returning HTTP identity sequence
+  reset and missing source-bound auxiliary routing. Run 36009080011 passed
+  those cases and exposed only pre-guidance route buffering (401 input passed).
+  Fix: monotonic receiver legacy sequence, source/session-bound auxiliary data,
+  and at most four pending auxiliary sessions without extending owner leases.
+- Fresh read-only review found GPS re-stamping and the legacy 4096/256 route
+  capacity mismatch. Run 36009498704 reproduced both and the same-frame receipt
+  race. Run 36009767192 verified their fixes and reproduced stale traffic TS.
+- Ruling: treat the review's minor traffic TS finding as important because old
+  traffic must not appear freshly received. Gate GPS/traffic projection by item
+  receipt revision and publish the actual receiver receipt, not the 20 Hz tick.
+- Ruling: a V2 connection with neither items nor guiding status is idle, not an
+  owner. A guiding session with no items remains owner. Disconnect is transport
+  loss and expires after its 10-second lease. Update the existing V2 fixtures
+  to these approved owner semantics and include that suite in controller CI.
+- Review boundary retained: phone mapping/physical braking and #5-#8 acceptance
+  are not established here. Exact-head CI is checked by the executor, not inferred
+  from the review. The reviewer found no other concrete EOF/tombstone regression.
 - #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact

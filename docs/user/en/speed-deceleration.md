@@ -2,6 +2,14 @@
 
 [한국어](../ko/speed-deceleration.md)
 
+> **Experimental Naver branch in this fork:** Tmap and Naver feed the common
+> controller. A new guidance session can change the navigation owner. Transport
+> loss alone retains the last valid snapshot until its lease expires: 2 seconds
+> for Naver, 4 for legacy Tmap and 10 for Carrot Navi v2. Explicit Naver stop or
+> arrival ends the session immediately; the same session ID cannot reactivate.
+> The navigation owner and actual deceleration provider can differ. Bump, camera,
+> route and device validation remain in progress; this is not driving acceptance.
+
 > [!NOTE]
 > This is the canonical English user guide maintained with the `carrot-wip` code. When user-visible behavior changes, update this document together with the related code and tests.
 
