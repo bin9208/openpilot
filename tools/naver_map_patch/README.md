@@ -30,6 +30,13 @@ issue #27 and is distinct from public release #12. The public verifier rejects
 field/SQLite instrumentation by design. Do not bypass it to claim public release.
 Do not install implicitly; preserve user app data and capture history.
 
+After a verified field split build, run `python -m tools.naver_map_patch.field_test_release`
+with `--split-output`, `--base`, `--arm64` (original arm64 split), `--output`
+(fresh directory), `--apkeditor`, `--keystore`, and password environment-variable
+names. It keeps the field payload, compares every DEX against the verified base,
+checks original native libraries/manifest/SDK and signed standalone identity,
+and writes paired external TEST notes plus checksum/provenance. It never installs.
+
 ## Offline diagnostics
 
 The field hooks run the navigation sender and a separate bounded SQLite recorder

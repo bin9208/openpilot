@@ -3,6 +3,17 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #9 complete: PR #31 at 1d346a76; source tests 36023948126 / 36023956000
+  passed 456 host tests and all three Java/DEX compositions (JUnit artifacts).
+  Naver CI36023948058 / 36023956024 and docs36023955997 passed. Review found
+  no Important source/privacy blocker. Six historical local-only files excluded.
+- #27 focused local GREEN: field-only single-APK verifier 8 tests. It reuses
+  format/native/manifest guards, requires exact verified split DEX and signer,
+  and deliberately never invokes production/public acceptance. Full cloud gate pending.
+- #10 code evidence: separate local SQLite and network workers, bounded app-private
+  writer, no PC/ADB prerequisite. New-APK device offline proof remains OPEN;
+  no install was performed. D field payloadDex build succeeded on JBR21/Gradle9.
+
 - #28 RED36024087800 at 788a43a6: all four Naver/Tmap camera/bump live
   disable cases retained cached SDI (140 other controller tests passed).
   Invalidate disallowed SDI before selection without re-running raw distance.
