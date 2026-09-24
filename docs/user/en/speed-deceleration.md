@@ -372,6 +372,9 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 [Back to Understanding Settings](settings.md)
 # Naver test-branch camera lifetime
 
+Disabling a safety type takes effect on an already cached event immediately.
+Re-enabling waits for a fresh safety update; it does not restore old distance.
+
 The existing status area displays `NAVER` / `TMAP` for the guidance owner.
 Reduction labels identify the actual provider: `N bump`, `T route`, or
 `HDA cam`, for example. A brief TCP disconnection does not remove the owner

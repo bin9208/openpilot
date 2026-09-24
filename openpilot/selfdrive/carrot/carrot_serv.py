@@ -926,6 +926,7 @@ class CarrotServ:
 
   def _reset_carrot_navi_sequences(self, session_id):
     self.rear_camera_events = []
+    self.disabled_navigation_safety = None
     self.carrot_navi_session_id = session_id
     self.carrot_navi_speed_sequence = -1
     self.carrot_navi_current_sequence = -1
@@ -976,11 +977,21 @@ class CarrotServ:
     self.szPosRoadName = ""
     self._clear_carrot_navi_traffic()
 
+  def _navigation_safety_identity(self):
+    owner = self.navigation_selection.snapshot
+    return None if owner is None else (owner.source, owner.session_id, owner.control.safety, owner.control.secondary_safety)
+
   def _apply_carrot_navi_speed(self, navi: CarrotNaviControl):
     speed = navi.speed
     self.carrot_navi_road_limit_valid = speed.road_limit_kph is not None
     if speed.road_limit_kph is not None:
       self.nRoadLimitSpeed = speed.road_limit_kph
+
+    identity = self._navigation_safety_identity()
+    if identity is not None and identity == getattr(self, 'disabled_navigation_safety', None):
+      self.xSpdType = -1
+      self.xSpdLimit = self.xSpdDist = 0
+      return
 
     if speed.section_active:
       self.nSdiType = 4
@@ -1390,6 +1401,14 @@ class CarrotServ:
     self.bearing = self._update_gps(v_ego, sm, gps_service)
 
     self.xSpdDist = max(self.xSpdDist - delta_dist, -1000)
+    # Live disable must invalidate cached SDI without replaying its original
+    # distance. Re-enabling waits for a fresh safety update.
+    if (self.autoNaviSpeedCtrlMode <= 0 or
+        (self.xSpdType == 22 and self.autoNaviSpeedCtrlMode < 2) or
+        (self.xSpdType == 7 and self.autoNaviSpeedCtrlMode < 3)):
+      self.disabled_navigation_safety = self._navigation_safety_identity()
+      self.xSpdType = -1
+      self.xSpdLimit = self.xSpdDist = 0
     self.xDistToTurn = self.xDistToTurn - delta_dist
     self.xDistToTurnNext = self.xDistToTurnNext - delta_dist
     self.active_count = max(self.active_count - 1, 0)
