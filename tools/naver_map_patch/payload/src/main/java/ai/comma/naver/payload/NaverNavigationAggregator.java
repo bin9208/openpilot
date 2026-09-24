@@ -42,6 +42,8 @@ public final class NaverNavigationAggregator {
   private long safetyRevision;
   private Naver6805ObjectMapper.Route route = Naver6805ObjectMapper.Route.absent();
   private long routeRevision;
+  private Naver6805ObjectMapper.Route initialRoute;
+  private long initialRouteAt;
 
   public NaverNavigationAggregator() {
     this(new RandomSessionIds());
@@ -86,10 +88,16 @@ public final class NaverNavigationAggregator {
       return snapshotLocked(monotonicMs);
     }
     if ("status".equals(update.channel)) {
-      applyLifecycle(update.lifecycle);
+      applyLifecycle(update.lifecycle, monotonicMs);
       return snapshotLocked(monotonicMs);
     }
     if (!isAcceptingControl()) {
+      // Initial route calculation can precede the first Guiding callback.
+      // Never adopt late control from a terminal session into its successor.
+      if (!terminal && "idle".equals(lifecycle) && "route".equals(update.channel)) {
+        initialRoute = update.route;
+        initialRouteAt = monotonicMs;
+      }
       return snapshotLocked(monotonicMs);
     }
     if ("tbt_current".equals(update.channel)) {
@@ -147,7 +155,7 @@ public final class NaverNavigationAggregator {
     return "guiding".equals(lifecycle) && !terminal && sessionId != null;
   }
 
-  private void applyLifecycle(String mapped) {
+  private void applyLifecycle(String mapped, long monotonicMs) {
     if (!"guiding".equals(mapped) && !"stopped".equals(mapped) && !"arrived".equals(mapped)) {
       return;
     }
@@ -163,12 +171,19 @@ public final class NaverNavigationAggregator {
       }
       lifecycle = "guiding";
       terminal = false;
+      if (initialRoute != null && initialRoute.present
+          && monotonicMs >= initialRouteAt && monotonicMs - initialRouteAt < 5000L) {
+        route = initialRoute;
+        bumpRouteRevision();
+      }
+      initialRoute = null;
       bumpSequence();
       return;
     }
     ensureSession();
     lifecycle = mapped;
     terminal = true;
+    initialRoute = null;
     current = Naver6805ObjectMapper.Guidance.absent();
     next = Naver6805ObjectMapper.Guidance.absent();
     safety = Naver6805ObjectMapper.Safety.absent();

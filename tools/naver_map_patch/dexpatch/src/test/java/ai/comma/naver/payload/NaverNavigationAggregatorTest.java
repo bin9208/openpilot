@@ -14,6 +14,32 @@ import org.junit.jupiter.api.Test;
 
 final class NaverNavigationAggregatorTest {
   @Test
+  void initialRouteBeforeGuidingIsBoundedAndDoesNotActivateNavigation() {
+    NaverNavigationAggregator aggregator = new NaverNavigationAggregator();
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.route(
+        route(37.5, 127.1, 37.6, 127.2)), 100L);
+    assertFalse(aggregator.snapshot(101L).route.present);
+    assertEquals("idle", aggregator.snapshot(101L).lifecycle);
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.status("guiding"), 200L);
+    assertTrue(aggregator.snapshot(201L).route.present);
+    assertEquals(1L, aggregator.snapshot(201L).routeRevision);
+  }
+
+  @Test
+  void expiredOrTerminalPendingRoutesAreNeverReused() {
+    NaverNavigationAggregator aggregator = new NaverNavigationAggregator();
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.route(
+        route(37.5, 127.1, 37.6, 127.2)), 100L);
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.status("guiding"), 5100L);
+    assertFalse(aggregator.snapshot(5101L).route.present);
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.status("stopped"), 5200L);
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.route(
+        route(37.5, 127.1, 37.6, 127.2)), 5300L);
+    aggregator.apply(Naver6805ObjectMapper.MappedUpdate.status("guiding"), 5400L);
+    assertFalse(aggregator.snapshot(5401L).route.present);
+  }
+
+  @Test
   void routeRevisionChangesOnlyWhenPresenceOrPointContentChanges() {
     NaverNavigationAggregator aggregator = new NaverNavigationAggregator(
         new NaverNavigationAggregator.FixedSessionIds(

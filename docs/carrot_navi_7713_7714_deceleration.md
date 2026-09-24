@@ -675,6 +675,10 @@ km/h다.
 - Windows 환경에는 전체 openpilot Linux 의존성과 pytest가 없어 전체 test suite는 실행하지 못했다.
 # Naver integration branch override (#6)
 
+Route geometry revision is independent of remaining-distance/time updates.
+CarrotMan retains its progress cursor while CarrotServ updates trip counters.
+Naver uses the existing shared route speed candidate and gas-floor/reset logic.
+
 On this integration branch, connected guidance is not sufficient to suppress
 vehicle safety candidates. A usable external SDI or an unexpired rear-camera
 hold suppresses them; otherwise existing enabled HDA candidates are evaluated.

@@ -205,7 +205,7 @@ class NavigationRuntime:
       speed = NaviSpeedControl(c.speed_present, self._revision('speed',
         (primary, secondary, bump_category, c.off_route)),
         None if c.road_limit_kph is None else round(c.road_limit_kph), **fields)
-      route_key = (c.route_present, c.route_revision, c.route_points, c.remaining_distance_m, c.remaining_time_s)
+      route_key = (c.route_present, c.route_revision, c.route_points)
       return selection, CarrotNaviControl(
         session_id=f'{snapshot.source.value}:{snapshot.session_id}', speed=speed,
         current=guidance(c.current, 'current'), next=guidance(c.next, 'next'),

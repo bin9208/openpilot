@@ -372,6 +372,14 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 [Back to Understanding Settings](settings.md)
 # Naver test-branch camera lifetime
 
+Naver route coordinates feed the same curve-speed and accelerator override
+controller as Tmap. The current curve-control settings and brake/reset rules
+apply. Identical geometry does not restart route progress. A route received
+less than 5 seconds before the first guidance start may be adopted; a route
+received after a terminal session is not carried into a new session. If no
+fresh route arrives after restarting guidance, restart the map app and capture
+the next trip. This is test-branch behavior, not verified real-curve acceptance.
+
 Navigation ownership and the safety provider are separate. While Tmap or Naver
 guidance remains connected, a valid external camera/bump takes priority; when
 that safety item is absent, stale or passed, enabled vehicle/HDA candidates may
