@@ -3,6 +3,13 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #5 complete (code/synthetic scope): PR #25 merged as b2cf28bd. Exact tested
+  HEAD e8594c4d passed 36015111635 and PR CI 36015421201 / docs 36015421154:
+  403 input +121 controller +73 JVM +4 wire +8 infrastructure tests, plus
+  Java-produced envelope -> strict Python parser -> canonical bump integration.
+  Review findings on delayed/cross-session/overlapping finals are covered;
+  real hook ordering and driving acceptance remain mandatory in #9/#11.
+
 - #5 started from 3a35c615 on codex/naver-issue-5-bump. C3 RED run
   36012296572 at 9098d8e2 reproduced four absent-category bump failures;
   explicit highway, settings and invalid-distance cases remained blocked.
@@ -49,7 +56,7 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - #4 complete: PR #18 merged as 530e3dbf. Exact code HEAD eb18a4ba passed
   Actions 36010063200, PR Actions 36010312912 and docs 36010312913:
   403 input + 107 controller + 4 real wire + 8 infrastructure tests.
-- Next task: #5 bump mapping/common control. Runtime binding is connected, but
+- Next task: #6 camera lifetime and fallback. Runtime/bump code is connected, but
   bump/camera/route/UI and actual device acceptance remain open. Do not treat
   this milestone as a demonstrated fix for the historical driving incident.
 - #4 started from 4aa63bfe on codex/naver-issue-4-runtime. RED covers canonical

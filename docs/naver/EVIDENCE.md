@@ -1,5 +1,29 @@
 # Naver integration evidence
 
+## Bump mapping/common control: issue #5
+
+[PR #25](https://github.com/bin9208/openpilot/pull/25) merged as
+`b2cf28bd68c507f742eeb2fbb3c4c66390ea42d0`.
+Tested code HEAD: `e8594c4d5a034377d26f81aee7f7c3404dccfb5b`.
+
+- [Code CI: success](https://github.com/bin9208/openpilot/actions/runs/36015111635)
+- [PR CI: success](https://github.com/bin9208/openpilot/actions/runs/36015421201)
+- [Paired user docs: success](https://github.com/bin9208/openpilot/actions/runs/36015421154)
+- 609 tests: 403 input/session, 121 real controller, 73 JVM mapping/runtime,
+  4 native/Python/browser wire, 8 infrastructure. No skips in the JVM suite.
+- Actual Java-produced bump/terminal JSON also passed the strict Python parser
+  and canonical adapter. Exact-class inputs are synthetic, not live phone data.
+- Fresh read-only review exposed additional delayed-final overlap cases; these
+  were reproduced and fixed. Ambiguity now lasts through all outstanding finals.
+- Local syntax/diff and user-doc checker passed. A Windows JBR selector error
+  occurred during the temporary local fallback; unchanged sender tests passed
+  again in the final Linux CI. No Android APK was rebuilt or installed.
+
+Production safety mapping and driving acceptance are not asserted. Missing final
+callbacks can suppress later bumps until restart; actual 1:1 hook ordering is a
+required #9/#11 gate. Remaining Tmap mapping gaps are listed in MAPPING_PARITY.md
+and issues #19-#24; only the reviewed pure-JVM toolkit subset is public.
+
 ## Runtime binding: issue #4
 
 [PR #18](https://github.com/bin9208/openpilot/pull/18) merged as
