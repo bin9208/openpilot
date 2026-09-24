@@ -4,6 +4,15 @@ from types import SimpleNamespace
 
 from openpilot.common.constants import CV
 from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
+from openpilot.selfdrive.carrot import carrot_serv
+from openpilot.selfdrive.carrot.navigation_runtime import NavigationRuntime
+
+
+@pytest.fixture(autouse=True)
+def runtime_clock(monkeypatch):
+  now = [10.]
+  monkeypatch.setattr(carrot_serv.time, 'monotonic', lambda: now[0])
+  return now
 
 
 def _meta(sequence, present=True):
@@ -36,6 +45,9 @@ class _MemoryParams:
 
 def _serv():
   serv = CarrotServ.__new__(CarrotServ)
+  serv.navigation_runtime = NavigationRuntime()
+  serv.navigation_sources = serv.navigation_runtime.store
+  serv.navigation_selection = serv.navigation_sources.select(10.)
   serv.carrot_navi_session_id = ""
   serv.carrot_navi_speed_sequence = -1
   serv.carrot_navi_current_sequence = -1
@@ -136,16 +148,16 @@ def _message():
 
 
 @pytest.mark.parametrize("disconnect", ("connected", "alive", "valid"))
-def test_7714_connected_without_guidance_owns_navigation_until_disconnect(disconnect):
+def test_7714_connection_alone_without_items_or_guiding_is_not_navigation_owner(disconnect):
   serv = _serv()
   sm = _SubMaster({"schemaVersion": 1, "connected": True, "sessionId": "idle"})
   assert not serv._update_carrot_navi(sm)
-  assert serv._external_navigation_connected()
-  assert serv._update_navigation_source()
-  assert serv.external_navigation_active
+  assert not serv._external_navigation_connected()
+  assert not serv._update_navigation_source()
+  assert not serv.external_navigation_active
   sm.updated["carrotNavi"] = False
   assert not serv._update_carrot_navi(sm)
-  assert serv._external_navigation_connected()
+  assert not serv._external_navigation_connected()
 
   sm.updated["carrotNavi"] = True
   if disconnect == "connected":
@@ -153,7 +165,7 @@ def test_7714_connected_without_guidance_owns_navigation_until_disconnect(discon
   else:
     getattr(sm, disconnect)["carrotNavi"] = False
   assert not serv._update_carrot_navi(sm)
-  assert serv._update_navigation_source()
+  assert not serv._update_navigation_source()
   assert not serv.external_navigation_active
 
 
@@ -173,13 +185,15 @@ def test_applies_new_navi_control_without_resetting_distance_on_heartbeat():
   assert (serv.xSpdDist, serv.xDistToTurn, serv.xDistToTurnNext) == (400, 100, 3400)
 
 
-def test_disconnect_clears_7714_control_state():
+def test_disconnect_clears_7714_control_state_after_lease(runtime_clock):
   serv = _serv()
   data = _message()
   sm = _SubMaster(data)
   assert serv._update_carrot_navi(sm)
 
   data["connected"] = False
+  assert serv._update_carrot_navi(sm)
+  runtime_clock[0] = 20.
   assert not serv._update_carrot_navi(sm)
   assert not serv.carrot_navi_active
   assert serv.active_count == 0
@@ -206,7 +220,7 @@ def test_active_section_uses_existing_section_speed_control():
   assert serv.xSpdDist == 2346
 
 
-def test_applies_7714_vehicle_route_traffic_and_secondary_sdi():
+def test_applies_7714_vehicle_route_traffic_and_secondary_sdi(runtime_clock):
   serv = _serv()
   data = _message()
   data.update({
@@ -265,9 +279,11 @@ def test_applies_7714_vehicle_route_traffic_and_secondary_sdi():
   first_gps_update = serv.last_update_gps_time_navi
   assert serv._update_carrot_navi(sm)
   assert serv.last_update_gps_time_navi >= first_gps_update
-  assert len(serv.params_memory.writes) == 2
+  assert len(serv.params_memory.writes) == 1  # Same traffic receipt is not new data.
 
   data["connected"] = False
+  assert serv._update_carrot_navi(sm)
+  runtime_clock[0] = 20.
   assert not serv._update_carrot_navi(sm)
   assert serv.last_update_gps_time_navi == 0
   assert serv.szPosRoadName == ""
@@ -307,6 +323,9 @@ def test_legacy_7713_navigation_update_path_remains_operational():
   }
   for _ in range(7):
     serv.update(legacy)
+    sm = _SubMaster({})
+    sm.alive['carrotNavi'] = False
+    serv._update_carrot_navi(sm)
 
   assert serv.nRoadLimitSpeed == 50
   assert (serv.nSdiType, serv.nSdiDist, serv.nSdiPlusType) == (1, 240, 22)

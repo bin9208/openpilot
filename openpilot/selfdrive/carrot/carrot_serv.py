@@ -211,6 +211,7 @@ class CarrotServ:
     self.carrot_navi_next_sequence = -1
     self.carrot_navi_vehicle_sequence = -1
     self.carrot_navi_route_sequence = -1
+    self.carrot_navi_traffic_sequence = -1
     self.carrot_navi_active = False
     self.carrot_navi_has_control = False
     self.carrot_navi_road_limit_valid = False
@@ -904,6 +905,7 @@ class CarrotServ:
     self.carrot_navi_next_sequence = -1
     self.carrot_navi_vehicle_sequence = -1
     self.carrot_navi_route_sequence = -1
+    self.carrot_navi_traffic_sequence = -1
 
   def _clear_carrot_navi_traffic(self):
     if not getattr(self, "carrot_navi_traffic_active", False):
@@ -1019,6 +1021,7 @@ class CarrotServ:
 
   def _apply_carrot_navi_traffic(self, navi: CarrotNaviControl):
     traffic = navi.traffic
+    self.carrot_navi_traffic_sequence = traffic.sequence
     if not traffic.present or not traffic.visible or not traffic.lamp or traffic.remain_sec <= 0:
       self._clear_carrot_navi_traffic()
       return
@@ -1031,7 +1034,7 @@ class CarrotServ:
       "lamp": traffic.lamp,
       "remain": traffic.remain_sec,
       "source": traffic.source,
-      "ts": time.monotonic(),
+      "ts": self.navigation_selection.snapshot.control.traffic_received_mono_s,
     }
     try:
       params_memory.put_nonblocking("TrafficLight", json.dumps(value))
@@ -1117,7 +1120,8 @@ class CarrotServ:
     # A cached sample is not a new position receipt. Keep dead-reckoning time.
     if new_session or navi.vehicle.sequence != self.carrot_navi_vehicle_sequence:
       self._apply_carrot_navi_vehicle(navi)
-    self._apply_carrot_navi_traffic(navi)
+    if new_session or navi.traffic.sequence != self.carrot_navi_traffic_sequence:
+      self._apply_carrot_navi_traffic(navi)
     if new_session or navi.route.sequence != self.carrot_navi_route_sequence:
       self._apply_carrot_navi_route(navi)
 

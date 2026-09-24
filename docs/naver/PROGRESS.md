@@ -32,6 +32,19 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   those cases and exposed only pre-guidance route buffering (401 input passed).
   Fix: monotonic receiver legacy sequence, source/session-bound auxiliary data,
   and at most four pending auxiliary sessions without extending owner leases.
+- Fresh read-only review found GPS re-stamping and the legacy 4096/256 route
+  capacity mismatch. Run 36009498704 reproduced both and the same-frame receipt
+  race. Run 36009767192 verified their fixes and reproduced stale traffic TS.
+- Ruling: treat the review's minor traffic TS finding as important because old
+  traffic must not appear freshly received. Gate GPS/traffic projection by item
+  receipt revision and publish the actual receiver receipt, not the 20 Hz tick.
+- Ruling: a V2 connection with neither items nor guiding status is idle, not an
+  owner. A guiding session with no items remains owner. Disconnect is transport
+  loss and expires after its 10-second lease. Update the existing V2 fixtures
+  to these approved owner semantics and include that suite in controller CI.
+- Review boundary retained: phone mapping/physical braking and #5-#8 acceptance
+  are not established here. Exact-head CI is checked by the executor, not inferred
+  from the review. The reviewer found no other concrete EOF/tombstone regression.
 - #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact
