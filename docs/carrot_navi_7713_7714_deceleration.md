@@ -673,3 +673,11 @@ km/h다.
   실행하여 각각 `(22,22,93)`과 `(-1,0,0)`을 재현했다.
 - `test_carrot_navi_route_bridge.py`는 양쪽 route 경로와 7714 tombstone/disconnect ownership을 단언한다.
 - Windows 환경에는 전체 openpilot Linux 의존성과 pytest가 없어 전체 test suite는 실행하지 못했다.
+# Naver integration branch override (#6)
+
+On this integration branch, connected guidance is not sufficient to suppress
+vehicle safety candidates. A usable external SDI or an unexpired rear-camera
+hold suppresses them; otherwise existing enabled HDA candidates are evaluated.
+External bump data retains its own release endpoint while distance is positive.
+Unchanged Naver safety, including revisionless compatible input, retains its
+original receipt. Road-limit-only changes do not replay camera distance.

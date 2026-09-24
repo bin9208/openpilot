@@ -370,3 +370,12 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 - Setting ranges/defaults: `openpilot/selfdrive/carrot_settings.json`, `openpilot/common/params_keys.h`
 
 [Back to Understanding Settings](settings.md)
+# Naver test-branch camera lifetime
+
+Navigation ownership and the safety provider are separate. While Tmap or Naver
+guidance remains connected, a valid external camera/bump takes priority; when
+that safety item is absent, stale or passed, enabled vehicle/HDA candidates may
+be used without ending guidance. Vehicle capabilities vary by car; HDA fallback
+does not invent bump data. Existing rear-camera hold and external bump release
+distance are preserved. Identical Naver safety heartbeats do not restart a
+consumed distance or freshness timer. A new safety revision can replace it.

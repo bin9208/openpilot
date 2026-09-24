@@ -200,7 +200,7 @@ class NavigationRuntime:
         fields.update(section_active=True, section_speed_limit_kph=round(primary.speed_limit_kph),
                       section_remaining_distance_m=round(primary.distance_m))
       speed = NaviSpeedControl(c.speed_present, self._revision('speed',
-        (primary, secondary, c.road_limit_kph, c.road_category, c.off_route)),
+        (primary, secondary, c.road_category, c.off_route)),
         None if c.road_limit_kph is None else round(c.road_limit_kph), **fields)
       route_key = (c.route_present, c.route_revision, c.route_points, c.remaining_distance_m, c.remaining_time_s)
       return selection, CarrotNaviControl(
