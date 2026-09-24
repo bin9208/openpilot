@@ -61,6 +61,17 @@ const doc = {
   createElement: (name) => new FakeNode(name),
 };
 
+test("existing speed panel renders owner independently of reduction provider", () => {
+  const panel = createSpeedPanel(doc);
+  const payload = deriveVehicleHudPayload({ carState: { vCruise: 80 }, carrotMan: {
+    naviOwner: "naver_v1", naviLifecycle: "guiding", desiredSpeed: 40,
+    desiredSource: "hda", decelProvider: "hda",
+  }});
+  panel.update(mapPayload({ ...payload, vSetKph: 80 }));
+  assert.equal(findByClass(panel.el, "chud-t-navigation").textContent, "NAVER");
+  assert.equal(findByClass(panel.el, "chud-t-override-label").textContent, "HDA cam");
+});
+
 function findByClass(root, cls) {
   const stack = [root];
   while (stack.length) {

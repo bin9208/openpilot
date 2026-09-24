@@ -2,7 +2,7 @@ name: Naver CI
 on:
   push:
     branches: ['codex/naver-support-20260924', 'codex/naver-*']
-    paths: ['.github/workflows/naver-*.yml', 'tools/naver_ci/**', 'tools/naver_map_patch/**', 'openpilot/selfdrive/carrot/**', 'openpilot/cereal/**', 'docs/naver/**']
+    paths: ['.github/workflows/naver-*.yml', 'tools/naver_ci/**', 'tools/naver_map_patch/**', 'openpilot/selfdrive/carrot/**', 'openpilot/selfdrive/ui/**', 'openpilot/cereal/**', 'docs/naver/**']
   pull_request:
     branches: ['codex/naver-support-20260924']
   workflow_dispatch:
@@ -12,6 +12,26 @@ concurrency:
   group: naver-ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  navigation-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Rendered web owner and reduction labels
+        working-directory: openpilot/selfdrive/carrot/web
+        run: node --test tests/hud_data_bridge.test.mjs tests/hud_render.test.mjs
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest==9.0.2
+      - name: Native HUD regression
+        run: python -m pytest -c /dev/null --rootdir=. --confcutdir=openpilot/selfdrive/ui/tests -q openpilot/selfdrive/ui/tests/test_carrot_hud_renderer.py openpilot/selfdrive/ui/tests/test_navigation_status.py
   phone-mapping-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
