@@ -24,3 +24,18 @@ def test_live_disable_invalidates_cached_sdi_without_ending_guidance(drive, prov
   assert result.naviOwner == ('naver_v1' if provider == 'naver' else 'tmap_legacy')
   assert result.xSpdType == -1 and result.xSpdLimit == 0
   assert (result.desiredSource, result.decelProvider) == ('hda', 'hda')
+
+
+def test_reenable_and_category_update_cannot_restore_disabled_bump(drive):
+  serv, CS, now, tick = drive
+  serv.accept_navigation_snapshot(parse_naver_navigation_v1(bump_frame(), now[0]))
+  assert tick().desiredSource == 'bump'
+  assert tick(10).xSpdDist == 20
+  serv.params.values['AutoNaviSpeedCtrlMode'] = '1'
+  assert tick(10).xSpdType == -1
+  serv.params.values['AutoNaviSpeedCtrlMode'] = '2'
+  now[0] = 10.2
+  serv.accept_navigation_snapshot(parse_naver_navigation_v1(bump_frame(category=8, sequence=2), now[0]))
+  assert tick(10).xSpdType == -1
+  serv.accept_navigation_snapshot(parse_naver_navigation_v1(bump_frame(category=8, sequence=3, revision=2), now[0]))
+  assert tick(10).desiredSource == 'bump'
