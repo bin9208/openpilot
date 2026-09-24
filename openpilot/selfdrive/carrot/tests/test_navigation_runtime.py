@@ -153,3 +153,11 @@ def test_legacy_route_before_first_guidance_is_deferred_without_activating_owner
   assert runtime.select(9.9)[1] is None
   runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'tmap', 10.)
   assert runtime.select(10.)[1].route.polyline == points
+
+
+def test_legacy_route_keeps_existing_4096_point_bound(runtime):
+  points = tuple((37. + i * .00001, 127.) for i in range(4096))
+  runtime.accept_legacy({'nRoadLimitSpeed': 60}, 'tmap', 10.)
+  assert runtime.accept_legacy_aux('tmap', 10.1, route_points=points)
+  assert runtime.select(10.1)[1].route.polyline == points
+  assert not runtime.accept_legacy_aux('tmap', 10.2, route_points=points + ((38., 127.),))

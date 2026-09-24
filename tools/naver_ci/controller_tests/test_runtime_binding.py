@@ -160,3 +160,29 @@ def test_discovery_response_does_not_activate_navigation(bound, monkeypatch):
   assert sent[0][1] == ('192.168.1.3', 7705)
   assert not serv._update_carrot_navi(SubMaster())
   assert manager.remote_addr is None
+
+
+def test_cached_position_does_not_restart_dead_reckoning_each_control_tick(bound):
+  manager, serv, now = bound
+  serv.update({'nRoadLimitSpeed': 60, 'vpPosPointLat': 37., 'vpPosPointLon': 127.,
+               '_navigation_session_id': 'legacy'})
+  assert serv._update_carrot_navi(SubMaster())
+  assert serv.last_calculate_gps_time == 10.
+  now[0] = 10.05
+  assert serv._update_carrot_navi(SubMaster())
+  assert serv.last_calculate_gps_time == 10.
+  now[0] = 10.5
+  serv.update({'nRoadLimitSpeed': 60, 'vpPosPointLat': 37.1, 'vpPosPointLon': 127.1,
+               '_navigation_session_id': 'legacy'})
+  serv._update_carrot_navi(SubMaster())
+  assert serv.last_calculate_gps_time == 10.5
+
+
+def test_same_frame_guidance_and_route_use_one_local_receipt(bound):
+  manager, serv, now = bound
+  now[0] = 10.001  # Time advances between receipt and controller acceptance.
+  frame = {'rgdata': {'nRoadLimitSpeed': 60},
+           'vrtx': [{'x': 127., 'y': 37.}, {'x': 127.1, 'y': 37.1}]}
+  manager._dispatch_legacy_navi_frame(frame, ('192.0.2.2', 9), 10., 'legacy')
+  assert serv._update_carrot_navi(SubMaster())
+  assert serv.carrot_navi_control.route.polyline == ((37., 127.), (37.1, 127.1))
