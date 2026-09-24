@@ -9,9 +9,9 @@ This matrix separates implemented code, synthetic checks and device acceptance.
 | Guiding/stopped/arrived | Exact lifecycle subtypes; terminal sessions are not reused | Runtime device acceptance #11/#14 |
 | Current/next TBT | Distance, main/road text and six recognized maneuver enum names | More turns/forks/ramps/roundabouts #20 |
 | Road speed limit/category | Not mapped; both validity flags are false | Exact accessors and unknown/highway distinction #19 |
-| Speed bump | Exact source SafetyCode + positive distance, matched final safety code; canonical secondary type 22 | Pairing freshness tests #5; actual driving #11 |
-| Cameras | One fixed/mobile/section safety item; no equivalent secondary or detailed section lifecycle | Lifetime/fallback #6; richer source semantics #24 |
-| Route shape | Exact CurrentRoute to path-point chain, bounded to 4096 points | Callback ordering, curvature/gas parity #7; real route evidence #11 |
+| Speed bump | Exact source SafetyCode + positive distance, matched final safety code; canonical secondary type 22; pairing tests #5 complete | Actual callback ordering and driving #11 |
+| Cameras | One fixed/mobile/section safety item; lifetime/HDA fallback tests #6 complete | Richer source semantics #24; actual driving #11 |
+| Route shape | Exact CurrentRoute to path-point chain, 4096-point bound; initial buffer/cursor/common gas tests #7 complete | Real route and curve-speed evidence #11 |
 | Trip distance/time, destination, off-route | Zero/false placeholders, not source-backed values | Exact trip/status mapping #21 |
 | Lane guidance | Not mapped; diagnostic observations are not production support | Schema/accessor and consumer parity #22 |
 | Traffic signal/countdown | Not mapped | First establish whether the app exposes usable data #23 |
@@ -48,7 +48,8 @@ field confirmation. Passing reflection fixtures proves code behavior against
 those shapes, not that a current app build invokes them during an actual drive.
 No feature in this table is production-complete merely because an APK compiled.
 
-The public JVM test subset contains seven reviewed Java production source files
-and synthetic class fixtures. It needs no original APK, private capture, signing
-key, Android SDK or DEX build. Full packaging remains #9, offline evidence #10,
-real driving #11, and release #12. No APK is installed by this code task.
+The pure JVM subset needs no original APK, capture or key. Full source-only
+packaging/Android DEX tests (#9) now pass on synthetic inputs. A local single
+field TEST APK (#27) was built and statically verified on 2026-09-25, without
+installation. New-device offline evidence #10, real driving #11 and public
+release #12 remain open. The test artifact is not full Tmap mapping parity.

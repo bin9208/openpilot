@@ -1,5 +1,40 @@
 # Naver integration evidence
 
+## Single field TEST checkpoint: 2026-09-25
+
+- #6 camera lifetime/HDA: PR #26, eb6f1494, runs 36019899030 / 36019902027.
+- #7 route/common gas: PR #29, aa0c0ba9, runs 36020322484 / 36020410745.
+- #8 owner/provider UI: PR #30, a9daa38a, runs 36021787798 / 36021963273.
+- #9 source-only APK tooling: PR #31, 1d346a76, runs 36023948126 / 36023956000.
+- #28 live-mode invalidation: PR #32, d3b4db7f, runs 36024999919 / 36025005211.
+- #27 packager: PR #33, 0755579bf404f9b2dfdcff94c4e4ba7c5d8b8b7b.
+  [Naver CI](https://github.com/bin9208/openpilot/actions/runs/36025875033)
+  and [APK source tests](https://github.com/bin9208/openpilot/actions/runs/36025875001)
+  passed: 466 host tests plus diagnostic/field/production Java/DEX suites.
+  PR checks 36026267627 / 36026267839 and docs 36026267650 also passed;
+  GitHub check rollup was verified before merge.
+
+Local artifact, relative to the D work root:
+`artifacts/20260925-field-test-1/single/NaverMap-6.8.0.5-carrot-field-TEST.apk`.
+Size: 206870985 bytes.
+SHA256: `255392587c75d713130b9b423ee54db094cc06c57ae6cbfd1e1f39094694bb01`.
+Field-v4 payload SHA256:
+`dcfa462d9e78ef72fc24bc1047ea11f37e733fbe11dffcf461088e4b26373aa1`.
+KO/EN notes, checksums and provenance sit beside the APK, never inside it.
+
+The frozen original-input hashes and fresh split-build anchor checks passed.
+The merged artifact preserves all DEX bytes and 33 original arm64 libraries;
+standalone identity, SDK/manifest inventory, signature and alignment passed.
+Final hash was independently reread after atomic publication.
+The original signing key was preserved; its legacy DPAPI password was not
+decryptable in this account. A separate local TEST key was used under the
+owner's prior permission allowing a different signature. It may prevent an
+in-place update of the installed app. No install, uninstall, data clear or shutdown.
+
+Not acceptance: new-device offline recording (#10), actual bump/route/camera
+driving (#11), historical APN incident (#14), production/full mapping (#19-#24).
+Earlier sections below are historical checkpoints, not current artifact claims.
+
 ## Bump mapping/common control: issue #5
 
 [PR #25](https://github.com/bin9208/openpilot/pull/25) merged as

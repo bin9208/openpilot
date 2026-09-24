@@ -4,8 +4,8 @@ Base: upstream `43203371004e035bdb70a00a8dad29a4b657c6c3`.
 GitHub status is authoritative. Update this index at verified checkpoints;
 link CI evidence rather than copying full logs into chat.
 
-Verified code checkpoints: #1, #2, #3, #4, #5 and #15 are complete. Next is #6.
-Issue #4 landed via PR #18 and #5 via PR #25; evidence is in EVIDENCE.md.
+Verified code checkpoints: #1-#9, #15 and #28 are complete. Local single TEST
+APK delivery #27 is complete via PR #33; evidence is in EVIDENCE.md.
 Device/drive acceptance and full Tmap mapping parity remain open.
 
 | Issue | Scope | Dependency |
@@ -31,6 +31,8 @@ Device/drive acceptance and full Tmap mapping parity remain open.
 | [#22](https://github.com/bin9208/openpilot/issues/22) | Lane mapping and consumers | #8, #9 |
 | [#23](https://github.com/bin9208/openpilot/issues/23) | Traffic signal availability/mapping | #9 |
 | [#24](https://github.com/bin9208/openpilot/issues/24) | Detailed/secondary/section camera mapping | #6, #9 |
+| [#27](https://github.com/bin9208/openpilot/issues/27) | Local single FIELD TEST APK (complete; not installed) | #5-#9 |
+| [#28](https://github.com/bin9208/openpilot/issues/28) | Live safety-mode invalidation (complete) | #6 |
 
 The functional target and current evidence levels are in [MAPPING_PARITY.md](MAPPING_PARITY.md).
 

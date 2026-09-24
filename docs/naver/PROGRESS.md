@@ -3,6 +3,19 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #28 complete: PR #32 at d3b4db7f; all checks passed including 36024999919,
+  36025005211, 36025005170 and docs36025005156. Review rearm case fixed RED/GREEN.
+- #27 complete: PR #33 at 0755579b. Local split build and atomic single TEST
+  packaging both exited 0; APK206870985 bytes, SHA256255392587c75d713130b9b423ee54db094cc06c57ae6cbfd1e1f39094694bb01.
+  All exact-head cloud gates passed (466 host tests, all three Java/DEX modes,
+  Naver controller/wire/UI tests). Artifact and paired notes remain local on D.
+- Ruling: use a new TEST-only signing key under the owner's earlier explicit
+  allowance for nonmatching signatures. Existing key/password preserved; new
+  key directory restricted, password export encrypted and round-trip checked.
+  Cost: existing-app in-place update may be rejected; no phone data was changed.
+- #10/#11 remain external device/drive acceptance, not completed by static builds.
+  No full Tmap mapping or production readiness claim. No shutdown scheduled.
+
 - #9 complete: PR #31 at 1d346a76; source tests 36023948126 / 36023956000
   passed 456 host tests and all three Java/DEX compositions (JUnit artifacts).
   Naver CI36023948058 / 36023956024 and docs36023955997 passed. Review found
