@@ -138,7 +138,7 @@
     setText(elements.countdownLabel, "TIM");
     setText(elements.distanceLabel, "DST");
     setText(elements.gapLabel, "GAP");
-    const tempSource = model?.source === "stock" ? "TMP" : model?.temp?.label;
+    const tempSource = model?.temp?.label || "TMP";
     setText(elements.tempLabel, shortLabel(
       tempSource,
       model?.alert?.name || model?.source || "SRC",
@@ -213,7 +213,7 @@
     setText(elements.driveMode, localizedDriveMode(model));
     if (elements.driveModeFrame) elements.driveModeFrame.dataset.miniHudDriveKind = model.driveMode?.kind || "normal";
 
-    const tempVisible = !stock && Boolean(model.temp?.visible);
+    const tempVisible = Boolean(model.temp?.visible);
     setHidden(elements.alertZone, false);
     syncDetailLabels(model);
     setText(elements.countdown, model.alert?.countdown || "--");

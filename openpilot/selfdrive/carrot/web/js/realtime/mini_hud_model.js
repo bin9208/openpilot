@@ -109,6 +109,7 @@
     const desiredSpeed = finite(carrotMan?.desiredSpeed);
     const vSetKph = finite(payload?.vSetKph);
     const tempVisible = desiredSpeed != null && desiredSpeed > 0 && desiredSpeed < 200;
+    const providerPrefix = { naver_v1: "N ", tmap_legacy: "T " }[carrotMan.decelProvider] || "";
 
     return {
       source,
@@ -127,7 +128,7 @@
       gap: displayGap(payload?.tfGap ?? payload?.tfBars),
       temp: {
         visible: tempVisible,
-        label: tempVisible ? String(carrotMan?.desiredSource || "").trim() : "",
+        label: tempVisible ? providerPrefix + String(carrotMan?.desiredSource || "").trim() : "",
         speed: tempVisible ? displaySpeed(desiredSpeed, isMetric) : "",
         decel: tempVisible && vSetKph != null && desiredSpeed < vSetKph,
       },

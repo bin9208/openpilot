@@ -8,6 +8,9 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - #8 RED 36020787381 at d44ab156: seven missing owner-aware helper failures
   and two rendered-web owner/provider failures. Native/cluster/web will use
   selected owner/lifecycle, retaining legacy fallback only without diagnostics.
+- #8 review: stale served bundles and mini HUD ownerless-HDA suppression were
+  Important. RED 36021567617 confirms both. Remove stock-only reduction gate,
+  rebuild tracked bundles, and enforce generated-source parity in Actions.
 
 - #6 complete: PR #26, exact head eb6f1494 passed 36019899030 and
   36019902027, docs 36019902159 (617 tests). Live setting invalidation follow-up #28.
