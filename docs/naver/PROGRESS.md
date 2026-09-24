@@ -5,6 +5,10 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
 - #1 and #15 complete; exact Actions evidence is in EVIDENCE.md.
 - #2 started from ff9a26a3. RED: route-revision input smoke test on fresh upstream.
+- RED: https://github.com/bin9208/openpilot/actions/runs/36002651544 (912f4ec5), one expected failure.
+- GREEN candidate: preserved parser, ingress and immutable store ported without
+  controller changes. Real socket tests cover fragmentation, bounded clients,
+  lease retention, terminal frames and UDP discovery response ports.
 - Ruling: #2 introduces protocol, standalone socket ingress and required immutable
   source-state types/store. #4 binds them to current CarrotMan/CarrotServ and
   tests runtime source selection. This avoids overwriting the newer controller.
