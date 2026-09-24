@@ -25,7 +25,12 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install pytest==9.0.2
       - name: Naver input regression
-        run: python -m pytest -c /dev/null --rootdir=. --confcutdir=openpilot/selfdrive/carrot/tests -q openpilot/selfdrive/carrot/tests/test_naver_input_smoke.py
+        run: |
+          python -m pytest -c /dev/null --rootdir=. --confcutdir=openpilot/selfdrive/carrot/tests -q \
+            openpilot/selfdrive/carrot/tests/test_naver_input_smoke.py \
+            openpilot/selfdrive/carrot/tests/test_naver_navigation_protocol.py \
+            openpilot/selfdrive/carrot/tests/test_navigation_sources.py \
+            openpilot/selfdrive/carrot/tests/test_navigation_ingress.py
   infrastructure:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -43,5 +48,5 @@ jobs:
         run: python -m py_compile openpilot/selfdrive/carrot/carrot_man.py openpilot/selfdrive/carrot/carrot_serv.py
       - name: Summarize scope
         run: |
-          echo 'Infrastructure checks only. Controller, APK and device acceptance remain separate open issues.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Infrastructure and standalone Naver input checks. Controller, APK and device acceptance remain separate open issues.' >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
