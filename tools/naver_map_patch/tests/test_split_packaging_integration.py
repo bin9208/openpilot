@@ -33,7 +33,7 @@ def _tools(fixture: SyntheticSet) -> AndroidTools:
     aapt2=fixture.aapt2,
     zipalign=fixture.zipalign,
     apksigner=fixture.apksigner,
-    java_home=Path("C:/Program Files/Android/Android Studio/jbr"),
+    java_home=Path(fixture.environment["JAVA_HOME"]),
     versions=(
       ToolVersion("aapt2", "2.20-13193326"),
       ToolVersion("zipalign", "36.0.0"),

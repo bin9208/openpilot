@@ -12,9 +12,12 @@ import zipfile
 import pytest
 
 
-SDK_ROOT = Path(os.environ.get("ANDROID_SDK_ROOT", Path(os.environ["LOCALAPPDATA"]) / "Android" / "Sdk"))
+SDK_ROOT = Path(os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or
+                str(Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Android" / "Sdk"))
 BUILD_TOOLS = SDK_ROOT / "build-tools" / "36.0.0"
-JAVA_HOME = Path("C:/Program Files/Android/Android Studio/jbr")
+JAVA_HOME = Path(os.environ.get("JAVA_HOME", "C:/Program Files/Android/Android Studio/jbr"))
+EXECUTABLE_SUFFIX = ".exe" if os.name == "nt" else ""
+SCRIPT_SUFFIX = ".bat" if os.name == "nt" else ""
 TEST_PASSWORD = "synthetic-only-password"
 PACKAGE_NAME = "com.example.synthetic.split"
 VERSION_CODE = 60800007
@@ -149,12 +152,12 @@ def synthetic_set() -> Iterator[SyntheticSet]:
       alternate_keystore=root / "alternate.p12",
       patch_keystore=root / "patch.p12",
       environment=environment,
-      aapt2=BUILD_TOOLS / "aapt2.exe",
-      zipalign=BUILD_TOOLS / "zipalign.exe",
-      apksigner=BUILD_TOOLS / "apksigner.bat",
+      aapt2=BUILD_TOOLS / ("aapt2" + EXECUTABLE_SUFFIX),
+      zipalign=BUILD_TOOLS / ("zipalign" + EXECUTABLE_SUFFIX),
+      apksigner=BUILD_TOOLS / ("apksigner" + SCRIPT_SUFFIX),
       android_jar=android_jar,
     )
-    keytool = JAVA_HOME / "bin" / "keytool.exe"
+    keytool = JAVA_HOME / "bin" / ("keytool" + EXECUTABLE_SUFFIX)
     _make_key(keytool, fixture.official_keystore, "official", environment)
     _make_key(keytool, fixture.alternate_keystore, "alternate", environment)
     _make_key(keytool, fixture.patch_keystore, "patch", environment)

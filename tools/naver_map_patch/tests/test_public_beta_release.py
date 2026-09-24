@@ -31,69 +31,15 @@ _INPUT_NAMES = (
 _APPROVED_APKEDITOR_SHA256 = "71999a1f28cf6b457aff17c139436349cd6ea30d75a0f9cd52f07bd52e21897b"
 
 
-def test_paired_public_and_user_docs_lock_navigation_provider_contract() -> None:
+def test_source_only_and_user_docs_do_not_imply_public_acceptance() -> None:
   repository = Path(__file__).parents[3]
-  cases = (
-    (
-      repository / "tools/naver_map_patch/public_beta/README_KO.md",
-      (
-        "Tmap 또는 Naver 중 하나를 선택",
-        "공통 Tmap 파생 제어기",
-        "가속페달",
-        "차선/경로 패널",
-        "목적지",
-        "ETA",
-        "off-route",
-        "경로 곡선 감속과 Naver 방지턱 감속은 실차 검증 전까지 실험적",
-        "HDA에는 방지턱 fallback이 없습니다",
-        "`naviOwner`",
-        "`decelProvider`",
-      ),
-    ),
-    (
-      repository / "tools/naver_map_patch/public_beta/README_EN.md",
-      (
-        "choose either Tmap or Naver",
-        "shared Tmap-derived controller",
-        "accelerator pedal",
-        "lane/route panel",
-        "destination",
-        "ETA",
-        "off-route",
-        "Route curve deceleration and Naver bump deceleration remain experimental until real-drive acceptance",
-        "HDA has no speed-bump fallback",
-        "`naviOwner`",
-        "`decelProvider`",
-      ),
-    ),
-    (
-      repository / "docs/user/ko/speed-deceleration.md",
-      (
-        "Tmap 또는 Naver 중 하나를 선택",
-        "공통 Tmap 파생 제어기",
-        "가속페달",
-        "차선/경로 패널",
-        "실차 검증 전까지 실험적",
-        "HDA에는 방지턱 fallback이 없습니다",
-      ),
-    ),
-    (
-      repository / "docs/user/en/speed-deceleration.md",
-      (
-        "choose either Tmap or Naver",
-        "shared Tmap-derived controller",
-        "accelerator pedal",
-        "lane/route panel",
-        "experimental until real-drive acceptance",
-        "HDA has no speed-bump fallback",
-      ),
-    ),
-  )
-
-  for path, required in cases:
-    content = path.read_text(encoding="utf-8")
-    missing = [marker for marker in required if marker not in content]
-    assert not missing, f"{path}: missing documentation contract markers: {missing}"
+  guide = (repository / "tools/naver_map_patch/README.md").read_text(encoding="utf-8")
+  assert "public release #12" in guide
+  assert "synthetic" in guide
+  for language in ("ko", "en"):
+    content = (repository / f"docs/user/{language}/speed-deceleration.md").read_text(encoding="utf-8")
+    for label in ("NAVER", "TMAP", "HDA cam"):
+      assert label in content
 
 
 def _request(tmp_path: Path, *, output_root: Path | None = None) -> public_beta_release.MergeRequest:

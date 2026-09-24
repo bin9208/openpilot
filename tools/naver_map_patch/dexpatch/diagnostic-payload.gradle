@@ -144,6 +144,7 @@ sourceSets {
           "**/NaverNavigationAggregatorTest.java",
           "**/NaverNavigationEnvelopeTest.java",
           "**/NaverNavigationSenderTest.java",
+          "**/BumpWireFixture.java",
           "**/ProductionHooksTest.java",
           "**/ProductionPayloadCompositionTest.java")
     }
