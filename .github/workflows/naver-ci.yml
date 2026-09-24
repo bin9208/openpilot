@@ -1,0 +1,33 @@
+name: Naver CI
+on:
+  push:
+    branches: ['codex/naver-support-20260924', 'codex/naver-*']
+    paths: ['.github/workflows/naver-*.yml', 'tools/naver_ci/**', 'tools/naver_map_patch/**', 'openpilot/selfdrive/carrot/**', 'openpilot/cereal/**', 'docs/naver/**']
+  pull_request:
+    branches: ['codex/naver-support-20260924']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: naver-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  infrastructure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test synchronization guards
+        run: python -m unittest discover -s tools/naver_ci/tests -v
+      - name: Check syntax of shared navigation entry points
+        run: python -m py_compile openpilot/selfdrive/carrot/carrot_man.py openpilot/selfdrive/carrot/carrot_serv.py
+      - name: Summarize scope
+        run: |
+          echo 'Infrastructure checks only. Controller, APK and device acceptance remain separate open issues.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

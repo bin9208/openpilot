@@ -1,0 +1,27 @@
+name: Naver upstream mirror
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: carrot-wip-upstream-mirror
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.repository == 'bin9208/openpilot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fast-forward carrot-wip only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/naver_ci/sync_upstream.py

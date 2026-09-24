@@ -1,3 +1,17 @@
+# Fork-specific workflow (bin9208/openpilot)
+
+- The owner's 2026-09-24 fork policy overrides historical upstream branch rules below.
+- Keep `carrot-wip` an exact fast-forward-only mirror of `ajouatom/openpilot:carrot-wip`.
+  Never commit Naver changes or workflow files to that branch.
+- Work on `codex/naver-support-20260924` (default branch) or issue-scoped children.
+- Create/update a GitHub issue for each task or discovered defect. Keep design and
+  evidence links in `docs/naver/` as a second record; see `docs/naver/WORKFLOW.md`.
+- Use GitHub Actions for repeatable validation and inspect exact-SHA results before
+  closing issues. Local syntax/diff checks are enough before cloud execution unless
+  a failure needs local reproduction. Device/drive acceptance cannot be replaced by CI.
+- Keep raw captures, keys and original APKs outside Git. Use the D-drive workspace
+  and D-drive build/cache folders. Do not resurrect retired branches from the old fork.
+
 # Repository memory
 
 - On 2026-09-24, the user requested AGNOS updates without per-update approval:
