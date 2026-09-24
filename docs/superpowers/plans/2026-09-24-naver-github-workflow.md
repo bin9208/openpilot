@@ -21,9 +21,9 @@
 - [x] Publish the integration branch and set it as default.
 - [x] Implement scoped synchronization guard in `tools/naver_ci/sync_upstream.py`.
 - [x] Add guard tests and CI with five-minute job limits.
-- [ ] Commit and push only workflow/docs/CI files, referencing #1.
-- [ ] Execute `Naver CI` and `Naver upstream mirror` on GitHub.
-- [ ] Record exact-SHA results in #1 and close only after successful runs.
+- [x] Commit and push only workflow/docs/CI files, referencing #1.
+- [x] Execute `Naver CI` and `Naver upstream mirror` on GitHub.
+- [x] Record exact-SHA results; bootstrap evidence is in `docs/naver/EVIDENCE.md`.
 
 Run in Actions: `python -m unittest discover -s tools/naver_ci/tests -v`.
 Check no-op, fast-forward, divergence, rewind, malformed SHA, wrong fork parent,

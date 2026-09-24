@@ -20,6 +20,7 @@ link CI evidence rather than copying full logs into chat.
 | [#12](https://github.com/bin9208/openpilot/issues/12) | Standalone artifact and support notes | #11 |
 | [#13](https://github.com/bin9208/openpilot/issues/13) | Future upstream integration procedure | #1 |
 | [#14](https://github.com/bin9208/openpilot/issues/14) | Actual APN loss incident diagnosis | device evidence |
+| [#15](https://github.com/bin9208/openpilot/issues/15) | Actions runtime deprecation | #1 |
 
 ## Initial evidence
 
