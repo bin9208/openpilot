@@ -24,6 +24,14 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   defects. Lease assertion must inspect one selection (the transition reason
   is consumed); road-width fixture must contain a present turn instruction.
   Revised-safety freshness fixture explicitly supplies its source revision.
+- #4 intermediate GREEN: run 36008397536 at 021a1c4e passed 399 input,
+  88 controller/upstream, 4 wire and 8 infrastructure tests. The real controller
+  harness uses real Capnp builders, not permissive message mocks.
+- #4 additional RED: run 36008563260 reproduced returning HTTP identity sequence
+  reset and missing source-bound auxiliary routing. Run 36009080011 passed
+  those cases and exposed only pre-guidance route buffering (401 input passed).
+  Fix: monotonic receiver legacy sequence, source/session-bound auxiliary data,
+  and at most four pending auxiliary sessions without extending owner leases.
 - #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact

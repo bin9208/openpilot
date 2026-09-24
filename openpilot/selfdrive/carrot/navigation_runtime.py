@@ -52,13 +52,15 @@ class NavigationRuntime:
         self._legacy_navigation_controls = {session_id: snapshot.control}
         self._legacy_road_limit_state = {session_id: self._legacy_road_limit_state[session_id]}
         self._legacy_snapshot = snapshot
-        self._legacy_navigation_pending.clear()
+        self._legacy_navigation_pending.pop(session_id, None)
       return accepted
 
   def accept_legacy_aux(self, session_id, now_s, *, route_points=None, traffic=None):
     with self.lock:
       previous = self._legacy_snapshot
-      if previous is None or previous.session_id != session_id or now_s < previous.received_mono_s:
+      if not session_id or not math.isfinite(now_s):
+        return False
+      if previous is not None and previous.session_id == session_id and now_s < previous.received_mono_s:
         return False
       updates = {}
       if route_points is not None:
@@ -73,6 +75,12 @@ class NavigationRuntime:
         updates['traffic_received_mono_s'] = now_s if traffic.get('traffic_present') else None
       if not updates:
         return False
+      if previous is None or previous.session_id != session_id:
+        pending = self._legacy_navigation_pending
+        if len(pending) >= 4 and session_id not in pending:
+          pending.pop(next(iter(pending)))
+        pending.setdefault(session_id, {}).update(updates)
+        return False  # Buffered, not an activation or an accepted owner update.
       self._legacy_sequence += 1
       snapshot = replace(previous, sequence=self._legacy_sequence, received_mono_s=now_s,
         owner_received_mono_s=previous.received_mono_s if previous.owner_received_mono_s is None else previous.owner_received_mono_s,
