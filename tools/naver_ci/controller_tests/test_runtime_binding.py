@@ -1,0 +1,106 @@
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from openpilot.selfdrive.carrot import carrot_serv, carrot_man
+from openpilot.selfdrive.carrot.naver_navigation_protocol import parse_naver_navigation_v1
+from openpilot.selfdrive.carrot.tests.test_naver_navigation_protocol import valid_frame, inactive_frame
+from openpilot.selfdrive.carrot.navigation_sources import NavigationSource
+
+
+class SubMaster(dict):
+  alive = {'carrotNavi': False, 'carState': False, 'selfdriveState': False, 'navInstruction': False}
+  valid = {'carrotNavi': False}
+  updated = {'carrotNavi': False}
+
+
+@pytest.fixture
+def bound(monkeypatch):
+  now = [10.]
+  monkeypatch.setattr(carrot_serv.time, 'monotonic', lambda: now[0])
+  serv = carrot_serv.CarrotServ()
+  manager = carrot_man.CarrotMan.__new__(carrot_man.CarrotMan)
+  manager.carrot_serv = serv
+  manager.remote_addr = None
+  assert hasattr(manager, '_init_navigation_ingress'), 'CarrotMan ingress is not bound'
+  manager._init_navigation_ingress()
+  return manager, serv, now
+
+
+class Client:
+  def __init__(self, *frames):
+    self.data = bytearray(b''.join(json.dumps(f).encode() + b'\n' for f in frames))
+
+  def settimeout(self, value):
+    pass
+
+  def setsockopt(self, *args):
+    pass
+
+  def recv(self, size):
+    data = bytes(self.data[:size])
+    del self.data[:size]
+    return data
+
+  def close(self):
+    pass
+
+
+def test_manager_eof_keeps_real_controller_guidance_until_lease(bound):
+  manager, serv, now = bound
+  manager._serve_navi_client(Client(valid_frame()), ('192.0.2.1', 1234))
+  assert serv._update_carrot_navi(SubMaster())
+  assert serv.xTurnInfo == 1 and serv.xDistToTurn == 380
+  assert serv.navigation_selection.transport_loss_age_s == 0
+  now[0] = 11.999
+  assert serv._update_carrot_navi(SubMaster())
+  now[0] = 12.
+  assert not serv._update_carrot_navi(SubMaster())
+  assert serv.active_count == 0 and serv.xTurnInfo == -1
+
+
+@pytest.mark.parametrize('terminal', ['stopped', 'arrived'])
+def test_terminal_tombstone_survives_manager_reconnect(bound, terminal):
+  manager, serv, now = bound
+  manager._serve_navi_client(Client(valid_frame(sequence=1)), ('192.0.2.1', 1234))
+  frame = inactive_frame(terminal)
+  frame['sequence'] = 2
+  manager._serve_navi_client(Client(frame), ('192.0.2.1', 1235))
+  manager._serve_navi_client(Client(valid_frame(sequence=100)), ('192.0.2.1', 1236))
+  assert not serv._update_carrot_navi(SubMaster())
+  frame = valid_frame(session_id='019f0000-0000-7000-8000-000000000002', sequence=1)
+  now[0] = 10.1
+  manager._serve_navi_client(Client(frame), ('192.0.2.1', 1237))
+  assert serv._update_carrot_navi(SubMaster())
+
+
+def test_non_navigation_udp_does_not_steal_owner_or_erase_tcp_peer(bound):
+  manager, serv, now = bound
+  token = object()
+  manager._set_navigation_peer('tcp', ('192.0.2.1', 1234), token)
+  manager._set_navigation_peer('udp', ('192.0.2.2', 1234))
+  manager._clear_navigation_peer('udp')
+  assert manager.remote_addr == ('192.0.2.1', 1234)
+  assert serv.accept_navigation_snapshot(parse_naver_navigation_v1(valid_frame(), 10.))
+  serv.update({'carrotIndex': 17, 'latitude': 0, 'longitude': 0})
+  assert serv._update_carrot_navi(SubMaster())
+  assert serv.navigation_selection.snapshot.source is NavigationSource.NAVER_V1
+
+
+def test_real_capnp_publication_keeps_guiding_only_apn_and_owner(bound, monkeypatch):
+  manager, serv, now = bound
+  frame = inactive_frame('idle')
+  frame['lifecycle'] = 'guiding'
+  manager._serve_navi_client(Client(frame), ('192.0.2.1', 1234))
+  monkeypatch.setattr(serv, '_update_gps', lambda *_args: 0.)
+  sent = {}
+  pm = SimpleNamespace(send=lambda name, msg: sent.update({name: msg}))
+  serv.update_navi('', SubMaster(), pm, 250., [], [], 250., 'gpsLocation')
+  result = sent['carrotMan'].carrotMan
+  assert result.activeCarrot >= 2
+  assert result.naviOwner == 'naver_v1'
+  assert result.naviLifecycle == 'guiding'
+  assert result.naviSessionId == frame['sessionId']
+  assert not result.decelProvider == 'naver_v1'  # No safety target in this frame.
+  assert sent['carrotMan'].to_bytes()
