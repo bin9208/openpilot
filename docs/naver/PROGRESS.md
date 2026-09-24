@@ -13,6 +13,12 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
   36004519269/36004519276 passed: 4 real wire tests and 389 input tests.
 - Next task: #4 runtime provider binding. Current modules are not yet connected
   to CarrotMan/CarrotServ, so do not install this branch as a Naver driving fix.
+- #4 started from 4aa63bfe on codex/naver-issue-4-runtime. RED covers canonical
+  controller projection, sticky owner switching, guiding-only sessions, exact
+  lease expiry, terminal tombstones and item freshness independent of heartbeat.
+- Ruling: normalize inputs into existing CarrotNaviControl rather than copying
+  the old controller. Preserve upstream speed candidates and gas behavior;
+  safety policy refinements remain #5/#6 and route acceptance remains #7.
 - #3 RED confirmed: run 36003733463 at 30340ced, two missing-diagnostic failures
   and one upstream-ordinal test passed. Initial runner include-path error was
   corrected before interpreting RED. Added fields use ordinals 33-42; compact

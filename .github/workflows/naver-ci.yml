@@ -49,7 +49,8 @@ jobs:
             openpilot/selfdrive/carrot/tests/test_naver_input_smoke.py \
             openpilot/selfdrive/carrot/tests/test_naver_navigation_protocol.py \
             openpilot/selfdrive/carrot/tests/test_navigation_sources.py \
-            openpilot/selfdrive/carrot/tests/test_navigation_ingress.py
+            openpilot/selfdrive/carrot/tests/test_navigation_ingress.py \
+            openpilot/selfdrive/carrot/tests/test_navigation_runtime.py
   infrastructure:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
