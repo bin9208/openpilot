@@ -45,6 +45,17 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	vehicleNaviSpeed @30 : Int32;
 	vehicleNaviSectionActive @31 : Bool;
 	vehicleNaviAvailable @32 : Bool;
+	# Fork diagnostics: append after upstream vehicle-navigation fields.
+	naviOwner @33 : Text;
+	naviSessionId @34 : Text;
+	naviSequence @35 : UInt64;
+	naviOwnerAgeMs @36 : Int32;
+	naviSafetyAgeMs @37 : Int32;
+	naviLifecycle @38 : Text;
+	naviControlAllowed @39 : Bool;
+	naviSafetyRejection @40 : Text;
+	decelProvider @41 : Text;
+	decelReason @42 : Text;
 }
 
 struct CarrotNaviState @0xaedffd8f31e7b55d {

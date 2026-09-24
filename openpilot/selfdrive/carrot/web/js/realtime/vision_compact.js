@@ -129,6 +129,10 @@ window.CarrotVisionCompact = (() => {
       ["szSdiDescr", "text"], ["naviPaths", "text"], ["desiredSource", "text"],
       ["vehicleNaviActive", "bool"], ["vehicleNaviSpeed", "i32"], ["vehicleNaviSectionActive", "bool"],
       ["vehicleNaviAvailable", "bool"],
+      ["naviOwner", "text"], ["naviSessionId", "text"], ["naviSequence", "u64"],
+      ["naviOwnerAgeMs", "i32"], ["naviSafetyAgeMs", "i32"], ["naviLifecycle", "text"],
+      ["naviControlAllowed", "bool"], ["naviSafetyRejection", "text"],
+      ["decelProvider", "text"], ["decelReason", "text"],
     ]]],
     [6, ["selfdriveState", [
       ["enabled", "bool"], ["personality", "u8"], ["alertStatus", "u8"],
