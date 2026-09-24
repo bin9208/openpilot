@@ -1151,8 +1151,8 @@ class CarrotServ:
       self._apply_carrot_navi_vehicle(navi)
     if new_session or navi.traffic.sequence != self.carrot_navi_traffic_sequence:
       self._apply_carrot_navi_traffic(navi)
-    if new_session or navi.route.sequence != self.carrot_navi_route_sequence:
-      self._apply_carrot_navi_route(navi)
+    # Trip counters can change without changing route geometry/cursor revision.
+    self._apply_carrot_navi_route(navi)
 
     self._apply_carrot_navi_guidance(navi, force=new_session or off_route_changed)
     if self.carrot_navi_has_control:

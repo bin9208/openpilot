@@ -3,6 +3,16 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- #6 complete: PR #26, exact head eb6f1494 passed 36019899030 and
+  36019902027, docs 36019902159 (617 tests). Live setting invalidation follow-up #28.
+- #7 started from eb6f1494. RED 36020040359 at fe68ba2b reproduced initial
+  pre-guidance route loss and ETA-only geometry revision. Common Naver/Tmap
+  route gas-floor and real manager cursor/session/terminal tests already pass.
+- Ruling: defer only the initial idle route for <5 seconds; never cache control
+  arriving after terminal for a successor session without provenance. Cost:
+  a post-terminal route-before-guiding may require app restart/new route callback;
+  preventing stale route reuse takes priority. Real callback order stays #11.
+
 - #6 started at 46203e30. RED run 36018220755 at ea818868: six expected
   camera replay / HDA fallback failures, 122 controller tests passed.
 - #6 intermediate run 36019015267: all new regressions passed. Four old
