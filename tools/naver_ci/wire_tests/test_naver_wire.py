@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import capnp
 
 from openpilot.cereal import custom, log
 from openpilot.selfdrive.carrot.realtime.compact_state import encode_carrot_state_frame
@@ -35,6 +36,22 @@ def test_vehicle_fields_keep_their_upstream_ordinals():
               'vehicleNaviSectionActive': 31, 'vehicleNaviAvailable': 32}
   for name, ordinal in expected.items():
     assert custom.CarrotMan.schema.fields[name].proto.ordinal.explicit == ordinal
+
+
+def test_real_pre_naver_schema_message_remains_readable():
+  fixture = Path(__file__).with_name('legacy_carrot.capnp')
+  cereal_root = Path(__file__).resolve().parents[3] / 'openpilot' / 'cereal'
+  parser = capnp.SchemaParser()
+  old = parser.load(str(fixture), imports=[str(cereal_root)])
+  message = old.CarrotMan.new_message(vehicleNaviActive=True, vehicleNaviSpeed=73,
+                                     vehicleNaviSectionActive=True, vehicleNaviAvailable=True)
+  with custom.CarrotMan.from_bytes(message.to_bytes()) as decoded:
+    assert decoded.vehicleNaviActive
+    assert decoded.vehicleNaviSpeed == 73
+    assert decoded.vehicleNaviSectionActive
+    assert decoded.vehicleNaviAvailable
+    assert decoded.naviOwner == ''
+    assert decoded.naviSequence == 0
 
 
 def test_actual_capnp_roundtrip_and_all_display_encoders_agree(tmp_path):
