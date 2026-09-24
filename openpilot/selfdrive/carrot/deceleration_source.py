@@ -29,7 +29,7 @@ def is_vehicle_navigation_source(source: str | None) -> bool:
   return normalized in VEHICLE_NAVI_SOURCES or normalized in ("cam:v", "bump:v", "school:v")
 
 
-def deceleration_source_presentation(source: str | None) -> tuple[str, int]:
+def _deceleration_reason_presentation(source: str | None) -> tuple[str, int]:
   """Return the actual deceleration reason and its source color mode.
 
   Color mode 2 is the normal deceleration orange, mode 3 is vehicle CAN
@@ -53,8 +53,19 @@ def deceleration_source_presentation(source: str | None) -> tuple[str, int]:
   return DECELERATION_SOURCE_LABELS.get(normalized, normalized[:8]), 2
 
 
-def navigation_status_presentation(vehicle_available: bool, external_active: bool) -> tuple[str, int] | None:
+def deceleration_source_presentation(source: str | None, provider: str | None = None) -> tuple[str, int]:
+  label, mode = _deceleration_reason_presentation(source)
+  prefix = {'hda': 'HDA', 'naver_v1': 'N', 'tmap_legacy': 'T'}.get(provider)
+  return (f'{prefix} {label}' if prefix else label), mode
+
+
+def navigation_status_presentation(vehicle_available: bool, external_active: bool,
+                                   owner: str = '', lifecycle: str = '') -> tuple[str, int] | None:
   """Return the navigation availability badge, independent of speed control."""
+  if lifecycle:
+    if lifecycle == 'guiding' and owner:
+      return {'naver_v1': 'NAVER', 'tmap_legacy': 'TMAP'}.get(owner, 'NAVI'), 4
+    return ('vNAVI', 3) if vehicle_available else None
   if external_active:
     return "NAVI", 4
   if vehicle_available:

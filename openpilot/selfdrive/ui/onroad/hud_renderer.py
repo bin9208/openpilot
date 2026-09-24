@@ -2,7 +2,7 @@ import time
 import pyray as rl
 from dataclasses import dataclass
 from openpilot.common.constants import CV
-from openpilot.selfdrive.carrot.deceleration_source import deceleration_source_presentation
+from openpilot.selfdrive.carrot.deceleration_source import deceleration_source_presentation, navigation_status_presentation
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.hardware.usbgpu import usbgpu_badge_state
@@ -122,7 +122,7 @@ class SetSpeedOverride:
       desired_source = ""
 
     if desired_speed is not None and 0 < desired_speed < 200 and desired_speed < set_speed_kph:
-      label, speed_color_mode = deceleration_source_presentation(desired_source)
+      label, speed_color_mode = deceleration_source_presentation(desired_source, getattr(sm['carrotMan'], 'decelProvider', ''))
       return SetSpeedOverrideState(
         active=True,
         speed_kph=desired_speed,
@@ -854,10 +854,17 @@ class HudRenderer(Widget):
 
     # active carrot
     active_carrot = self._get_active_carrot()
+    carrot_man = ui_state.sm['carrotMan']
+    lifecycle = str(getattr(carrot_man, 'naviLifecycle', ''))
+    navi_status = navigation_status_presentation(
+      bool(getattr(carrot_man, 'vehicleNaviAvailable', False)), False,
+      str(getattr(carrot_man, 'naviOwner', '')), lifecycle) if lifecycle else None
+    if lifecycle:
+      active_carrot = 0  # Vehicle safety activity is not external guidance ownership.
     dx = bx + 200
     dy = by + 175
 
-    if active_carrot >= 2:
+    if navi_status is not None or active_carrot >= 2:
       self._draw_round_box(
         dx - 55, dy - 38, 110, 48,
         rl.GREEN,
@@ -867,7 +874,7 @@ class HudRenderer(Widget):
         line_thickness=2,
       )
       draw_text_ui_style(
-        "APN", dx, dy, 40, rl.WHITE,
+        navi_status[0] if navi_status is not None else "APN", dx, dy, 29 if navi_status else 40, rl.WHITE,
         font=self._font_display,
         border_width=2.0,
         shadow_offset=4.0,

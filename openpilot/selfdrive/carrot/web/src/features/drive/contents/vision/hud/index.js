@@ -65,6 +65,7 @@ export function mapPayload(p = {}) {
     setSpeed: setSpeed != null && setSpeed > 0 ? toUnit(setSpeed) : null,
     gap: gap != null && gap > 0 ? Math.round(gap) : null,
     gear,
+    navigationLabel: String(p.navigationLabel || ""),
     speedLimit: limit != null && limit > 0 ? toUnit(limit) : null,
     // 클러스터 패리티: EV 텔테일 / LFA 레인 초록 날개 / 크루즈 오버라이드(감속=주황·eco=초록)
     evActive: p.evActive === true,

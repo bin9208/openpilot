@@ -60,6 +60,9 @@
   }
 
   function sourceMode(carrotMan) {
+    if (carrotMan?.naviLifecycle) {
+      return carrotMan.naviLifecycle === "guiding" && carrotMan.naviOwner ? "nav" : "stock";
+    }
     // Waze cannot be reliably distinguished from other nav providers in normal
     // driving (CarrotMan carries no provider field; only xSpdType 100/101 and
     // desiredSource "waze"/"police" hint at it, and only during an active alert).
@@ -105,10 +108,14 @@
     // decelerating) so the compact HUD always shows the winning source label.
     const desiredSpeed = finite(carrotMan?.desiredSpeed);
     const vSetKph = finite(payload?.vSetKph);
-    const tempVisible = source !== "stock" && desiredSpeed != null && desiredSpeed > 0;
+    const tempVisible = desiredSpeed != null && desiredSpeed > 0 && desiredSpeed < 200;
+    const providerPrefix = { naver_v1: "N ", tmap_legacy: "T " }[carrotMan.decelProvider] || "";
 
     return {
       source,
+      sourceLabel: carrotMan.naviLifecycle === "guiding"
+        ? ({ naver_v1: "NAVER", tmap_legacy: "TMAP" }[carrotMan.naviOwner] || source.toUpperCase())
+        : source.toUpperCase(),
       isMetric,
       // metric → Korean/Vienna red circle, imperial → US MUTCD rectangle.
       limitStyle: isMetric ? "kr" : "us",
@@ -121,7 +128,7 @@
       gap: displayGap(payload?.tfGap ?? payload?.tfBars),
       temp: {
         visible: tempVisible,
-        label: tempVisible ? String(carrotMan?.desiredSource || "").trim() : "",
+        label: tempVisible ? providerPrefix + String(carrotMan?.desiredSource || "").trim() : "",
         speed: tempVisible ? displaySpeed(desiredSpeed, isMetric) : "",
         decel: tempVisible && vSetKph != null && desiredSpeed < vSetKph,
       },

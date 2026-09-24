@@ -16,6 +16,21 @@ import {
 
 const rawSource = readFileSync(new URL("../js/realtime/vision_raw.js", import.meta.url), "utf8");
 
+test("navigation owner stays distinct from HDA deceleration across transport loss", () => {
+  const state = { carState: { vCruise: 80 }, carrotMan: {
+    naviOwner: "naver_v1", naviLifecycle: "guiding", remote: "",
+    desiredSource: "hda", desiredSpeed: 40, decelProvider: "hda",
+  }};
+  const payload = deriveVehicleHudPayload(state);
+  assert.equal(payload.navigationLabel, "NAVER");
+  assert.equal(payload.cruiseOverride.label, "HDA cam");
+  assert.equal(withVehicleHudFields({}, payload).navigationLabel, "NAVER");
+  assert.notEqual(vehicleHudSignature(payload), vehicleHudSignature({ ...payload, navigationLabel: "TMAP" }));
+  state.carrotMan.naviLifecycle = "idle";
+  state.carrotMan.remote = "192.0.2.1";
+  assert.equal(deriveVehicleHudPayload(state).navigationLabel, "");
+});
+
 // Cluster parity: carState.evModeValid & evModeActive drive the green EV telltale.
 test("EV telltale requires both valid and active", () => {
   assert.equal(deriveVehicleHudPayload({ carState: { evModeValid: true, evModeActive: true } }).evActive, true);
@@ -279,6 +294,7 @@ test("final presentation payload retains cluster-only fields", () => {
   assert.deepEqual(payload, {
     vEgoKph: 52,
     gear: "D",
+    navigationLabel: "",
     evActive: true,
     activeLaneLine: false,
     laneModeRequested: true,

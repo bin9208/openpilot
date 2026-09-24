@@ -130,7 +130,11 @@ export function createSpeedPanel(doc) {
     y: OVERRIDE_SPEED_Y,
     "font-size": OVERRIDE_SPEED_FS,
     "text-anchor": "middle",  });
-  root.append(background, redLight, greenLight, speed, setSpeed, gap, gearBox, gear, ev, overrideLabel, overrideSpeed);
+  const navigation = svg(doc, "text", {
+    class: "chud-t-navigation", x: 205, y: 402, "font-size": 18,
+    fill: COLORS.override, "text-anchor": "middle",
+  });
+  root.append(background, redLight, greenLight, speed, setSpeed, gap, gearBox, gear, ev, overrideLabel, overrideSpeed, navigation);
 
   // 설계 중심 cy + cap 보정으로 baseline(y) 설정. x/text-anchor는 그대로(가로 중앙).
   function place(el, cy, fs) {
@@ -142,6 +146,7 @@ export function createSpeedPanel(doc) {
   let lastOverride = null;
 
   function update(data = {}) {
+    setText(navigation, data.navigationLabel || "");
     const speedValue = Number(data.speed);
     const speedText = Number.isFinite(speedValue) ? String(Math.max(0, Math.round(speedValue))) : "0";
     place(speed, SPEED_Y, speedText.length <= 2 ? 89.6 : 89.6 * 0.86);
