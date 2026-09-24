@@ -10,6 +10,12 @@ Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 - #27 focused local GREEN: field-only single-APK verifier 8 tests. It reuses
   format/native/manifest guards, requires exact verified split DEX and signer,
   and deliberately never invokes production/public acceptance. Full cloud gate pending.
+- #27 review fixes: local RED reproduced final-named unverified APK and absent
+  dirty-source gate. Stage on the same volume, publish only after verification,
+  docs/checksum/provenance; reject tracked dirty toolkit and record packager hash.
+- Ruling: exact hook placement assurance comes from the fresh split build's
+  profiled anchor checks plus all-DEX byte preservation in the merged APK, not
+  an independent final DEX disassembler pass. No runtime one-to-one claim.
 - #10 code evidence: separate local SQLite and network workers, bounded app-private
   writer, no PC/ADB prerequisite. New-APK device offline proof remains OPEN;
   no install was performed. D field payloadDex build succeeded on JBR21/Gradle9.

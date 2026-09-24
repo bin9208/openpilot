@@ -1,6 +1,8 @@
 from dataclasses import replace
 import hashlib
 import shutil
+from types import SimpleNamespace
+import subprocess
 import zipfile
 
 import pytest
@@ -75,3 +77,41 @@ def test_wrong_field_identity_cannot_pass_as_diagnostic(tmp_path, monkeypatch):
     lambda path, profile: replace(original(path, profile), build_id='wrong-field-id'))
   with pytest.raises(PackagingError, match='identity'):
     field.verify_field_test(request, patched)
+
+
+def cli_fixture(tmp_path, monkeypatch):
+  monkeypatch.setattr(field, '_run_verify', lambda *args: '{"payload_identity":{"build_id":"' + field.diagnostic.FIELD_ACCEPTANCE_BUILD_ID + '"},"signer_sha256":"fixture"}')
+  monkeypatch.setattr(field, 'load_profile', lambda *args: object())
+  monkeypatch.setattr(field, '_android_tools', lambda *args: SimpleNamespace(java_home=tmp_path))
+  monkeypatch.setattr(field, 'resolve_signing_config', lambda signer, tools: signer)
+  monkeypatch.setattr(field.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(stdout='f' * 40))
+  monkeypatch.setattr(field.archive_tools, 'merge_public_beta', lambda *args: SimpleNamespace(apk_path=tmp_path / 'merged.apk'))
+  monkeypatch.setattr(field, 'align_and_sign', lambda unsigned, output, *args: output.write_bytes(b'unverified'))
+  output = tmp_path / 'final'
+  args = ['--split-output', str(tmp_path / 'split'), '--base', str(tmp_path / 'base.apk'),
+          '--arm64', str(tmp_path / 'arm64.apk'), '--output', str(output),
+          '--apkeditor', str(tmp_path / 'merge.jar'), '--keystore', str(tmp_path / 'key.p12'),
+          '--store-password-env', 'TEST_PASSWORD', '--key-password-env', 'TEST_PASSWORD']
+  return output, args
+
+
+def test_failed_verification_never_leaves_final_named_apk(tmp_path, monkeypatch):
+  output, args = cli_fixture(tmp_path, monkeypatch)
+  def reject(*args):
+    raise PackagingError(field.ErrorCode.OUTPUT_HASH_MISMATCH, 'synthetic rejection')
+  monkeypatch.setattr(field, 'verify_field_test', reject)
+  with pytest.raises(PackagingError, match='synthetic rejection'):
+    field.main(args)
+  assert not output.exists()
+
+
+def test_dirty_source_cannot_be_attributed_to_clean_head(tmp_path, monkeypatch):
+  output, args = cli_fixture(tmp_path, monkeypatch)
+  def git(command, **kwargs):
+    if 'diff' in command:
+      raise subprocess.CalledProcessError(1, command)
+    return SimpleNamespace(stdout='f' * 40)
+  monkeypatch.setattr(field.subprocess, 'run', git)
+  with pytest.raises(subprocess.CalledProcessError):
+    field.main(args)
+  assert not output.exists()

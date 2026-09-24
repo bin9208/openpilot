@@ -92,28 +92,36 @@ def main(argv=None) -> int:
   signer = resolve_signing_config(SigningConfig(args.keystore, None,
     args.store_password_env, args.key_password_env), tools)
   source_root = Path(__file__).resolve().parents[2]
+  subprocess.run(['git', '-C', str(source_root), 'diff', '--exit-code', 'HEAD', '--', 'tools/naver_map_patch'],
+    check=True, capture_output=True, text=True, timeout=10)
   commit = subprocess.run(['git', '-C', str(source_root), 'rev-parse', 'HEAD'],
     check=True, capture_output=True, text=True, timeout=10).stdout.strip()
-  output.mkdir(parents=True, exist_ok=False)
-  apk = output / TEST_APK_NAME
+  output.parent.mkdir(parents=True, exist_ok=True)
   install_set = args.split_output / 'install-set'
-  with tempfile.TemporaryDirectory(prefix='.field-test-', dir=output) as temporary:
+  with tempfile.TemporaryDirectory(prefix='.field-test-', dir=output.parent) as temporary:
+    staging = Path(temporary) / 'verified'
+    staging.mkdir()
+    apk = staging / TEST_APK_NAME
     merged = archive_tools.merge_public_beta(archive_tools.MergeRequest(
       install_set, args.apkeditor, tools.java_home / 'bin' / ('java.exe' if os.name == 'nt' else 'java'),
       Path(temporary) / 'merge'))
     align_and_sign(merged.apk_path, apk, signer, tools)
     identity = verify_field_test(archive_tools.StandaloneVerificationRequest(
       args.base, args.arm64, apk, profile, tools, environment), install_set / 'base.apk')
-  for language in ('KO', 'EN'):
-    shutil.copyfile(Path(__file__).parent / 'test_release' / f'README_{language}.md', output / f'README_{language}.md')
-  digest = str(sha256_file(apk))
-  report = {'schema_version': 1, 'artifact_kind': 'field-test-not-public-release', 'source_commit': commit,
-    'apk': apk.name, 'sha256': digest, 'size': apk.stat().st_size,
-    'payload_build_id': identity.build_id, 'payload_sha256': str(identity.sha256),
-    'signer_sha256': split_report['signer_sha256'], 'installed': False,
-    'device_acceptance': False, 'offline_writer': 'app-internal SQLite; device verification pending'}
-  (output / 'provenance.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
-  (output / 'SHA256SUMS.txt').write_text(f'{digest}  {apk.name}\n', encoding='utf-8')
+    for language in ('KO', 'EN'):
+      shutil.copyfile(Path(__file__).parent / 'test_release' / f'README_{language}.md', staging / f'README_{language}.md')
+    digest = str(sha256_file(apk))
+    report = {'schema_version': 1, 'artifact_kind': 'field-test-not-public-release', 'source_commit': commit,
+      'packager_sha256': str(sha256_file(Path(__file__))), 'apk': apk.name, 'sha256': digest, 'size': apk.stat().st_size,
+      'payload_build_id': identity.build_id, 'payload_sha256': str(identity.sha256),
+      'signer_sha256': split_report['signer_sha256'], 'installed': False,
+      'hook_verification': 'same-run split build anchor checks plus exact final DEX preservation',
+      'device_acceptance': False, 'offline_writer': 'app-internal SQLite; device verification pending'}
+    (staging / 'provenance.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    (staging / 'SHA256SUMS.txt').write_text(f'{digest}  {apk.name}\n', encoding='utf-8')
+    if output.exists():
+      raise PackagingError(ErrorCode.STALE_OUTPUT, 'test output appeared during build', path=output)
+    staging.rename(output)
   print(json.dumps({'success': True, 'output': str(output), **report}, ensure_ascii=False))
   return 0
 
