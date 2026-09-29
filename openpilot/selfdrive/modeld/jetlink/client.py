@@ -25,6 +25,9 @@ class JetlinkClient:
       self.hello = self.peer.hello()
       if self.hello.get('protocol') != 2 or self.hello.get('backend') != 'ort' or self.hello.get('runtime_version') != '1.22.0':
         raise ValueError('Jetlink runtime contract mismatch')
+      artifact = self.hello.get('telemetry', {})
+      if not isinstance(artifact, dict) or artifact.get('artifact_sha256') != CONTRACT['sha256'] or artifact.get('source_sha256') != CONTRACT['sha256']:
+        raise ValueError('Jetlink executed artifact differs from the verified original model')
       self.spec = self.peer.ensure_engine(CONTRACT['sha256'], CONTRACT['nbytes'], frame_skip=4, build_timeout=300)
       actual = self.spec.to_dict()
       if any(actual.get(key) != expected for key, expected in CONTRACT.items()):

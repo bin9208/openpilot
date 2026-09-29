@@ -54,6 +54,7 @@ class LinkService : Service() {
                     session = JetlinkSession(model, { OrtEngine(backend) }, { DeviceHealth.snapshot(this).apply {
                         put("device_model", android.os.Build.MODEL); put("android_api", android.os.Build.VERSION.SDK_INT)
                         put("backend_requested", backend.name); put("app_version", BuildConfig.VERSION_NAME)
+                        put("artifact_sha256", model.artifactSha); put("source_sha256", model.sourceSha)
                     } })
                     AppState.phase = "linked"; AppState.detail = ""
                     while (!stopping.get()) {

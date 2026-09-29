@@ -6,6 +6,7 @@ to one owner generation; any error/deadline miss destroys that stream.
 import json
 import socket
 import struct
+import threading
 import time
 
 import numpy as np
@@ -60,6 +61,7 @@ class ProxyClient:
     self.generation = b''
     self.dead = False
     self.identity = {}
+    self._close_lock = threading.Lock()
 
   def connect(self):
     try:
@@ -110,10 +112,13 @@ class ProxyClient:
 
   def close(self):
     self.dead = True
-    if self.sock is not None:
+    # The worker and frame loop may fail simultaneously. Detach once, then do
+    # socket I/O outside the lock so fallback never waits on another closer.
+    with self._close_lock:
+      sock, self.sock = self.sock, None
+    if sock is not None:
       try:
-        self.sock.shutdown(socket.SHUT_RDWR)
+        sock.shutdown(socket.SHUT_RDWR)
       except OSError:
         pass
-      self.sock.close()
-      self.sock = None
+      sock.close()

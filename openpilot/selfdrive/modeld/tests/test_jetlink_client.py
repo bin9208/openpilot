@@ -9,7 +9,8 @@ from openpilot.selfdrive.modeld.jetlink.client import JetlinkClient, CONTRACT
 
 class Peer:
   dead = False
-  def hello(self): return {'protocol': 2, 'runtime_version': '1.22.0', 'backend': 'ort', 'device': 'android-arm64'}
+  def hello(self): return {'protocol': 2, 'runtime_version': '1.22.0', 'backend': 'ort', 'device': 'android-arm64',
+                          'telemetry': {'artifact_sha256': CONTRACT['sha256'], 'source_sha256': CONTRACT['sha256']}}
   def ensure_engine(self, *args, **kwargs):
     from third_party.jetlink.spec import ModelSpec
     return ModelSpec.from_dict(CONTRACT)
@@ -32,6 +33,15 @@ def test_wrong_hash_rejected():
   peer.ensure_engine = wrong
   client = JetlinkClient(peer)
   with pytest.raises(ValueError, match='contract'): client.connect()
+  assert peer.dead
+
+
+@pytest.mark.parametrize('artifact', [None, 'a' * 64])
+def test_different_or_unidentified_executed_artifact_is_rejected(artifact):
+  peer = Peer(); hello = peer.hello()
+  hello['telemetry']['artifact_sha256'] = artifact
+  peer.hello = lambda: hello
+  with pytest.raises(ValueError, match='artifact'): JetlinkClient(peer).connect()
   assert peer.dead
 
 

@@ -3,11 +3,46 @@ import threading
 import time
 import struct
 import json
+from types import SimpleNamespace
+from concurrent.futures import Future
 import numpy as np
 import pytest
 
 from openpilot.selfdrive.modeld.jetlink.client import CONTRACT
 from openpilot.selfdrive.modeld.jetlink.rpc import ProxyClient, recv_packet, send_packet
+from openpilot.selfdrive.modeld.jetlink.runtime import Runtime
+from openpilot.selfdrive.modeld.jetlink.transition import Mode, Decision, ControlState
+
+
+def test_concurrent_cleanup_cannot_interrupt_native_fallback():
+  entered, release = threading.Event(), threading.Event()
+  closed = []
+  class ControlledSocket:
+    def shutdown(self, how):
+      if threading.current_thread().name == 'modeld-close':
+        entered.set(); assert release.wait(2)
+    def close(self): closed.append(True)
+  proxy = ProxyClient(sock=ControlledSocket())
+  values = {}
+  params = SimpleNamespace(get_bool=lambda key: False, put_bool=lambda key, value: values.update({key: value}))
+  runtime = Runtime(params, (1928, 1208), None)
+  runtime.mode = Mode.ACTIVE_REQUEST; runtime.controls = ControlState(False, True, True, True)
+  runtime.transition.active = True; runtime.decision = Decision('jetlink', 'ACTIVE', False, False)
+  runtime.pending = Future(); runtime.deadline = time.monotonic_ns() - 1
+  runtime.model = SimpleNamespace(close=proxy.close)
+  native, outputs, errors = {'native': True}, [], []
+  def fallback():
+    try: outputs.append(runtime.finish(native))
+    except Exception as exc: errors.append(exc)
+  worker = threading.Thread(target=fallback, name='modeld-close'); worker.start()
+  try:
+    assert entered.wait(1)
+    proxy.close()  # concurrent inference-worker cleanup
+  finally:
+    release.set(); worker.join(2); runtime.pool.shutdown(wait=False)
+  assert not errors
+  assert outputs == [native] and runtime.decision.loss_latched
+  assert len(closed) == 1
 
 
 @pytest.mark.parametrize('fault', ['none', 'generation', 'frame', 'partial', 'late'])

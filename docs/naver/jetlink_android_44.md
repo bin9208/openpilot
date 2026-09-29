@@ -51,3 +51,5 @@
 - 로컬 C3X 관련103 tests에 owner request 경계1개를 더하여104 tests PASS. 실제 Linux selfdrived/state 검사는 Windows fcntl 제약으로 수집 불가; 필수 Linux build-release job에서 수행. 새로운 APK0.1.1은 검증 프로필 식별을 위한 handshake 기기 정보를 추가.
 - 실제 C3X QCOM 빌드·warp pixels·USB 속도·30분 Shadow 및 차량 확인은 미수행. Linux 호스트 빌드와 구분하고 #44/#45/#46/#47을 실기 기준 충족 전 닫지 않는다.
 - 별개 upstream mirror 실패는 #49로 분리. 기존 미러를 강제 갱신하지 않았다.
+
+C3X 별도 리뷰에서 동시 RPC 종료 예외와 원본/실행 파일 해시 구분 부족을 확인했다. 각 실패를 테스트로 재현한 뒤 소켓 참조의 잠금 분리와 실행 artifact SHA handshake 검증으로 수정했다. 최신 로컬107 focused tests 및 Android24 tests/lint/APK가 통과했다. 활성 검증 기록은 실행 artifact까지 일치해야 하며 최초 C3X 지원은 원본 보존 CTV3로 한정한다. PR #51 최신 SHA의 필수 Actions와 실제 Linux 빌드 결과는 GitHub를 기준으로 확인한다.

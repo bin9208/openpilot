@@ -4,7 +4,7 @@ from openpilot.selfdrive.modeld.jetlink.client import CONTRACT
 
 
 IDENTITY = {'device_model': 'SM-X916N', 'android_api': '35', 'backend_requested': 'NNAPI',
-            'runtime_version': '1.22.0', 'app_version': '0.1.1-experimental'}
+            'runtime_version': '1.22.0', 'app_version': '0.1.1-experimental', 'artifact_sha256': CONTRACT['sha256']}
 
 
 def receipt():
@@ -22,3 +22,4 @@ def test_missing_or_unmeasured_profile_cannot_activate():
     value_dict = receipt(); value_dict[key] = value
     assert not validation_matches(json.dumps(value_dict), IDENTITY)
   assert not validation_matches(json.dumps(receipt()), {**IDENTITY, 'backend_requested': 'CPU'})
+  assert not validation_matches(json.dumps(receipt()), {**IDENTITY, 'artifact_sha256': 'b' * 64})

@@ -80,7 +80,7 @@ class InferenceServer:
               raise ValueError('Missing owner handshake')
             hello = self.client.hello
             identity = hello.get('telemetry', {})
-            identity = {key: str(identity.get(key, ''))[:200] for key in ('device_model', 'android_api', 'backend_requested', 'app_version')}
+            identity = {key: str(identity.get(key, ''))[:200] for key in ('device_model', 'android_api', 'backend_requested', 'app_version', 'artifact_sha256')}
             identity['runtime_version'] = str(hello.get('runtime_version', ''))[:200]
             info = {'ready': True, 'generation': self.generation.hex(), 'spec': CONTRACT, 'identity': identity}
             send_packet(connection, b'J' + json.dumps(info).encode(), time.monotonic_ns() + 500_000_000)
