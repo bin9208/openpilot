@@ -8,6 +8,36 @@ from openpilot.selfdrive.carrot.cruise_gap import cruise_gap_levels
 from openpilot.selfdrive.carrot.bluetooth.model import BLUETOOTH_CANCEL
 
 
+@pytest.mark.parametrize('road_limit,model_mode,adjust,upto,offset,expected', [
+  (0, -1., 0., 1., 0, 80.),
+  (-1, -1., 0., 1., 0, 80.),
+  (0, 0., -1., 1., 0, 80.),
+  (0, 0., .5, 1., 0, 80.),
+  (50, 0., .5, 1., 0, 65.),
+  (50, 0., -1., 1., -1, 55.),
+  (50, -1., 0., 0., 0, 55.),
+])
+def test_unknown_road_does_not_become_a_model_or_road_cruise_target(road_limit, model_mode, adjust, upto, offset, expected):
+  helper = VCruiseCarrot.__new__(VCruiseCarrot)
+  helper.nRoadLimitSpeed = road_limit
+  helper.nRoadLimitSpeed_last = 80
+  helper.road_limit_kph = 80
+  helper._v_cruise_kph_at_brake = 75
+  helper._pause_auto_speed_up = False
+  helper.applyModelSpeed = model_mode
+  helper.model_v_kph = 90.
+  helper.autoSpeedUptoRoadSpeedLimit = upto
+  helper.autoRoadSpeedLimitOffset = offset
+  helper.autoRoadSpeedAdjust = adjust
+  helper.autoNaviSpeedSafetyFactor = 1.1
+  helper.v_lead_kph = 0.
+  helper.d_rel = 100.
+  helper._add_log = lambda message: None
+  assert helper._auto_speed_up(80.) == pytest.approx(expected)
+  if road_limit <= 0:
+    assert (helper.nRoadLimitSpeed_last, helper.road_limit_kph, helper._v_cruise_kph_at_brake) == (80, 80, 75)
+
+
 def make_cruise_helper(button_kph, cruise_button_mode, carrot_cruise_active, cruise_enabled,
                        cruise_speed_initialized=True, cruise_speed_at_brake=0):
   helper = VCruiseCarrot.__new__(VCruiseCarrot)

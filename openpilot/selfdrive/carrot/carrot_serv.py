@@ -1586,10 +1586,15 @@ class CarrotServ:
     self._update_countdown_alert(left_sec, source, v_ego_kph)
 
     self._update_cmd()
+    selection = self.navigation_selection
+    owner = selection.snapshot
+    unknown_naver_road = (owner is not None and owner.source is NavigationSource.NAVER_V1
+                          and not self.carrot_navi_road_limit_valid)
     msg = messaging.new_message('carrotMan')
     msg.valid = True
     msg.carrotMan.activeCarrot = self.active_carrot
-    msg.carrotMan.nRoadLimitSpeed = int(self.nRoadLimitSpeed)
+    # Publish unknown instead of presenting retained control state as a known Naver road limit.
+    msg.carrotMan.nRoadLimitSpeed = 0 if unknown_naver_road else int(self.nRoadLimitSpeed)
     msg.carrotMan.remote = remote_ip
     msg.carrotMan.xSpdType = int(self.xSpdType)
     msg.carrotMan.xSpdLimit = int(self.xSpdLimit)
@@ -1604,8 +1609,6 @@ class CarrotServ:
     msg.carrotMan.szTBTMainText = self.szTBTMainText
     msg.carrotMan.desiredSpeed = int(desired_speed)
     msg.carrotMan.desiredSource = source
-    selection = self.navigation_selection
-    owner = selection.snapshot
     msg.carrotMan.naviOwner = owner.source.value if owner is not None else ''
     msg.carrotMan.naviSessionId = owner.session_id if owner is not None else ''
     msg.carrotMan.naviSequence = owner.sequence if owner is not None else 0

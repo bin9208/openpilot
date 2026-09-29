@@ -315,6 +315,28 @@ def test_speed_limit_snapshot_reads_submaster_once(hud_module):
   assert fake_ui_state.sm.calls == 1
 
 
+@pytest.mark.parametrize('info,label,value', [
+  ((0, 0, 0), 'LIMIT', '--'),
+  ((0, 0, -1), 'LIMIT', '--'),
+  ((25, 22, 0), 'LIMIT', '--'),
+  ((60, 1, 0), 'CAM', '60'),
+  ((0, 0, 80), 'LIMIT', '80'),
+])
+def test_speed_limit_box_distinguishes_unknown_road_from_camera(hud_module, monkeypatch, info, label, value):
+  module, state = hud_module
+  renderer = object.__new__(module.HudRenderer)
+  renderer._blink_timer = 0
+  renderer._font_display = None
+  renderer.speed = 50
+  texts, colors = [], []
+  monkeypatch.setattr(module, 'draw_text_ui_style', lambda text, *args, **kwargs: texts.append(text))
+  monkeypatch.setattr(renderer, '_draw_round_box', lambda *args, **kwargs: colors.append(args[4]))
+  renderer._draw_carrot_speed_limit_box(0, 0, info)
+  assert texts == [label, value]
+  if value == '--':
+    assert colors == [module.COLORS.WHITE_210]
+
+
 def test_speed_panel_reuses_one_snapshot(hud_module, monkeypatch):
   module, _ = hud_module
   renderer = object.__new__(module.HudRenderer)
