@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Jetlink Android model package v1",
+  "type": "object",
+  "required": ["schema_version", "prepare_version", "source", "artifact", "runtime", "frame_skip", "inputs", "outputs", "output_slices", "state_pairs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "prepare_version": {"const": 1},
+    "frame_skip": {"enum": [1, 2, 4]},
+    "source": {"allOf": [{"$ref": "#/$defs/identity"}, {"required": ["checkpoint"], "properties": {"checkpoint": {"$ref": "#/$defs/name"}}}]},
+    "artifact": {"allOf": [{"$ref": "#/$defs/identity"}, {"required": ["path"], "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 1024}}}]},
+    "runtime": {
+      "type": "object", "required": ["name", "version", "backend"],
+      "properties": {"name": {"const": "onnxruntime"}, "version": {"type": "string", "minLength": 1, "maxLength": 32}, "backend": {"enum": ["cpu", "nnapi", "qnn"]}}
+    },
+    "inputs": {"$ref": "#/$defs/tensors"},
+    "outputs": {"allOf": [{"$ref": "#/$defs/tensors"}, {"required": ["outputs"]}]},
+    "output_slices": {
+      "type": "object", "minProperties": 1,
+      "additionalProperties": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0, "maximum": 4294967296}}
+    },
+    "state_pairs": {"type": "object", "additionalProperties": {"$ref": "#/$defs/name"}}
+  },
+  "$defs": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "identity": {"type": "object", "required": ["sha256", "bytes"], "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "bytes": {"type": "integer", "minimum": 1, "maximum": 4294967296}}},
+    "tensors": {
+      "type": "object", "minProperties": 1, "maxProperties": 128,
+      "additionalProperties": {
+        "type": "object", "required": ["dtype", "shape"],
+        "properties": {
+          "dtype": {"enum": ["uint8", "bool", "float16", "float32", "float64", "int32", "int64"]},
+          "shape": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "integer", "minimum": 1, "maximum": 2147483647}}
+        }
+      }
+    }
+  }
+}
