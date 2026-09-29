@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Carrot Jetlink</string>
+    <string name="subtitle">External model companion · experimental</string>
+    <string name="status">Status</string><string name="models">Model</string><string name="benchmark">Benchmark</string><string name="logs">Diagnostics</string>
+    <string name="connect">Connect comma USB</string><string name="stop">Stop</string>
+    <string name="import_model">Import model package ZIP</string><string name="run_benchmark">Run 100-frame benchmark</string>
+    <string name="export_report">Save diagnostic report</string>
+    <string name="no_model">Import a verified model package first.</string>
+    <string name="no_usb">No Jetlink USB device found. Use a USB 3 data cable and enable Jetlink on the comma.</string>
+    <string name="usb_denied">USB permission was not granted. Reopen the app and try connecting again.</string>
+    <string name="idle">Ready to connect</string><string name="permission">Waiting for USB permission</string>
+    <string name="importing">Importing and verifying model</string><string name="connecting">Connecting USB</string>
+    <string name="linked">Comma USB connected</string><string name="preparing">Preparing model</string>
+    <string name="benchmarking">Benchmark running</string><string name="stopping">Stopping</string><string name="error">Action required</string>
+    <string name="cpu">CPU · validation baseline</string><string name="nnapi">NNAPI requested · acceleration unverified</string>
+    <string name="model_help">Use the ZIP produced by the host model tools. Large model weights are not bundled in this app. Import and benchmark while parked.</string>
+    <string name="benchmark_help">Uses the package’s synthetic inputs, or black images with fixed context. Reports app inference time only; USB and C3X camera processing are excluded. Keep this screen open.</string>
+    <string name="acceptance_note">A ready model or successful benchmark does not approve vehicle use. C3X end-to-end, thermal and drive validation are separate.</string>
+    <string name="thermal_stop">Device temperature is high. Let it cool before reconnecting.</string>
+    <string name="memory_error">Not enough memory to run this model.</string>
+    <string name="report_saved">Report saved</string><string name="model_imported">Model package verified and stored</string>
+    <string name="device_format">%1$s · Android %2$s (API %3$d)</string>
+    <string name="stats_format">Frames %1$d · over 50 ms %2$d\nMean %3$.1f ms · p50 %4$.1f ms · p95 %5$.1f ms · p99 %6$.1f ms\nMaximum %7$.1f ms</string>
+    <string name="health_format">Available memory %1$d MiB · battery %2$s%% · thermal state %3$d</string>
+    <string name="no_frames">No inference measurements yet.</string>
+    <string name="export_parity">Save numerical comparison ZIP (after benchmark)</string>
+    <string name="not_driving">Validation app · vehicle acceptance pending</string>
+</resources>

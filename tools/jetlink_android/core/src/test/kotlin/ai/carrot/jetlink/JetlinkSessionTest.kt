@@ -11,6 +11,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class JetlinkSessionTest {
+    @Test fun preparationOutOfMemoryBecomesFailedAndClosesCandidate() {
+        val root = Files.createTempDirectory("jetlink-oom").toFile()
+        val closed = CountDownLatch(1)
+        try {
+            val pkg = ModelPackage.parse(ModelStoreTest().fixture(root), root)
+            JetlinkSession(pkg, { object : InferenceEngine {
+                override fun prepare(model: ModelPackage) { throw OutOfMemoryError("fixture") }
+                override fun run(warped: ByteArray, packed: FloatArray, reset: Boolean) = FloatArray(4)
+                override fun close() { closed.countDown() }
+            } }).use { session ->
+                session.handle(request(pkg))
+                assertTrue(closed.await(1, TimeUnit.SECONDS))
+                assertEquals("failed", session.state)
+            }
+        } finally { root.deleteRecursively() }
+    }
     private fun json(message: ByteArray) = JSONObject(String(message.copyOfRange(32, message.size), Charsets.UTF_8))
     private fun request(pkg: ModelPackage, seq: Long = 2) = Wire.message(3, seq, JSONObject().apply {
         put("sha256", pkg.sourceSha); put("nbytes", pkg.artifactBytes); put("frame_skip", pkg.frameSkip)

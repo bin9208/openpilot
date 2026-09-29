@@ -26,4 +26,12 @@ jobs:
         with: {persist-credentials: false, lfs: false}
       - uses: actions/setup-java@v5
         with: {distribution: temurin, java-version: '17'}
-      - run: bash tools/jetlink_android/gradlew -p tools/jetlink_android :core:test :runtime:test
+      - run: bash tools/jetlink_android/gradlew -p tools/jetlink_android :core:test :runtime:test :app:lintDebug :app:assembleDebug
+      - run: python tools/jetlink_android/check_apk.py tools/jetlink_android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v6
+        with:
+          name: jetlink-android-arm64-debug
+          path: |
+            tools/jetlink_android/app/build/outputs/apk/debug/app-debug.apk
+            tools/jetlink_android/app/build/reports/lint-results-debug.html
+          if-no-files-found: error

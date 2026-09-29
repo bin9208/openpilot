@@ -51,6 +51,8 @@ class JetlinkSession(
                 synchronized(engineLock) {
                     if (!closed.get()) { engine = candidate; candidate = null; state = "ready" }
                 }
+            } catch (_: OutOfMemoryError) {
+                if (!closed.get()) { detail = "Insufficient model memory"; state = "failed" }
             } catch (e: Exception) {
                 if (!closed.get()) { detail = (e.message ?: "Model preparation failed").take(240); state = "failed" }
             } finally { candidate?.close() }

@@ -69,7 +69,8 @@ class OrtEngine(private val backend: Backend = Backend.CPU) : InferenceEngine {
             if (verified.inputs.getValue("action_t").elements == 2) { warm[action] = 0.1f; warm[action + 1] = 0.3f }
             repeat(2) { run(ByteArray(verified.warpedBytes), warm, true) }
             resetState()
-        } catch (e: Exception) { close(); throw e }
+        } catch (e: OutOfMemoryError) { close(); throw e }
+          catch (e: Exception) { close(); throw e }
     }
 
     private fun resetState() {
