@@ -13,6 +13,8 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/tests.yaml
+    with:
+      run_number: '1'
   navigation:
     uses: ./.github/workflows/naver-ci.yml
   apk:

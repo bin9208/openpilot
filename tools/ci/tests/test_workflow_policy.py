@@ -24,6 +24,7 @@ class WorkflowPolicyTests(unittest.TestCase):
     spec = workflow('integration.yml')
     for event in ('push', 'pull_request'):
       self.assertEqual(spec['on'][event], {'branches': ['dev', 'main']})
+    self.assertEqual(spec['jobs']['build']['with']['run_number'], '1')
     gate = spec['jobs']['gate']
     self.assertEqual(set(gate['needs']), {'build', 'navigation', 'apk'})
     self.assertEqual(gate['if'], '${{ always() }}')

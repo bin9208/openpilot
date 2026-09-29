@@ -4,8 +4,6 @@ on:
   pull_request:
     branches:
       - carrot-wip
-      - dev
-      - main
     paths:
       - "openpilot/selfdrive/carrot_settings.json"
       - "tools/docs/wiki_settings/**"
