@@ -6,6 +6,8 @@ on:
   push:
     branches:
       - carrot-wip
+      - dev
+      - main
   workflow_dispatch:
 
 jobs:

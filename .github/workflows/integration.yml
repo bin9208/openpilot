@@ -1,0 +1,37 @@
+name: Integration
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: integration-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    uses: ./.github/workflows/tests.yaml
+    with:
+      run_number: '1'
+  navigation:
+    uses: ./.github/workflows/naver-ci.yml
+  apk:
+    uses: ./.github/workflows/naver-apk-tools.yml
+  gate:
+    name: integration gate
+    if: ${{ always() }}
+    needs: [build, navigation, apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every integration suite to succeed
+        env:
+          BUILD: ${{ needs.build.result }}
+          NAVIGATION: ${{ needs.navigation.result }}
+          APK: ${{ needs.apk.result }}
+        run: |
+          test "$BUILD" = success
+          test "$NAVIGATION" = success
+          test "$APK" = success
