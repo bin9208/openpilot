@@ -8,8 +8,8 @@ import subprocess
 def run(base=None):
   base = base or os.environ.get('BASE_SHA', '')
   if not base or set(base) == {'0'}:
-    # New branch/manual run: inspect its tip commit, rather than an invalid zero SHA.
-    base = subprocess.check_output(['git', 'rev-parse', 'HEAD^'], text=True).strip()
+    # Cover every commit on an issue branch, including its first multi-commit push.
+    base = subprocess.check_output(['git', 'merge-base', 'origin/dev', 'HEAD'], text=True).strip()
   subprocess.run(['git', 'diff', '--check', base, 'HEAD'], check=True)
   paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', '--diff-filter=ACMR', base, 'HEAD'])
   checked = 0
