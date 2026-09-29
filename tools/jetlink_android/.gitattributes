@@ -1,2 +1,3 @@
 /gradlew text eol=lf
 /gradle/wrapper/gradle-wrapper.jar -filter -diff -merge -text
+/runtime/src/test/resources/stateful/model.onnx -filter -diff -merge -text

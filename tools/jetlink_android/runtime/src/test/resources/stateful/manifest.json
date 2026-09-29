@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "prepare_version": 1,
+  "source": {
+    "checkpoint": "tiny-stateful-test",
+    "sha256": "b0669bc51ec95a6a8bccf3ddf614098148ee1447025d99f4dd5e5d501ca41868",
+    "bytes": 39160
+  },
+  "artifact": {
+    "path": "model.onnx",
+    "sha256": "b0669bc51ec95a6a8bccf3ddf614098148ee1447025d99f4dd5e5d501ca41868",
+    "bytes": 39160
+  },
+  "runtime": {
+    "name": "onnxruntime",
+    "version": "1.22.0",
+    "backend": "cpu"
+  },
+  "frame_skip": 4,
+  "inputs": {
+    "new_img": {
+      "dtype": "uint8",
+      "shape": [
+        2,
+        6,
+        8,
+        16
+      ]
+    },
+    "desire": {
+      "dtype": "float32",
+      "shape": [
+        8
+      ]
+    },
+    "traffic_convention": {
+      "dtype": "float32",
+      "shape": [
+        1,
+        2
+      ]
+    },
+    "action_t": {
+      "dtype": "float32",
+      "shape": [
+        1,
+        2
+      ]
+    },
+    "state_img_q": {
+      "dtype": "uint8",
+      "shape": [
+        2,
+        5,
+        6,
+        8,
+        16
+      ]
+    },
+    "state_desire_q": {
+      "dtype": "float32",
+      "shape": [
+        6,
+        1,
+        8
+      ]
+    },
+    "state_feat_q": {
+      "dtype": "float32",
+      "shape": [
+        4,
+        1,
+        16
+      ]
+    }
+  },
+  "outputs": {
+    "outputs": {
+      "dtype": "float32",
+      "shape": [
+        1,
+        64
+      ]
+    },
+    "next_state_img_q": {
+      "dtype": "uint8",
+      "shape": [
+        2,
+        5,
+        6,
+        8,
+        16
+      ]
+    },
+    "next_state_desire_q": {
+      "dtype": "float32",
+      "shape": [
+        6,
+        1,
+        8
+      ]
+    },
+    "next_state_feat_q": {
+      "dtype": "float32",
+      "shape": [
+        4,
+        1,
+        16
+      ]
+    }
+  },
+  "output_slices": {
+    "plan": [
+      0,
+      16
+    ],
+    "lead_prob": [
+      16,
+      19
+    ],
+    "hidden_state": [
+      32,
+      48
+    ]
+  },
+  "state_pairs": {
+    "state_img_q": "next_state_img_q",
+    "state_desire_q": "next_state_desire_q",
+    "state_feat_q": "next_state_feat_q"
+  }
+}
