@@ -7,13 +7,14 @@ android {
         applicationId = "ai.carrot.jetlink"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-experimental"
+        versionCode = 2
+        versionName = "0.1.1-experimental"
         ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildTypes { release { isMinifyEnabled = false } }
+    buildFeatures { buildConfig = true }
     packaging { resources.excludes += "META-INF/INDEX.LIST" }
 }
 dependencies {

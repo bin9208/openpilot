@@ -245,6 +245,22 @@
           "docs/user/en/jetlink.md"
         ]
       ]
+    },
+    {
+      "id": "jetlink-c3x",
+      "enforcement": "required",
+      "description": "C3X Jetlink source selection, loss recovery and USB ownership",
+      "code_paths": [
+        "openpilot/selfdrive/modeld/jetlink/**",
+        "openpilot/selfdrive/modeld/modeld.py",
+        "openpilot/selfdrive/controls/controlsd.py"
+      ],
+      "doc_sets": [
+        [
+          "docs/user/ko/jetlink.md",
+          "docs/user/en/jetlink.md"
+        ]
+      ]
     }
   ]
 }

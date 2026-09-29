@@ -10,7 +10,7 @@ from openpilot.cereal import car
 
 def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, min_speed=0.0,
                      active=True, always_lateral=False, lat_enabled=True, temporary_fault=False,
-                     permanent_fault=False, gear="drive"):
+                     permanent_fault=False, gear="drive", jetlink_loss=False, jetlink_source='native', model_fresh=True):
   # Execute the production state_control path through its lateral gating call,
   # without starting hardware, IPC, model inference, or actuator controllers.
   path = Path(__file__).parents[1] / "controlsd.py"
@@ -29,12 +29,14 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
   controls.VM = SimpleNamespace(update_params=lambda *_args: None, calc_curvature=lambda *_args: 0.0)
   state = car.CarState.new_message(vEgo=speed, standstill=stopped, gearShifter=gear, latEnabled=lat_enabled,
                                    steerFaultTemporary=temporary_fault, steerFaultPermanent=permanent_fault)
-  controls.sm = {
+  class ModelState(dict):
+    def all_checks(self, _services): return model_fresh
+  controls.sm = ModelState({
     "carState": state,
     "liveParameters": SimpleNamespace(stiffnessFactor=1.0, steerRatio=15.0, angleOffsetDeg=0.0, roll=0.0),
-    "longitudinalPlan": SimpleNamespace(), "modelV2": SimpleNamespace(),
+    "longitudinalPlan": SimpleNamespace(), "modelV2": SimpleNamespace(jetlink=SimpleNamespace(lossLatched=jetlink_loss, source=jetlink_source)),
     "selfdriveState": SimpleNamespace(enabled=active, active=active),
-  }
+  })
 
   class ReachedLateralGate(Exception):
     pass
@@ -49,6 +51,16 @@ def run_lateral_gate(*, brand="tesla", supported=True, speed=0.0, stopped=True, 
   with pytest.raises(ReachedLateralGate):
     controls.state_control()
   return result[0]
+
+
+def test_jetlink_loss_blocks_lateral_only_override():
+  assert not run_lateral_gate(active=False, always_lateral=True, jetlink_loss=True)
+  assert run_lateral_gate(active=False, always_lateral=True, jetlink_loss=False)
+
+
+def test_stale_external_model_blocks_lateral_only_after_modeld_death():
+  assert not run_lateral_gate(active=False, always_lateral=True, jetlink_source='jetlink', model_fresh=False)
+  assert run_lateral_gate(active=False, always_lateral=True, jetlink_source='native', model_fresh=False)
 
 
 @pytest.mark.parametrize("active,always_lateral", [(True, False), (False, True)])

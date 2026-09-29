@@ -1,0 +1,1 @@
+Pinned MIT Jetlink protocol/client/FunctionFS subset. Imports are namespaced to third_party.jetlink. onnx_meta.py uses the restricted metadata decoder already audited in tools/jetlink_model/reference; C3X runtime only consumes the fixed JSON contract, never parses arbitrary ONNX metadata. Upstream: https://github.com/zoompilot/jetlink/tree/f10f4705243812518e6441dfb06bf2178c408310

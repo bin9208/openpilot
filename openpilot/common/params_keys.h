@@ -136,6 +136,11 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UsbGpuLoading", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
     {"UsbGpuActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
     {"UsbGpuStartupFailed", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, BOOL}},
+    {"JetlinkMode", {CLEAR_ON_MANAGER_START, INT, "0"}},
+    {"JetlinkActive", {CLEAR_ON_MANAGER_START, BOOL}},
+    {"JetlinkLossLatched", {CLEAR_ON_MANAGER_START, BOOL}},
+    {"JetlinkStatus", {CLEAR_ON_MANAGER_START, STRING}},
+    {"JetlinkValidation", {PERSISTENT, STRING}},
     {"UseWideCamera", {PERSISTENT, BOOL, "1"}},
     {"Version", {PERSISTENT, STRING}},
 

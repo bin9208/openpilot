@@ -26,6 +26,9 @@ from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_drivi
 from openpilot.common.file_chunker import open_file_chunked
 from openpilot.selfdrive.modeld.camera_sync import FrameMeta, receive_camera_pair
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
+from openpilot.selfdrive.modeld.jetlink.runtime import Runtime as JetlinkRuntime
+from openpilot.selfdrive.modeld.jetlink.transition import ControlState
+from openpilot.selfdrive.modeld.jetlink.warp import make_jetlink_warp
 from openpilot.selfdrive.modeld.helpers import (get_tg_input_devices, load_oob, modeld_pkl_path,
                                                 refresh_usbgpu_device_cache, select_vision_streams, usbgpu_compiled_path,
                                                 usbgpu_pcie_not_ready, usbgpu_present, wait_for_usbgpu_present)
@@ -147,8 +150,7 @@ class ModelState:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}
     return parsed_model_outputs
 
-  def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
-          inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+  def _prepare_frames(self, bufs: dict[str, VisionBuf]) -> None:
     for key in bufs.keys():
       stride, y_height, uv_height, yuv_size = self.frame_buf_params[key]
       frame_data = np.frombuffer(bufs[key].data, dtype=np.uint8)
@@ -181,6 +183,17 @@ class ModelState:
           self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype='uint8', device=self.WARP_DEV)
         self.full_frames[key] = self._blob_cache[cache_key]
 
+  def warp_images(self, bufs, transforms):
+    """Newest narrow/wide images from the same compiled warp used by native inference."""
+    self._prepare_frames(bufs)
+    self.npy['tfm'][:] = transforms['img']
+    self.npy['big_tfm'][:] = transforms['big_img']
+    return self.warp(**{k: self.input_queues[k] for k in WARP_INPUTS},
+                     frame=self.full_frames['img'], big_frame=self.full_frames['big_img']).numpy()
+
+  def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
+          inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    self._prepare_frames(bufs)
     # Model decides when action is completed, so desire input is just a pulse triggered on rising edge
     inputs['desire_pulse'][0] = 0
     self.npy['desire'][:] = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0)
@@ -324,6 +337,9 @@ def main(demo=False):
   if not usbgpu_startup_pending:
     params.put_bool("UsbGpuLoading", False)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
+  jetlink = JetlinkRuntime(params, (vipc_client_main.width, vipc_client_main.height),
+                          lambda bufs, transforms: make_jetlink_warp(vipc_client_main.width, vipc_client_main.height,
+                                                                    (128, 256), small_model)(bufs, transforms))
 
   # messaging
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry"])
@@ -447,6 +463,14 @@ def main(demo=False):
     mt1 = time.perf_counter()
     camera_age_at_run_ms = (time.monotonic() - meta_main.timestamp_eof * 1e-9) * 1000
     inference_cpu_start = time.thread_time()
+    controls_fresh = all(sm.valid[name] and sm.alive[name] for name in ('carState', 'carControl'))
+    jetlink_controls = ControlState(controls_fresh and sm['carState'].standstill,
+                                   sm['carState'].cruiseState.enabled, sm['carControl'].latActive, sm['carControl'].enabled)
+    # The native model stays warm, including during external inference. USB work
+    # overlaps native computation; no FunctionFS syscall executes in this loop.
+    jetlink.begin(params.get_int('JetlinkMode'), jetlink_controls, bufs, transforms, inputs,
+                  meta_main.frame_id, prepare_only,
+                  camera_ready=live_calib_seen and controls_fresh and not params.get_bool('UsbGpuActive'))
     try:
       model_output = model.run(bufs, transforms, inputs, prepare_only)
     except Exception:
@@ -464,6 +488,7 @@ def main(demo=False):
       # missing modelV2 frame during fallback can otherwise cascade into a
       # misleading communication/CAN error while selfdrived waits for modeld.
       model_output = model.run(bufs, transforms, inputs, prepare_only)
+    model_output = jetlink.finish(model_output)
     mt2 = time.perf_counter()
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
     model_execution_time = mt2 - mt1
@@ -517,6 +542,11 @@ def main(demo=False):
       # pose represents current simulated motion, so timestamp it at publish.
       pose_timestamp_eof = time.monotonic_ns() if SIMULATION else meta_main.timestamp_eof
       fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, pose_timestamp_eof, live_calib_seen)
+      jetlink_fresh = jetlink.valid_at_publish()
+      modelv2_send.modelV2.jetlink = jetlink.status()
+      drivingdata_send.drivingModelData.jetlink = jetlink.status()
+      if not jetlink_fresh:
+        modelv2_send.valid = drivingdata_send.valid = posenet_send.valid = False
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
