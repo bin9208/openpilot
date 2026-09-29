@@ -1,0 +1,2 @@
+/gradlew text eol=lf
+/gradle/wrapper/gradle-wrapper.jar -filter -diff -merge -text
