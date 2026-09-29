@@ -31,3 +31,13 @@
   원본/준비본 출력 최대 차이 0으로 통과했다. PC CPU/ORT1.22.0 결과다.
 - 증거: tools/jetlink_model/evidence/2026-09-29-cinque-v3-host.json.
 - Android 출력/지연/발열/USB/C3X/차량 검증은 아직 수행하지 않았다.
+
+## #46 별도 리뷰 수정
+
+- 별도 리뷰의 Important 3건: runtime 전 tensor byte 검사, 외부 데이터 alias 확장 합계,
+  queued golden 수치 검사 누락. 각각 재현 후 크기 preflight와 명시적 golden 검사로 보완했다.
+- 최종 로컬 host tests: 43 passed, 1 Windows symlink skip; CI 정책4 passed.
+- queued 추론의 upstream golden 차이(max abs0.125)는 수치적으로 해결된 상태가 아니다.
+  `golden_check`는 이를 unverified/exit1로 보고하고 문서에 차량 사용 미인증을 명시한다.
+- Stateful tiny golden은 테스트에서 비교한다. 실제 CTV3 host parity와 queued 미검증을 구분한다.
+- PR: https://github.com/bin9208/openpilot/pull/48 . #46은 Android parity/가속/실기 조건이 남아 열린 상태다.

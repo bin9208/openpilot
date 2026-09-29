@@ -95,3 +95,36 @@ def test_exporter_line_wrapped_slice_metadata():
   from tools.jetlink_model.prepare import output_slices
   encoded = base64.encodebytes(pickle.dumps({'plan': slice(0, 18452)})).decode()
   assert output_slices(encoded) == {'plan': [0, 18452]}
+
+
+def test_oversize_tensor_rejected_before_runtime_creation(tmp_path, monkeypatch):
+  import onnxruntime
+  from tools.jetlink_model.prepare import prepare
+  source = write_model(tmp_path / 'input.onnx')
+  model = onnx.load(str(source))
+  model.graph.input[0].type.tensor_type.shape.dim[1].dim_value = 2**30 + 1
+  onnx.save(model, str(source))
+  def forbidden_runtime(*args, **kwargs):
+    pytest.fail('oversized graph reached runtime allocation')
+  monkeypatch.setattr(onnxruntime, 'InferenceSession', forbidden_runtime)
+  with pytest.raises(ValueError, match='tensor'):
+    prepare(source, tmp_path / 'package', 4)
+
+
+def test_external_alias_expansion_budget_is_checked_before_loading(tmp_path, monkeypatch):
+  import tools.jetlink_model.prepare as module
+  source = write_model(tmp_path / 'input.onnx')
+  model = onnx.load(str(source))
+  for index in range(8):
+    tensor = model.graph.initializer.add(name=f'alias{index}', data_type=TensorProto.FLOAT, dims=[64])
+    tensor.data_location = TensorProto.EXTERNAL
+    tensor.external_data.add(key='location', value='shared.bin')
+    tensor.external_data.add(key='length', value='256')
+  onnx.save(model, str(source))
+  (tmp_path / 'shared.bin').write_bytes(bytes(256))
+  monkeypatch.setattr(module, 'MAX_MODEL_BYTES', source.stat().st_size + 257)
+  def forbidden_load(*args, **kwargs):
+    pytest.fail('external aliases reached memory expansion')
+  monkeypatch.setattr(onnx.external_data_helper, 'load_external_data_for_model', forbidden_load)
+  with pytest.raises(ValueError, match='external'):
+    module.prepare(source, tmp_path / 'package', 4)

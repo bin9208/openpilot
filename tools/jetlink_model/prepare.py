@@ -5,6 +5,7 @@ import argparse
 import base64
 import io
 import json
+import math
 import pickle
 import tempfile
 from pathlib import Path
@@ -60,10 +61,38 @@ def _tensors(graph):
           yield from _tensors(nested)
 
 
+def _tensor_bytes(elem_type, dims):
+  widths = {1: 4, 2: 1, 3: 1, 4: 2, 5: 2, 6: 4, 7: 8, 9: 1, 10: 2, 11: 8, 12: 4, 13: 8, 16: 2}
+  if elem_type not in widths or any(type(d) is not int or d < 0 for d in dims):
+    raise ValueError('unsupported tensor element type or dimensions')
+  size = math.prod(dims) * widths[elem_type]
+  if size > MAX_MODEL_BYTES:
+    raise ValueError('tensor exceeds size budget before runtime allocation')
+  return size
+
+
+def _preflight_shapes(graph):
+  for item in [*graph.input, *graph.output, *graph.value_info]:
+    tensor = item.type.tensor_type
+    if not item.type.HasField('tensor_type') or not tensor.HasField('shape'):
+      raise ValueError('tensor type and static shape required')
+    dimensions = list(tensor.shape.dim)
+    if any(not d.HasField('dim_value') for d in dimensions):
+      raise ValueError('dynamic tensor dimensions are unsupported')
+    _tensor_bytes(tensor.elem_type, [d.dim_value for d in dimensions])
+  for node in graph.node:
+    for attr in node.attribute:
+      if attr.HasField('g'):
+        _preflight_shapes(attr.g)
+      for nested in attr.graphs:
+        _preflight_shapes(nested)
+
+
 def _load_source(source: Path):
   import onnx
   integer(source.stat().st_size)
   model = onnx.load(str(source), load_external_data=False)
+  _preflight_shapes(model.graph)
   # Cinque V3 declares Contiguous as a function. Accept only the verified
   # identity definition; never silently erase arithmetic in a custom function.
   for function in model.functions:
@@ -76,17 +105,27 @@ def _load_source(source: Path):
         or list(node.input) != list(function.input) or list(node.output) != list(function.output)):
       raise ValueError('Contiguous function is not an identity')
   files = {source.resolve()}
+  expanded_bytes = source.stat().st_size
   for tensor in _tensors(model.graph):
+    expected_bytes = _tensor_bytes(tensor.data_type, list(tensor.dims))
     if tensor.data_location != onnx.TensorProto.EXTERNAL:
       continue
     entries = {entry.key: entry.value for entry in tensor.external_data}
     if len(entries) != len(tensor.external_data) or 'location' not in entries:
       raise ValueError('invalid external data descriptor')
     try:
-      files.add(contained_file(source.parent, entries['location']))
+      backing = contained_file(source.parent, entries['location'])
+      files.add(backing)
       for key in ('offset', 'length'):
         if key in entries:
           integer(int(entries[key]), 0)
+      offset = int(entries.get('offset', 0))
+      length = int(entries.get('length', 0)) or backing.stat().st_size - offset
+      if offset > backing.stat().st_size or length != expected_bytes or offset + length > backing.stat().st_size:
+        raise ValueError('external tensor byte range mismatch')
+      expanded_bytes += length
+      if expanded_bytes > MAX_MODEL_BYTES:
+        raise ValueError('external tensor expansion exceeds model budget')
     except (ValueError, OSError) as exc:
       raise ValueError('unsafe external data path or range') from exc
   if sum(path.stat().st_size for path in files) > MAX_MODEL_BYTES:

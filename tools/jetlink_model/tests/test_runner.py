@@ -18,6 +18,9 @@ def test_actual_tiny_model_sequence_and_reset(tmp_path, layout):
   assert meta['frame_ids'] == list(range(8))
   assert len(output) == 8 * 64
   assert np.all(np.isfinite(output))
+  if layout == 'stateful':
+    from tools.jetlink_model.golden_check import compare_fixture_outputs
+    assert compare_fixture_outputs(layout, tmp_path/'run/outputs.bin')['status'] == 'verified'
   run_sequence(package, FIXTURES/f'tiny_{layout}.frames.bin', tmp_path/'again')
   assert (tmp_path/'again/outputs.bin').read_bytes() == (tmp_path/'run/outputs.bin').read_bytes()
 

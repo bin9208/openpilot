@@ -53,3 +53,23 @@ shape, missing bytes and all NaN/Inf values. It checks every output, including
 unnamed gaps, with `atol=1e-5, rtol=1e-4`. A passed host recording is only
 numerical evidence for that runtime/input corpus; it is not Android, USB or
 vehicle acceptance. Never loosen tolerances merely to obtain a passing result.
+
+## Upstream numerical conformance status
+
+Stateful tiny-model output is asserted against the committed upstream golden
+in the test suite. Queued staging matches exactly, but queued inference is
+**unverified**: the local CPU preparation differs from upstream's Apple
+prepared-graph golden by up to 0.125 in the recorded probe. The exact
+backend/graph contribution has not been isolated. This queued model/backend
+must not be certified for vehicle use; finite/repeatable output is insufficient.
+
+Run an explicit golden check after generating a tiny-model recording:
+
+```sh
+python -m tools.jetlink_model.golden_check --layout queued --candidate queued-run/outputs.bin --report queued-golden.json
+```
+
+It returns exit 1 and `status: unverified` on a numeric mismatch, without
+relaxing the tolerance. The host tools remain useful for diagnosis while
+queued numerical conformance stays pending in #46. The verified source versus
+prepared Cinque V3 eight-frame CPU result is a separate stateful-model check.
