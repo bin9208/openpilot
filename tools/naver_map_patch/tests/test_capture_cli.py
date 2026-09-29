@@ -193,6 +193,22 @@ def test_public_decoder_accepts_only_exact_mapping_outcome_scalars():
       decode_and_validate_frame(json.dumps(malformed))
 
 
+@pytest.mark.parametrize("result", ["safety_source_inactive", "safety_source_ambiguous"])
+def test_public_decoder_accepts_producer_safety_lifecycle_outcomes(result):
+  frame = _frame("safety", 1, 10)
+  frame["observation"] = {
+    "channel": "safety", "result": result,
+    "root_descriptor": "Lsample/GuidanceSafety;",
+    "input_count": 0, "output_count": 0, "revision": 0,
+    "item_present": False, "distance_valid": False, "frame_eligible": False,
+  }
+  assert decode_and_validate_frame(json.dumps(frame)) == frame
+
+  frame["observation"]["result"] = result + "_unknown"
+  with pytest.raises(OfflineCaptureError, match="grammar"):
+    decode_and_validate_frame(json.dumps(frame))
+
+
 def test_arbitrary_enum_and_home_accessor_never_reach_raw_capture(tmp_path):
   repository = Path(__file__).resolve().parents[3]
   raw_path = tmp_path / "raw" / "capture.jsonl"

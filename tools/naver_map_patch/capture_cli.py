@@ -106,6 +106,7 @@ _MAPPING_OUTCOME_RESULTS = {
   "safety": frozenset((
     "safety_source_ok", "safety_source_descriptor", "safety_source_code",
     "safety_source_distance", "safety_source_accessor",
+    "safety_source_inactive", "safety_source_ambiguous",
     "safety_ok", "safety_rejected",
   )),
 }
