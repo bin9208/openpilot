@@ -229,6 +229,22 @@
           "docs/user/en/tesla.md"
         ]
       ]
+    },
+    {
+      "id": "jetlink-android",
+      "enforcement": "required",
+      "description": "Android Jetlink model, USB and benchmark behavior",
+      "code_paths": [
+        "tools/jetlink_android/app/**",
+        "tools/jetlink_android/core/src/main/**",
+        "tools/jetlink_android/runtime/src/main/**"
+      ],
+      "doc_sets": [
+        [
+          "docs/user/ko/jetlink.md",
+          "docs/user/en/jetlink.md"
+        ]
+      ]
     }
   ]
 }

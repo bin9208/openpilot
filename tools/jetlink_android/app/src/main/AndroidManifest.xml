@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <application android:label="@string/app_name" android:theme="@style/AppTheme" android:icon="@drawable/ic_link"
+        android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- USB permission is the documented connectedDevice prerequisite. AGP 8.9 lint only
+             models manifest permissions. Receiver and service both verify UsbManager.hasPermission.
+             https://developer.android.com/develop/background-work/services/fgs/service-types#connected-device -->
+        <service android:name=".LinkService" android:exported="false" android:foregroundServiceType="connectedDevice"
+            tools:ignore="ForegroundServicePermission" />
+        <receiver android:name=".UsbPermissionReceiver" android:exported="false">
+            <intent-filter><action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" /></intent-filter>
+        </receiver>
+    </application>
+</manifest>
