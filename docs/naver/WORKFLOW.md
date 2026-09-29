@@ -1,3 +1,10 @@
+# Current branch policy (2026-09-29)
+
+`dev` is the default integration branch; `main` is the release branch. New work
+starts from `dev` on issue-scoped branches and returns through checked PRs.
+`codex/naver-support-20260924` is preserved as the previous development branch.
+This supersedes branch-routing instructions below. See [development workflow](../development_workflow.md).
+
 # Naver integration workflow
 
 Approved by the repository owner on 2026-09-24. GitHub Issues are the backlog;

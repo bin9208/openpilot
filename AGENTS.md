@@ -3,7 +3,14 @@
 - The owner's 2026-09-24 fork policy overrides historical upstream branch rules below.
 - Keep `carrot-wip` an exact fast-forward-only mirror of `ajouatom/openpilot:carrot-wip`.
   Never commit Naver changes or workflow files to that branch.
-- Work on `codex/naver-support-20260924` (default branch) or issue-scoped children.
+- The 2026-09-29 branch policy supersedes the old default-branch policy: use `dev`
+  for integration and `main` for release. Create issue-scoped `codex/feat-*` or
+  `codex/fix-*` branches from `dev`; never implement directly on either protected branch.
+- Read `docs/development_workflow.md` at task start. Require fast push checks,
+  pre-merge build/integration checks, and separate post-merge checks. Preserve old branches.
+- Do not close issues before their acceptance criteria are met; CI/build success and
+  user device/drive acceptance are separate states. Reopen regressions; file new issues
+  for independent defects. Record exact SHA, Actions URLs, failures and remaining work.
 - Create/update a GitHub issue for each task or discovered defect. Keep design and
   evidence links in `docs/naver/` as a second record; see `docs/naver/WORKFLOW.md`.
 - Use GitHub Actions for repeatable validation and inspect exact-SHA results before
