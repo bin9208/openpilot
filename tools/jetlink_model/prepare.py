@@ -24,7 +24,10 @@ def output_slices(encoded: str) -> dict:
   try:
     if len(encoded) > MAX_MANIFEST_BYTES:
       raise ValueError('metadata too large')
-    stream = io.BytesIO(base64.b64decode(encoded, validate=True))
+    # Python codecs.encode(..., 'base64'), used by the official exporter,
+    # inserts line breaks. Only discard ASCII whitespace before strict decoding.
+    compact = encoded.translate(str.maketrans('', '', ' \t\r\n'))
+    stream = io.BytesIO(base64.b64decode(compact, validate=True))
     value = _SlicesUnpickler(stream).load()
     if stream.read(1) or not isinstance(value, dict) or not value:
       raise ValueError('invalid metadata map')
@@ -61,9 +64,17 @@ def _load_source(source: Path):
   import onnx
   integer(source.stat().st_size)
   model = onnx.load(str(source), load_external_data=False)
-  # Custom functions need their own preparation contract, not hidden file loads.
-  if model.functions:
-    raise ValueError('ONNX local functions are not supported by this preparer')
+  # Cinque V3 declares Contiguous as a function. Accept only the verified
+  # identity definition; never silently erase arithmetic in a custom function.
+  for function in model.functions:
+    if (function.domain != 'org.tinygrad' or function.name != 'Contiguous'
+        or len(function.input) != 1 or len(function.output) != 1 or len(function.node) != 1
+        or function.attribute or function.attribute_proto):
+      raise ValueError('unsupported ONNX local function')
+    node = function.node[0]
+    if (node.domain or node.op_type != 'Identity' or node.attribute
+        or list(node.input) != list(function.input) or list(node.output) != list(function.output)):
+      raise ValueError('Contiguous function is not an identity')
   files = {source.resolve()}
   for tensor in _tensors(model.graph):
     if tensor.data_location != onnx.TensorProto.EXTERNAL:
@@ -101,14 +112,15 @@ def prepare(source: Path, destination: Path, frame_skip: int = 4) -> ModelPackag
   checkpoint = props.get('model_checkpoint')
   if not isinstance(checkpoint, str) or not checkpoint:
     raise ValueError('missing source checkpoint metadata')
-  # Contiguous is a layout-only tinygrad operation. Keep its output name by
-  # replacing it with standard Identity, without rewriting model arithmetic.
+  # Keep a supported declared identity function byte-for-byte. Erasing the
+  # function can change ORT's fp16 fusion path despite algebraic equivalence.
+  declared = {(function.domain, function.name) for function in model.functions}
   for node in model.graph.node:
     if node.domain == 'org.tinygrad' and node.op_type == 'Contiguous':
-      if len(node.input) != 1 or len(node.output) != 1:
+      if len(node.input) != 1 or len(node.output) != 1 or node.attribute:
         raise ValueError('invalid Contiguous node')
-      node.domain, node.op_type = '', 'Identity'
-      del node.attribute[:]
+      if (node.domain, node.op_type) not in declared:
+        node.domain, node.op_type = '', 'Identity'
   destination.parent.mkdir(parents=True, exist_ok=True)
   with tempfile.TemporaryDirectory(prefix='.jetlink-', dir=destination.parent) as temporary:
     root = Path(temporary)

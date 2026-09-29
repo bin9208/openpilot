@@ -70,3 +70,28 @@ def test_external_data_escape_rejected_before_runtime(tmp_path):
   tensor.external_data.add(key='location', value='../outside.bin')
   onnx.save(model, str(source))
   with pytest.raises(ValueError, match='external'): prepare(source, tmp_path / 'package', 4)
+
+
+@pytest.mark.parametrize('operation', ['Identity', 'Neg'])
+def test_only_identity_contiguous_function_is_accepted(tmp_path, operation):
+  from tools.jetlink_model.prepare import prepare
+  source = write_model(tmp_path / 'input.onnx', passthrough=True)
+  model = onnx.load(str(source))
+  model.functions.append(helper.make_function('org.tinygrad', 'Contiguous', ['X'], ['Y'],
+                         [helper.make_node(operation, ['X'], ['Y'])], [helper.make_opsetid('', 17)]))
+  onnx.save(model, str(source))
+  if operation == 'Identity':
+    result = prepare(source, tmp_path / 'package', 4)
+    assert result.manifest['source']['checkpoint'] == 'fixture-checkpoint'
+    # ORT already expands this valid local function. Keeping the exact graph
+    # prevents a different optimization/fusion path for fp16 arithmetic.
+    assert result.model_path.read_bytes() == source.read_bytes()
+  else:
+    with pytest.raises(ValueError, match='function'):
+      prepare(source, tmp_path / 'package', 4)
+
+
+def test_exporter_line_wrapped_slice_metadata():
+  from tools.jetlink_model.prepare import output_slices
+  encoded = base64.encodebytes(pickle.dumps({'plan': slice(0, 18452)})).decode()
+  assert output_slices(encoded) == {'plan': [0, 18452]}

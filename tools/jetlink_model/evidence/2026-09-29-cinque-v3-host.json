@@ -1,0 +1,258 @@
+{
+  "passed": true,
+  "frames": 8,
+  "reasons": [],
+  "slices": {
+    "lane_lines": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "lane_lines_prob": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "road_edges": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "meta": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "desire_pred": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "pose": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "wide_from_device_euler": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "road_transform": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "plan": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "lead": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "lead_prob": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "desire_state": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "action": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "hidden_state": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    },
+    "pad": {
+      "max_abs": 0.0,
+      "max_relative": 0.0
+    }
+  },
+  "identities": {
+    "reference": {
+      "model_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+      "source_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+      "executed_model_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+      "inputs_sha256": "52d1ecab745a7806a27f2d347a5074db978833850f0a3b55d2eea803f3f94a42",
+      "frame_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "output_count": 18452,
+      "output_slices": {
+        "lane_lines": [
+          0,
+          528
+        ],
+        "lane_lines_prob": [
+          528,
+          536
+        ],
+        "road_edges": [
+          536,
+          800
+        ],
+        "meta": [
+          800,
+          855
+        ],
+        "desire_pred": [
+          855,
+          887
+        ],
+        "pose": [
+          887,
+          899
+        ],
+        "wide_from_device_euler": [
+          899,
+          905
+        ],
+        "road_transform": [
+          905,
+          917
+        ],
+        "plan": [
+          917,
+          1907
+        ],
+        "lead": [
+          1907,
+          2051
+        ],
+        "lead_prob": [
+          2051,
+          2054
+        ],
+        "desire_state": [
+          2054,
+          2062
+        ],
+        "action": [
+          2062,
+          2066
+        ],
+        "hidden_state": [
+          2066,
+          18450
+        ],
+        "pad": [
+          18450,
+          18452
+        ]
+      },
+      "runtime": "onnxruntime-1.22.0-cpu",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "host_inference_ms": [
+        891.4553,
+        873.4036,
+        856.4949,
+        860.0557,
+        854.6451,
+        878.1873,
+        844.4029,
+        887.5159
+      ],
+      "scope": "host CPU recording; excludes USB, camera warp, Android and vehicle control"
+    },
+    "candidate": {
+      "model_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+      "source_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+      "executed_model_sha256": "404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4",
+      "inputs_sha256": "52d1ecab745a7806a27f2d347a5074db978833850f0a3b55d2eea803f3f94a42",
+      "frame_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "output_count": 18452,
+      "output_slices": {
+        "lane_lines": [
+          0,
+          528
+        ],
+        "lane_lines_prob": [
+          528,
+          536
+        ],
+        "road_edges": [
+          536,
+          800
+        ],
+        "meta": [
+          800,
+          855
+        ],
+        "desire_pred": [
+          855,
+          887
+        ],
+        "pose": [
+          887,
+          899
+        ],
+        "wide_from_device_euler": [
+          899,
+          905
+        ],
+        "road_transform": [
+          905,
+          917
+        ],
+        "plan": [
+          917,
+          1907
+        ],
+        "lead": [
+          1907,
+          2051
+        ],
+        "lead_prob": [
+          2051,
+          2054
+        ],
+        "desire_state": [
+          2054,
+          2062
+        ],
+        "action": [
+          2062,
+          2066
+        ],
+        "hidden_state": [
+          2066,
+          18450
+        ],
+        "pad": [
+          18450,
+          18452
+        ]
+      },
+      "runtime": "onnxruntime-1.22.0-cpu",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "host_inference_ms": [
+        912.1379,
+        880.3182,
+        879.8755,
+        860.5201,
+        864.7916,
+        872.3145,
+        881.3114,
+        888.7857
+      ],
+      "scope": "host CPU recording; excludes USB, camera warp, Android and vehicle control"
+    }
+  },
+  "atol": 1e-05,
+  "rtol": 0.0001,
+  "scope": "Real Cinque Terre V3, eight deterministic synthetic warped frames on Windows CPU; no Android, USB, road capture or vehicle acceptance.",
+  "source_ref": "bf3e3631b3f91d92a1020a5e0dd4298b93ff4244",
+  "generator_seed": 20260929
+}
