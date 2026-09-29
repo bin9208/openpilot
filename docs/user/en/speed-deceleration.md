@@ -286,6 +286,8 @@ In mode 2, route-turn speed enters only when turn distance is roughly between -5
 > [!IMPORTANT]
 > Mode `0` does not disable every model-derived speed function. `ApplyModelSpeed` changes cruise set speed separately.
 
+Route-based deceleration uses the actual path up to 300m ahead of the current position projected onto the route. A first map segment longer than 300m is clipped within that horizon; the following segment is not extended backwards. This route-clipping correction does not change the curve-speed floor, ATC target or accelerator-override settings.
+
 ### `MapTurnSpeedFactor`
 
     route-turn candidate = route speed × factor / 100

@@ -233,9 +233,17 @@ def get_path_after_distance(start_index, coordinates, current_position, distance
     if closest_index != -1:
         path_after_distance.append(closest_point)
 
-        path_after_distance.append(coordinates[closest_index + 1])
         total_distance = haversine(closest_point[0], closest_point[1], coordinates[closest_index + 1][0],
                                    coordinates[closest_index + 1][1])
+        if total_distance >= distance_m and total_distance > 0:
+            ratio = distance_m / total_distance
+            next_point = coordinates[closest_index + 1]
+            path_after_distance.append((
+                closest_point[0] + ratio * (next_point[0] - closest_point[0]),
+                closest_point[1] + ratio * (next_point[1] - closest_point[1]),
+            ))
+            return path_after_distance, start_index, closest_point
+        path_after_distance.append(coordinates[closest_index + 1])
 
         # Traverse the path forward from the next point
         for i in range(closest_index + 1, len(coordinates) - 1):
