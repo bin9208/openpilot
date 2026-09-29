@@ -3,6 +3,15 @@
 Plan: `docs/superpowers/plans/2026-09-24-naver-github-workflow.md`.
 Specification: `docs/naver/WORKFLOW.md`; issue-specific acceptance criteria.
 
+- 2026-09-29 non-steering repairs: #34 parser lifecycle tokens, #35 unknown-road
+  publication/consumer guard, #36 initial route horizon. Feature evidence and
+  independent-review rulings: [dev checkpoint](2026-09-29-dev-test-checkpoint.md).
+- Integration stops at actual dev vehicle acceptance; #19/#24/#40 remain
+  evidence-gated, #11 remains the field gate, and main receives no changes.
+- Integration resolution: only the two adjacent notes in the shared 7713/7714
+  document conflicted; both are retained. No product-code conflict was resolved
+  by choosing one side or dropping another issue's change.
+
 - #28 complete: PR #32 at d3b4db7f; all checks passed including 36024999919,
   36025005211, 36025005170 and docs36025005156. Review rearm case fixed RED/GREEN.
 - #27 complete: PR #33 at 0755579b. Local split build and atomic single TEST

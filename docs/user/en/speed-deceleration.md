@@ -374,6 +374,8 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 [Back to Understanding Settings](settings.md)
 # Naver test-branch camera lifetime
 
+When Naver supplies no valid road speed limit, LIMIT shows `--`, not the initial 30 or a previous navigator's value. A camera enforcement limit is not substituted for a road limit; valid cameras retain their CAM display and deceleration. Model/road-based automatic cruise-set-speed adjustment that depends on the road limit is skipped while that limit is unknown, preserving the current set speed. This does not mean Naver road-limit mapping is complete.
+
 Disabling a safety type takes effect on an already cached event immediately.
 Re-enabling waits for a fresh safety update; it does not restore old distance.
 

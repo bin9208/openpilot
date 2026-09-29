@@ -3,6 +3,16 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 
+test('unknown Naver road limit does not reuse payload fallback speed', () => {
+  const window = {};
+  const context = vm.createContext({ window });
+  vm.runInContext(readFileSync(new URL('../js/realtime/mini_hud_model.js', import.meta.url), 'utf8'), context);
+  const model = window.CarrotMiniHudModel.build({ speedLimitKph: 80 }, { carrotMan: {
+    naviLifecycle: 'guiding', naviOwner: 'naver_v1', nRoadLimitSpeed: 0,
+  }});
+  assert.equal(model.roadLimit, '--');
+});
+
 test('mini HUD shows HDA reduction with no navigation owner', () => {
   const nodes = new Map();
   function node() {

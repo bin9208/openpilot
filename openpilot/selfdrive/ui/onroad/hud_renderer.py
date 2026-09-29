@@ -923,12 +923,15 @@ class HudRenderer(Widget):
         limit_color = COLORS.RED_210
       else:
         limit_color = COLORS.YELLOW_210
-    else:
+    elif road_limit_speed > 0:
       disp_speed = int(road_limit_speed if ui_state.is_metric else (road_limit_speed * KM_TO_MILE + 0.5))
       if self.speed > disp_speed + 2:
         limit_color = COLORS.RED_210
       else:
         limit_color = COLORS.WHITE_210
+    else:
+      disp_speed = None
+      limit_color = COLORS.WHITE_210
 
     draw_text_ui_style(
       label, dx, dy - 45, 30, rl.WHITE,
@@ -948,7 +951,7 @@ class HudRenderer(Widget):
     )
 
     draw_text_ui_style(
-      str(disp_speed), dx, dy, 40, rl.WHITE,
+      "--" if disp_speed is None else str(disp_speed), dx, dy, 40, rl.WHITE,
       font=self._font_display,
       border_width=2.0,
       shadow_offset=4.0,

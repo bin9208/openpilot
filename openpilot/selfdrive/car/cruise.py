@@ -754,6 +754,9 @@ class VCruiseCarrot:
     return v_cruise_kph
 
   def _auto_speed_up(self, v_cruise_kph):
+    # An unavailable road limit is not a zero-speed target for model/road adjustment.
+    if self.nRoadLimitSpeed <= 0:
+      return v_cruise_kph
     #if self._pause_auto_speed_up:
     #  return v_cruise_kph
     if not self._pause_auto_speed_up and self.applyModelSpeed != 0.0:
