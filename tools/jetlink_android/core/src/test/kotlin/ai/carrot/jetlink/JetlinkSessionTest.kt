@@ -11,6 +11,43 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class JetlinkSessionTest {
+    @Test fun preparationPushesReadyWithoutAnotherClientRequest() {
+        val root = Files.createTempDirectory("jetlink-ready").toFile()
+        val release = CountDownLatch(1)
+        try {
+            val pkg = ModelPackage.parse(ModelStoreTest().fixture(root), root)
+            JetlinkSession(pkg, { object : InferenceEngine {
+                override fun prepare(model: ModelPackage) { release.await(1, TimeUnit.SECONDS) }
+                override fun run(warped: ByteArray, packed: FloatArray, reset: Boolean) = FloatArray(4)
+                override fun close() {}
+            } }).use { session ->
+                assertEquals("building", json(session.handle(request(pkg)).single()).getString("state"))
+                release.countDown()
+                val end = System.nanoTime() + 1_000_000_000
+                var updates = emptyList<ByteArray>()
+                while (updates.isEmpty() && System.nanoTime() < end) { updates = session.drainUpdates(); Thread.sleep(1) }
+                assertEquals("ready", json(updates.single()).getString("state"))
+                assertEquals(2L, Wire.decode(updates.single()).sequence)
+            }
+        } finally { release.countDown(); root.deleteRecursively() }
+    }
+    @Test fun uploadCompletionAcceptsUpstreamEmptyObject() {
+        val root = Files.createTempDirectory("jetlink-upload").toFile()
+        try {
+            val pkg = ModelPackage.parse(ModelStoreTest().fixture(root), root)
+            val content = pkg.modelFile.readBytes(); pkg.modelFile.delete()
+            JetlinkSession(pkg, { object : InferenceEngine {
+                override fun prepare(model: ModelPackage) {}
+                override fun run(warped: ByteArray, packed: FloatArray, reset: Boolean) = FloatArray(4)
+                override fun close() {}
+            } }).use { session ->
+                assertEquals("need_upload", json(session.handle(request(pkg)).single()).getString("state"))
+                session.handle(Wire.message(5, 3, ByteArray(8) + content))
+                assertEquals(4, Wire.decode(session.handle(Wire.message(6, 4, "{}".toByteArray())).single()).type)
+                assertArrayEquals(content, pkg.modelFile.readBytes())
+            }
+        } finally { root.deleteRecursively() }
+    }
     @Test fun preparationOutOfMemoryBecomesFailedAndClosesCandidate() {
         val root = Files.createTempDirectory("jetlink-oom").toFile()
         val closed = CountDownLatch(1)
@@ -24,6 +61,10 @@ class JetlinkSessionTest {
                 session.handle(request(pkg))
                 assertTrue(closed.await(1, TimeUnit.SECONDS))
                 assertEquals("failed", session.state)
+                val until = System.nanoTime() + 1_000_000_000
+                var updates = emptyList<ByteArray>()
+                while (updates.isEmpty() && System.nanoTime() < until) { updates = session.drainUpdates(); Thread.sleep(1) }
+                assertEquals("failed", json(updates.single()).getString("state"))
             }
         } finally { root.deleteRecursively() }
     }

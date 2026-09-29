@@ -4,6 +4,7 @@ import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,10 +29,19 @@ class JetlinkSession(
     private var engine: InferenceEngine? = null
     private var lastSequence = -1L
     private var lastFrame = -1L
-    private var requested = false
+    @Volatile private var requested = false
+    @Volatile private var generation = 0L
+    @Volatile private var engineSequence = 0L
+    private val updates = ConcurrentLinkedQueue<Pair<Long, ByteArray>>()
     private var resetNext = true
     var framesServed = 0L; private set
     var lastInferenceMs = 0.0; private set
+    fun drainUpdates(): List<ByteArray> = buildList {
+        while (true) {
+            val update = updates.poll() ?: break
+            if (!closed.get() && update.first == generation) add(update.second)
+        }
+    }
 
     private fun reply(type: Int, sequence: Long, value: JSONObject) = Wire.message(type, sequence, value.toString().toByteArray(Charsets.UTF_8))
     private fun engineStatus() = JSONObject().apply {
@@ -55,7 +65,13 @@ class JetlinkSession(
                 if (!closed.get()) { detail = "Insufficient model memory"; state = "failed" }
             } catch (e: Exception) {
                 if (!closed.get()) { detail = (e.message ?: "Model preparation failed").take(240); state = "failed" }
-            } finally { candidate?.close() }
+            } finally {
+                candidate?.close()
+                val sessionGeneration = generation
+                if (!closed.get() && requested && state in listOf("ready", "failed")) {
+                    updates.add(sessionGeneration to reply(4, engineSequence, engineStatus()))
+                }
+            }
         }
     }
 
@@ -65,6 +81,7 @@ class JetlinkSession(
         require(message.size == 32 + header.length.toInt()) { "Message length mismatch" }
         val body = message.copyOfRange(32, message.size)
         if (header.type == 1) {
+            generation++; updates.clear()
             lastSequence = header.sequence; lastFrame = -1; requested = false; resetNext = true; store.cancel()
             return listOf(reply(2, header.sequence, JSONObject().apply {
                 put("protocol", 2); put("backend", "ort"); put("runtime_version", "1.22.0")
@@ -85,6 +102,7 @@ class JetlinkSession(
                 15 -> listOf(Wire.message(16, header.sequence))
                 17 -> listOf(reply(18, header.sequence, JSONObject().put("ok", false).put("detail", "Android power-off is unsupported")))
                 3 -> {
+                    generation++; updates.clear(); engineSequence = header.sequence
                     requested = false
                     val request = json()
                     require(request.getString("sha256") == model.sourceSha && request.getLong("nbytes") == JSONObject(model.manifestText).getJSONObject("source").getLong("bytes")) {
@@ -103,7 +121,10 @@ class JetlinkSession(
                     emptyList() // Streaming upload chunks intentionally have no acknowledgement.
                 }
                 6 -> {
-                    require(requested && state == "need_upload" && json().getString("sha256") == model.sourceSha)
+                    require(requested && state == "need_upload")
+                    val completion = json()
+                    require(!completion.has("sha256") || completion.getString("sha256") == model.sourceSha)
+                    engineSequence = header.sequence
                     store.finish(); state = "none"; prepare()
                     listOf(reply(4, header.sequence, engineStatus()))
                 }
@@ -154,6 +175,7 @@ class JetlinkSession(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        updates.clear()
         loader.shutdownNow()
         synchronized(engineLock) { engine?.close(); engine = null }
         store.close()

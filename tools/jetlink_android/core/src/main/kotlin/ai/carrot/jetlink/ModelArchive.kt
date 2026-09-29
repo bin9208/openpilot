@@ -53,6 +53,7 @@ object ModelArchive {
                     val frames = readBounded(zip, 16 * 1024 * 1024)
                     val stride = contract.warpedBytes + contract.packedCount * 4
                     require(frames.isNotEmpty() && frames.size % stride == 0) { "Incomplete benchmark input" }
+                    require(frames.size / stride <= 100) { "Benchmark package supports at most 100 frames" }
                     File(temporary, "benchmark.frames.bin").writeBytes(frames)
                     require(zip.nextEntry == null) { "Extra archive entries are forbidden" }
                 }

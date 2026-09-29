@@ -10,7 +10,7 @@ object Benchmark {
     fun start(context: Context) {
         if (AppState.busy) return
         AppState.busy = true; AppState.phase = "preparing"; AppState.detail = ""
-        AppState.benchmarkCancelled = false; AppState.stats = FrameStats()
+        AppState.benchmarkCancelled = false; AppState.beginRun(context, "standalone synthetic inference")
         val backend = AppState.backend
         val recordingFile = File(context.cacheDir, "parity.zip")
         recordingFile.delete()
@@ -33,6 +33,7 @@ object Benchmark {
                     put(warped); packed.forEach { putFloat(it) }
                 }.array()
                 val recordedFrames = inputBytes.size / stride
+                require(recordedFrames in 1..100) { "Benchmark package supports at most 100 frames" }
                 val recorder = OutputRecording(model.artifactSha, model.sourceSha, inputBytes, recordedFrames,
                     model.outputCount, JSONObject(model.manifestText).getJSONObject("output_slices"), backend.name)
                 OrtEngine(backend).use { engine ->

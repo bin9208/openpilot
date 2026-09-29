@@ -40,7 +40,7 @@ class LinkService : Service() {
                 .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null, getString(R.string.stop), stop).build()).build())
             stopping.set(false)
             AppState.stopConnection = { requestStop() }
-            AppState.stats = FrameStats()
+            AppState.beginRun(this, "USB app processing and send; excludes request receive")
             val backend = AppState.backend
             worker = Thread({
                 var session: JetlinkSession? = null
@@ -56,6 +56,7 @@ class LinkService : Service() {
                     while (!stopping.get()) {
                         if (DeviceHealth.tooHot(this)) error(getString(R.string.thermal_stop))
                         if (!wake.isHeld) wake.acquire(60 * 60 * 1000L)
+                        for (update in session.drainUpdates()) link!!.write(update, System.nanoTime() + 2_000_000_000)
                         val message = try { link!!.read(System.nanoTime() + 2_000_000_000) }
                             catch (_: SocketTimeoutException) { continue }
                         val before = session.framesServed

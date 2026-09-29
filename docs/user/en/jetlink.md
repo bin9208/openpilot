@@ -15,7 +15,7 @@ Do not uninstall or clear app data during updates. Install an APK with the same 
 
 Choose **Benchmark → Run 100-frame benchmark** and keep the screen open. After preparation and warmup, the app measures actual ONNX Runtime inference using repeated synthetic package inputs or black images with fixed context. It shows mean/p50/p95/p99/maximum and the number of frames over 50ms. Percentiles cover the last 2,000 samples; mean, maximum and misses cover the full run.
 
-**Save numerical comparison ZIP (after benchmark)** exports the actual outputs for the first input sequence. Extract it on a PC and use `tools.jetlink_model.compare` against a PC recording of identical inputs. **Diagnostics → Save diagnostic report** exports device/model/requested provider/performance/thermal information. Diagnostics contain no camera images or location.
+**Save numerical comparison ZIP (after benchmark)** exports the actual outputs for the first input sequence. Package inputs are limited to 100 frames; longer sequences are rejected at import. Extract it on a PC and use `tools.jetlink_model.compare` against a PC recording of identical inputs. **Diagnostics → Save diagnostic report** exports device/model/requested provider/performance/thermal information. Measurements retain the model/provider selected when the run began, even if later selections change. Health readings are sampled at export. Diagnostics contain no camera images or location.
 
 These timings exclude C3X camera processing and the complete USB round trip. An APK build or synthetic-input result does not establish tablet performance, 30-minute thermal stability or vehicle acceptance.
 

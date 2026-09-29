@@ -16,10 +16,16 @@ object AppState {
     @Volatile var busy = false
     @Volatile var deviceName: String? = null
     @Volatile var backend = Backend.CPU
-    @Volatile var stats = FrameStats()
+    @Volatile private var measurement = MeasurementRun(null, null, "none", "no run")
+    val stats get() = measurement.stats
     @Volatile var benchmarkCancelled = false
     @Volatile var stopConnection: (() -> Unit)? = null
     @Volatile var lastReport: String? = null
+
+    fun beginRun(context: Context, scope: String) {
+        val model = ModelRepository.current(context)
+        measurement = MeasurementRun(model?.artifactSha, model?.sourceSha, backend.name, scope)
+    }
 
     fun fail(message: String) { phase = "error"; detail = message.take(500) }
     fun stop() {
@@ -30,20 +36,11 @@ object AppState {
     }
 
     fun report(context: Context): String {
-        val model = ModelRepository.current(context)
-        val s = stats.snapshot()
-        return JSONObject().apply {
+        return measurement.report().apply {
             put("app_version", "0.1.0-experimental"); put("device_model", Build.MODEL)
             put("android_release", Build.VERSION.RELEASE); put("api_level", Build.VERSION.SDK_INT)
-            put("backend_requested", backend.name); put("provider_partitioning_verified", false)
             put("phase", phase); put("detail", detail)
-            put("model_sha256", model?.artifactSha ?: JSONObject.NULL)
-            put("source_sha256", model?.sourceSha ?: JSONObject.NULL)
-            put("health", DeviceHealth.snapshot(context))
-            put("frames", s.frames); put("over_50ms", s.overBudget)
-            put("mean_ms", s.mean); put("p50_ms", s.p50); put("p95_ms", s.p95); put("p99_ms", s.p99); put("max_ms", s.maximum)
-            put("percentile_scope", "last 2000 app samples; mean/max/misses cover the whole run")
-            put("scope", "App inference or app processing/send time; excludes C3X warp and full link latency. Not vehicle acceptance.")
+            put("health_at_export", DeviceHealth.snapshot(context))
         }.toString(2)
     }
 }
