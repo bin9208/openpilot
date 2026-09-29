@@ -26,12 +26,12 @@ class WorkflowPolicyTests(unittest.TestCase):
       self.assertEqual(spec['on'][event], {'branches': ['dev', 'main']})
     self.assertEqual(spec['jobs']['build']['with']['run_number'], '1')
     gate = spec['jobs']['gate']
-    self.assertEqual(set(gate['needs']), {'build', 'navigation', 'apk'})
+    self.assertEqual(set(gate['needs']), {'build', 'navigation', 'apk', 'jetlink'})
     self.assertEqual(gate['if'], '${{ always() }}')
     step = gate['steps'][0]
-    for name in ('BUILD', 'NAVIGATION', 'APK'):
+    for name in ('BUILD', 'NAVIGATION', 'APK', 'JETLINK'):
       self.assertIn(f'test "${name}" = success', step['run'])
-    for job in ('build', 'navigation', 'apk'):
+    for job in ('build', 'navigation', 'apk', 'jetlink'):
       self.assertNotIn('if', spec['jobs'][job])
       self.assertNotIn('continue-on-error', spec['jobs'][job])
       called = Path(spec['jobs'][job]['uses']).name
