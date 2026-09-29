@@ -19,10 +19,12 @@ jobs:
     uses: ./.github/workflows/naver-ci.yml
   apk:
     uses: ./.github/workflows/naver-apk-tools.yml
+  jetlink:
+    uses: ./.github/workflows/jetlink.yml
   gate:
     name: integration gate
     if: ${{ always() }}
-    needs: [build, navigation, apk]
+    needs: [build, navigation, apk, jetlink]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -31,7 +33,9 @@ jobs:
           BUILD: ${{ needs.build.result }}
           NAVIGATION: ${{ needs.navigation.result }}
           APK: ${{ needs.apk.result }}
+          JETLINK: ${{ needs.jetlink.result }}
         run: |
           test "$BUILD" = success
           test "$NAVIGATION" = success
           test "$APK" = success
+          test "$JETLINK" = success

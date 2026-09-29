@@ -1,0 +1,29 @@
+{
+  "upstream": "https://github.com/zoompilot/jetlink",
+  "revision": "f10f4705243812518e6441dfb06bf2178c408310",
+  "files": {
+    "conformance/staging.fs1.frames.bin": "edfb1331b4718fdeacc4429f688fda6ee47cf8078a9fcc77da13cfff38c08182",
+    "conformance/staging.fs1.spec.json": "adac097dece5f314e084df98b568bbf9eeda2b5b454927094b2a194dd8138564",
+    "conformance/staging.fs1.staged.bin": "c28f6721d6e2ca35d68dfbf27163fc8b4dfa3348ab8d9d26a1633f2692f95fbb",
+    "conformance/staging.fs2.frames.bin": "6c26a3ac0f11e08faad3de58f240a6bdfd630b40e960f84d5e8cfc51fede0f65",
+    "conformance/staging.fs2.spec.json": "194e96250043075bfd81dc8f4309c9cbaacc4226df726b3a66a07aa5f499a64d",
+    "conformance/staging.fs2.staged.bin": "52c34cfbf2062bbc22aeb330587cbb6fe52d20261704642efccd19d23c1b1816",
+    "conformance/staging.fs4.frames.bin": "effebae2d73d0335ec7e66ef156b9a1f075b10b501e6fac39ab55296bfc1cd93",
+    "conformance/staging.fs4.spec.json": "9021669b7fed57f594f0fc05e28b1623ffbad7d1a8e2e5d7ebf5f9fffe79f5cc",
+    "conformance/staging.fs4.staged.bin": "24b85e94b645a46a5e6ad7075ffdd8831d4b00a4714a39973115e694d0203740",
+    "conformance/staging.json": "c3b5d66c282b85c9f24d025a29724ef0a3951d41c73eb0b93cbe4ba8f50121d6",
+    "conformance/stats.json": "c4da566bad3b742cc56fd51e601e3b445652588ec6fe5d6a7ca7b1133110fe89",
+    "conformance/wire.json": "0d9968fb016871764cd3e15e224ffb54c58ecce1cc9ac45d94a25dc44f48a552",
+    "conformance/wire.tcp.bin": "d9d64686967015ce09745a1a93a542c43df28ebaf227ff57f2f9d07f500f2f88",
+    "conformance/wire.usb_gadget.bin": "a3af3aa7b7298344c7deb57b6fc0f8832e1ecfd5d9883051f6c6afe1b0ab07df",
+    "conformance/wire.usb_host.bin": "d9d64686967015ce09745a1a93a542c43df28ebaf227ff57f2f9d07f500f2f88",
+    "tiny_queued.expected.bin": "618584502b111f08d86b0d28b557fd33b6dd91db9dfa454d26807e49abe948e3",
+    "tiny_queued.frames.bin": "fd70f1aa9918111b8d2e70da68dd38554b33d828c16a487416879b0911baaba2",
+    "tiny_queued.onnx": "a68de99943195e89bae06698d60793b987bec617e556e76109638c04ed011602",
+    "tiny_queued.spec.json": "5b00806f51c493b4ef43c2f2913e439c357dad21903728cafaa22336e89e68f8",
+    "tiny_stateful.expected.bin": "820d139e0dd7456e408494a2382597955c912cabd6e32886c3f72d9a59391145",
+    "tiny_stateful.frames.bin": "4e9085890a84592b3025d972b95d4ec16175d2a9472f5ed0ceae56dc55af9e96",
+    "tiny_stateful.onnx": "b0669bc51ec95a6a8bccf3ddf614098148ee1447025d99f4dd5e5d501ca41868",
+    "tiny_stateful.spec.json": "30d0da78b51949cb660d1dcd0350d5cde7e4f34db027a77ed78e16dc20786f05"
+  }
+}
