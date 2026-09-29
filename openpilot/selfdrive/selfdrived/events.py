@@ -935,6 +935,10 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.NO_ENTRY: NoEntryAlert("Driving Model Lagging"),
     ET.PERMANENT: modeld_lagging_alert,
   },
+  EventName.jetlinkLost: {
+    ET.SOFT_DISABLE: soft_disable_alert("External Model Lost: Take Control"),
+    ET.NO_ENTRY: NoEntryAlert("External Model Lost: Stop and Reconnect"),
+  },
 
   # Besides predicting the path, lane lines and lead car data the model also
   # predicts the current velocity and rotation speed of the car. If the model is

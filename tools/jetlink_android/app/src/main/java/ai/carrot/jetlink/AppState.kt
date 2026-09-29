@@ -37,7 +37,7 @@ object AppState {
 
     fun report(context: Context): String {
         return measurement.report().apply {
-            put("app_version", "0.1.0-experimental"); put("device_model", Build.MODEL)
+            put("app_version", BuildConfig.VERSION_NAME); put("device_model", Build.MODEL)
             put("android_release", Build.VERSION.RELEASE); put("api_level", Build.VERSION.SDK_INT)
             put("phase", phase); put("detail", detail)
             put("health_at_export", DeviceHealth.snapshot(context))

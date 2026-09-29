@@ -65,6 +65,10 @@ jobs:
             openpilot/selfdrive/modeld/tests/test_generic_model_runtime.py \
             openpilot/selfdrive/modeld/tests/test_dmonitoring_artifact.py \
             openpilot/selfdrive/modeld/tests/test_camera_sync.py \
+            openpilot/selfdrive/modeld/tests/test_jetlink*.py \
+            openpilot/selfdrive/selfdrived/tests/test_jetlink_events.py \
+            openpilot/selfdrive/selfdrived/tests/test_state_machine.py \
+            openpilot/selfdrive/controls/tests/test_controlsd.py \
             openpilot/selfdrive/carrot/tests/test_radarcan_process.py \
             openpilot/selfdrive/carrot/tests/test_radar_can_batch.py \
             openpilot/selfdrive/carrot/tests/test_radar_cutout_fast_path.py \

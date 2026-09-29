@@ -41,3 +41,13 @@
   `golden_check`는 이를 unverified/exit1로 보고하고 문서에 차량 사용 미인증을 명시한다.
 - Stateful tiny golden은 테스트에서 비교한다. 실제 CTV3 host parity와 queued 미검증을 구분한다.
 - PR: https://github.com/bin9208/openpilot/pull/48 . #46은 Android parity/가속/실기 조건이 남아 열린 상태다.
+
+## 구현 기록 (2026-09-29)
+
+- #46 host 준비·실제 ONNX 연속 추론: PR #48, dev 병합 `01aaa6365b3d4c1669da217c1fccfa10a9f4a2bb`. CTV3 원본 SHA `404a18cfd86d29637d20c697dfde245bb47c666ae016730ab674c65f4d1e1aa4`, 원본 보존 package의 PC 8프레임 최대 절대 오차 0. queued golden은 불일치이므로 Android에서 명시적으로 거부.
+- #45 Android 앱: PR #50, 검토 후 수정 head `0bb09b07dd30bfd171ca4d3ae86f4dd15f3da914`, dev merge `b41c4992`. core22+실제 ORT JVM2, lint/APK assemble/arm64 라이브러리·서명·16KiB 정렬 확인. 필수 Actions: https://github.com/bin9208/openpilot/actions/runs/36533856436 . 병합 후 Integration/fast/docs도 성공(36534771471/36534770741/36534770803).
+- 사용자는 APK를 받아 나중에 직접 설치·검증하기로 선택. ADB 대상 기기 없음. Android 실제 추론·USB·발열/주행 검증을 완료했다고 주장하지 않는다.
+- #47 C3X: 고정 v2 USB subset, 별도 owner + deadline Unix RPC, native QCOM warp 재사용, native 모델 매 프레임 유지, Off/Shadow/명시 활성 요청 및 loss latch 구현. source/loss는 modelV2와 drivingModelData의 새 append 필드. 기존 유효성/panda/모니터링 정책 유지. 활성 프로필은 동일 모델/기기/API/제공자/앱/ORT 및 실측 증거가 없으면 false.
+- 로컬 C3X 관련103 tests에 owner request 경계1개를 더하여104 tests PASS. 실제 Linux selfdrived/state 검사는 Windows fcntl 제약으로 수집 불가; 필수 Linux build-release job에서 수행. 새로운 APK0.1.1은 검증 프로필 식별을 위한 handshake 기기 정보를 추가.
+- 실제 C3X QCOM 빌드·warp pixels·USB 속도·30분 Shadow 및 차량 확인은 미수행. Linux 호스트 빌드와 구분하고 #44/#45/#46/#47을 실기 기준 충족 전 닫지 않는다.
+- 별개 upstream mirror 실패는 #49로 분리. 기존 미러를 강제 갱신하지 않았다.

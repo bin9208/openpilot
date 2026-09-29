@@ -51,7 +51,10 @@ class LinkService : Service() {
                     if (stopping.get()) return@Thread
                     link = UsbLink.open(manager, device)
                     wake.acquire(60 * 60 * 1000L)
-                    session = JetlinkSession(model, { OrtEngine(backend) }, { DeviceHealth.snapshot(this) })
+                    session = JetlinkSession(model, { OrtEngine(backend) }, { DeviceHealth.snapshot(this).apply {
+                        put("device_model", android.os.Build.MODEL); put("android_api", android.os.Build.VERSION.SDK_INT)
+                        put("backend_requested", backend.name); put("app_version", BuildConfig.VERSION_NAME)
+                    } })
                     AppState.phase = "linked"; AppState.detail = ""
                     while (!stopping.get()) {
                         if (DeviceHealth.tooHot(this)) error(getString(R.string.thermal_stop))

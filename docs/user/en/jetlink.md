@@ -21,8 +21,18 @@ These timings exclude C3X camera processing and the complete USB round trip. An 
 
 ## USB and stopping
 
-C3X integration is separate work (#47). Installing this app alone cannot connect an unchanged carrotpilot installation. Once that integration prepares the Jetlink vendor gadget (1209:0001), use a USB 3 data cable, choose **Status → Connect comma USB**, and grant USB permission. A foreground service shows an ongoing notification.
+The C3X needs a branch containing the Jetlink integration (#47); the app alone is insufficient. While offroad, set Carrot Web `System → Jetlink External Model → Jetlink mode` to 1 (Shadow). The default is 0 and manager restart/reboot resets it to 0. Once that integration prepares the Jetlink vendor gadget (1209:0001), use a USB 3 data cable, choose **Status → Connect comma USB**, and grant USB permission. A foreground service shows an ongoing notification.
 
 After denied permission or cable removal, reconnect manually. Use **Stop** in the app or notification to stop the service. It does not automatically reconnect after a reboot/process death. Thermal status SEVERE or above stops work; cool the device before retrying. Memory/model errors appear on the status page. An engine reporting `ready` does not authorize driving.
 
 Pending device checks: install/rotation, import, CPU and NNAPI output comparison, USB denial/detach/reconnect, 30-minute Shadow/thermal testing, full C3X 50ms latency and control disengagement on loss. Field criteria in #44/#45/#46/#47 remain open until evidence is available.
+
+## C3X selection and validation boundary
+
+Shadow keeps native control and never waits for external results before publishing native output. Native inference continues every frame during external activation to preserve fallback history. A separate 50ms local communication deadline isolates a stalled USB-owner process. The full budget runs from C3X warp through external response/parsing to immediately before publication, unlike the standalone app benchmark.
+
+Mode 2 requests activation. No passed device-validation profile is supplied, so it retains the native model. Profiles bind model SHA, tablet model, Android API, requested backend, app/ORT version, warp contract, numerical comparison and at least 30 minutes of full latency/loss evidence. App 0.1.1 transmits the required identity in its handshake; changing version/backend invalidates an older match. Do not turn benchmark success into an activation flag.
+
+The first active timeout/detach/wrong-frame/NaN discards external output and latches loss. It enters the external-model-loss no-entry/soft-disable path; AlwaysLateral-only steering cannot bypass loss. Native success/reconnection does not clear it. Stop, disengage cruise and lateral control, acknowledge through 0 or a ready 1, then make a new request through 2. Old frames are never relabelled fresh.
+
+Gadget recovery is deferred offroad. Toggle 0 → 1 and reconnect the app while parked; stuck kernel I/O may require a parked device restart. `JetlinkStatus` describes preparation/errors; `modelV2.jetlink` and `drivingModelData.jetlink` logs carry source/loss/session/timing. C3X QCOM device builds, physical USB speed, camera pixel comparison and drive acceptance remain separate validation work.

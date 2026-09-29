@@ -347,3 +347,7 @@ Check storage use for recording and network use, heat, and privacy before enabli
 7. Restore the previous value or baseline profile immediately if the result is worse or unclear.
 
 See the Wiki [Tuning introduction](https://github.com/ajouatom/openpilot/wiki/Guide-Tuning) for the recommended steering and longitudinal adjustment order.
+
+## Jetlink external model (experimental)
+
+`System → Jetlink External Model → Jetlink mode` defaults to 0 (Off); 1 is Shadow and 2 requests activation. Manager restart/reboot resets it to 0. USB configuration changes only offroad and cannot share the port with an eGPU. Ready alone does not authorize activation. A matching model/tablet/Android API/backend/app/ORT device-validation record plus standstill and cruise/lateral disengagement are required. After loss, stop with all control disengaged, acknowledge through 0 or 1, then make a new request. See the [Jetlink guide](jetlink.md).

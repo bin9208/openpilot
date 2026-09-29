@@ -160,6 +160,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
 
     torqueNNLoad @118;
     updateRebootRequired @125;
+    jetlinkLost @126;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -967,7 +968,22 @@ struct ControlsState @0x97ff69c53601abf1 {
   }
 }
 
+struct JetlinkFrameStatus {
+  source @0 :Source;
+  phase @1 :Text;
+  lossLatched @2 :Bool;
+  generation @3 :Text;
+  frameId @4 :UInt32;
+  executionMs @5 :Float32;
+  validated @6 :Bool;
+  enum Source {
+    native @0;
+    jetlink @1;
+  }
+}
+
 struct DrivingModelData {
+  jetlink @8 :JetlinkFrameStatus;
   frameId @0 :UInt32;
   frameIdExtra @1 :UInt32;
   frameDropPerc @6 :Float32;
@@ -1011,6 +1027,7 @@ struct XYZTData @0xc3cbae1fd505ae80 {
 }
 
 struct ModelDataV2 {
+  jetlink @27 :JetlinkFrameStatus;
   frameId @0 :UInt32;
   frameIdExtra @20 :UInt32;
   frameAge @1 :UInt32;

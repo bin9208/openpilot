@@ -630,6 +630,15 @@
           "params": [
             "SoftwareMenu"
           ]
+        },
+        {
+          "id": "SYS_JETLINK",
+          "ko": "Jetlink 외부 모델",
+          "en": "Jetlink External Model",
+          "zh": "Jetlink 外部模型",
+          "params": [
+            "JetlinkMode"
+          ]
         }
       ]
     }
@@ -4050,6 +4059,22 @@
           "Speed automatic"
         ]
       }
+    },
+    {
+      "group": "시스템",
+      "name": "JetlinkMode",
+      "title": "Jetlink 모드 (기본 꺼짐)",
+      "descr": "0: 끄기 / 1: 검증(Shadow) / 2: 활성 요청. USB 설정은 오프로드에서 적용됩니다. 실제 모델·기기 검증 기록과 정차·크루즈/조향 해제가 있어야 활성화됩니다. 재부팅 시 꺼짐이며 eGPU와 함께 사용할 수 없습니다.",
+      "egroup": "System",
+      "etitle": "Jetlink mode (off by default)",
+      "edescr": "0: Off / 1: Shadow / 2: Request activation. USB setup applies offroad. Activation requires a matching device validation record, standstill and cruise/lateral disengagement. Resets to Off on restart. Mutually exclusive with eGPU.",
+      "cgroup": "系统",
+      "ctitle": "Jetlink 模式（默认关闭）",
+      "cdescr": "0：关闭 / 1：影子验证 / 2：请求启用。仅在停车且纵横向控制关闭、设备验证通过后启用。重启后关闭，不能与 eGPU 同时使用。",
+      "min": 0,
+      "max": 2,
+      "default": 0,
+      "unit": 1
     }
   ]
 }
