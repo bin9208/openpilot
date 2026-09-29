@@ -71,7 +71,9 @@ Self-hosted runner는 신뢰하지 않는 PR 코드에 비밀정보나 내부망
 - 새 이슈: 최신 `origin/dev`에서 `codex/feat-<번호>-<설명>` 또는 `codex/fix-<번호>-<설명>` 생성.
 - 작업 PR은 `dev`, 릴리스 PR은 `dev`에서 `main`으로 보낸다.
 - `carrot-wip`은 기존 upstream 미러로 유지한다. 이전 네이버 브랜치와 기존 설치 경로는 보존한다.
-- 기존 Wiki/NAS 발행의 `carrot-wip` 대상은 이번 변경으로 이동하지 않는다.
+- 기존 Wiki 검사/발행 및 NAS 발행의 `carrot-wip` 대상은 이번 변경으로 이동하지 않는다.
+  포크 Wiki clone 실패는 [이슈 #43](https://github.com/bin9208/openpilot/issues/43)에서 추적한다.
+  사용자 문서 검사는 dev/main에서 계속 필수다.
 - `main`의 최초 커밋은 기존 기준점이며 새 실차 검증을 완료했다는 뜻이 아니다.
 - 필수 검사: `fast checks`, `integration gate`, `check mapped user docs`.
 - `integration gate`는 실제 빌드/기존 회귀 검사, 네이버 통합 검사, APK 소스/패키징 검사가
