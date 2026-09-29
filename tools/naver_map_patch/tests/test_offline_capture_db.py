@@ -540,6 +540,25 @@ def test_mapping_outcome_frame_is_exact_and_coordinate_free():
     decode_and_validate_frame(json.dumps(frame))
 
 
+@pytest.mark.parametrize("result", ["safety_source_inactive", "safety_source_ambiguous"])
+def test_offline_export_preserves_safety_lifecycle_outcomes(tmp_path, result):
+  observation = {
+    "channel": "safety", "result": result,
+    "root_descriptor": "Lsample/GuidanceSafety;",
+    "input_count": 0, "output_count": 0, "revision": 0,
+    "item_present": False, "distance_valid": False, "frame_eligible": False,
+  }
+  raw = tmp_path / "raw"
+  _create_database(raw, rows=[
+    (RUN_A, 1, 101, "safety", 0, _frame("safety", 1, 101, observation=observation), 1),
+  ])
+  bundle = tmp_path / "bundle"
+  validate_offline_database(raw, bundle, PROFILE)
+  shapes = json.loads((bundle / "accessor_shapes.json").read_text(encoding="utf-8"))
+  assert shapes["channels"]["safety"][0]["shape"]["result"] == result
+  assert shapes["channels"]["safety"][0]["occurrences"] == 1
+
+
 def test_field_mapping_outcome_database_is_summarized_without_descriptor(tmp_path):
   observation = {
     "channel": "route",
