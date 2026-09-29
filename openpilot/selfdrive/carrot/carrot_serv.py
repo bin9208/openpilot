@@ -1590,11 +1590,12 @@ class CarrotServ:
     owner = selection.snapshot
     unknown_naver_road = (owner is not None and owner.source is NavigationSource.NAVER_V1
                           and not self.carrot_navi_road_limit_valid)
+    published_road_limit = 0 if unknown_naver_road else self.nRoadLimitSpeed
     msg = messaging.new_message('carrotMan')
     msg.valid = True
     msg.carrotMan.activeCarrot = self.active_carrot
     # Publish unknown instead of presenting retained control state as a known Naver road limit.
-    msg.carrotMan.nRoadLimitSpeed = 0 if unknown_naver_road else int(self.nRoadLimitSpeed)
+    msg.carrotMan.nRoadLimitSpeed = int(published_road_limit)
     msg.carrotMan.remote = remote_ip
     msg.carrotMan.xSpdType = int(self.xSpdType)
     msg.carrotMan.xSpdLimit = int(self.xSpdLimit)
@@ -1660,7 +1661,7 @@ class CarrotServ:
       instruction = inst.navInstructionCarrot
       instruction.distanceRemaining = self.nGoPosDist
       instruction.timeRemaining = self.nGoPosTime
-      instruction.speedLimit = self.nRoadLimitSpeed / 3.6 if self.nRoadLimitSpeed > 0 else 0
+      instruction.speedLimit = published_road_limit / 3.6 if published_road_limit > 0 else 0
       instruction.maneuverDistance = float(self.nTBTDist)
       instruction.maneuverSecondaryText = self.szNearDirName
       if self.szFarDirName and len(self.szFarDirName):

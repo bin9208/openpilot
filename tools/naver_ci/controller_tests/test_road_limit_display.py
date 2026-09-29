@@ -4,6 +4,7 @@ import pytest
 from tools.naver_ci.controller_tests.test_bump_parity import drive  # noqa: F401
 from openpilot.selfdrive.carrot.naver_navigation_protocol import parse_naver_navigation_v1
 from openpilot.selfdrive.carrot.tests.test_naver_navigation_protocol import inactive_frame
+from openpilot.selfdrive.carrot import carrot_serv
 
 
 def frame(sequence=1, road_limit=None, camera=False):
@@ -51,3 +52,22 @@ def test_tmap_road_limit_publication_is_unchanged(drive):
   assert tick().nRoadLimitSpeed == 80
 
 
+@pytest.mark.parametrize('road_limit,expected', [(None, 0), (60, 60)])
+@pytest.mark.parametrize('camera', [False, True])
+@pytest.mark.parametrize('previous_limit', [30, 80])
+def test_cluster_instruction_uses_same_road_validity_as_carrot_message(drive, monkeypatch, road_limit, expected, camera, previous_limit):
+  serv, CS, now, tick = drive
+  serv.nRoadLimitSpeed = previous_limit
+  messages = {}
+  original_new_message = carrot_serv.messaging.new_message
+  def capture_message(service, *args, **kwargs):
+    message = original_new_message(service, *args, **kwargs)
+    messages[service] = message
+    return message
+  monkeypatch.setattr(carrot_serv.messaging, 'new_message', capture_message)
+  serv.accept_navigation_snapshot(parse_naver_navigation_v1(frame(road_limit=road_limit, camera=camera), now[0]))
+  result = tick()
+  instruction = messages['navInstructionCarrot']
+  assert instruction.valid
+  assert result.nRoadLimitSpeed == expected
+  assert instruction.navInstructionCarrot.speedLimit == pytest.approx(expected / 3.6)

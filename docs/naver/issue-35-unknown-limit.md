@@ -29,3 +29,19 @@ No steering or speed-threshold tuning. User-visible validity handling is
 documented in the paired speed/deceleration guides. This fixes false LIMIT
 presentation and its zero-value consumer hazard, not missing road mapping or
 the unproven real-drive22km/h root cause. Dev vehicle acceptance remains open.
+
+Final independent review found a second publication in navInstructionCarrot
+still carried the retained road value. A shared publication value now feeds
+both messages without resetting internal state. Four unknown30/80 cases
+failed before correction; four known-road controls passed. The eight cases
+cover both camera-present and absent paths. The cluster's existing bounded
+hold and legitimate vehicle-limit priority remain unchanged.
+
+Review rulings: physical22km/h causality, missing camera/road accessors and
+loaded vehicle/steering acceptance require new device evidence and remain
+open; no guessed mapping or threshold is shipped. Private DB validation is
+local evidence only. Pre-existing general geographic projection and cluster
+hold design are not redesigned; this leaves their existing limitations in
+place. Exact-SHA cloud results and final integrated-dev results are gates,
+not inferred from the review. The reported test EOF blank line is removed as
+part of the same touched test block; no other style cleanup is included.
